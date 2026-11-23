@@ -58,6 +58,16 @@ private func retry(_ reason: String) -> Outcome { .retry(reason: reason, discard
             expected: .stopLoop(.init(.othersWorking, detail: "Rex"), reason: "gate did not run (tree not reset)")),
         // the task passes; the loop then stops (`attempt()`: `return blocked == nil`), which is not this outcome's to say
         Row(name: "pass with another terminal working", facts: facts { $0.hasGate = false; $0.blockedBy = "Rex" }, expected: .pass),
+        // F2 R3: a refusal is one more reason, after the others
+        Row(name: "review refused", facts: facts { $0.review = "revisor recusou: x" }, expected: retry("revisor recusou: x")),
+        Row(name: "review refused on the last try", facts: facts { $0.review = "revisor recusou: x"; $0.attempt = 3 },
+            expected: .defer(reason: "revisor recusou: x", discard: true)),
+        Row(name: "review refused twice in a row defers with tries left", facts: facts { $0.review = "revisor recusou: x"; $0.reviewRejectsInRow = 1 },
+            expected: .defer(reason: "\(AttemptDecision.twiceRefused); revisor recusou: x", discard: true)),
+        Row(name: "a refusal in a row before, approved now: passes", facts: facts { $0.reviewRejectsInRow = 1; $0.reviewNotes = ["n"] }, expected: .pass),
+        Row(name: "refused twice while another terminal works: the loop stops, nothing deferred",
+            facts: facts { $0.review = "revisor recusou: x"; $0.reviewRejectsInRow = 1; $0.blockedBy = "Rex" },
+            expected: .stopLoop(.init(.othersWorking, detail: "Rex"), reason: "revisor recusou: x")),
     ]
 
     @Test(arguments: rows) func decides(_ row: Row) {

@@ -56,6 +56,22 @@ actor LoopFakeHost: LoopHost {
     private var starterGone = false
     private var names: [UUID: String] = [:], workingCalls: [UUID: Int] = [:]
 
+    /// F2 Y1: the daemon's root as the reviewers see it: under the package's `.build`, never in the temp dir.
+    nonisolated let root = LoopFakeHost.testRoot()
+    nonisolated var reviewRoot: URL { WorkLoop.reviewRoot(of: root) }
+    /// F2 Z2: what the loop's agent writes under the home (its grants, paddocks): none unless a test opens some.
+    var opened: [String] = []
+    func setOpened(_ o: [String]) { opened = o }
+    /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
+    var home: URL?
+    func setHome(_ h: URL) { home = h }
+    func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), opened) }
+    func globalConfigHome() async -> URL { home ?? URL(fileURLWithPath: NSHomeDirectory()) }
+    /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
+    static func testRoot() -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/collie-test-\(UUID().uuidString.prefix(8).lowercased())")
+    }
     init(dir: URL) {
         self.dir = dir
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
@@ -71,7 +87,70 @@ actor LoopFakeHost: LoopHost {
     func setOwner(_ o: String) { owner = o }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = UUID(); names[id] = name; summoned.append(name); return id
+        let id = UUID(); names[id] = name; summoned.append(name); agentIds.append(id); return id
+    }
+    /// F2 R4 (WorkLoopReviewTests): reviewers. `reviewAnswers[<reviewer's name> or <persona>]`: the text it answers (absent: approves;
+    /// `.some(nil)`: mute, its ask throws). A reviewer not yet dismissed is a terminal of the paddock in a turn: the fake's
+    /// `othersWorking` names it (as the router would without `loopReviewers`), and `othersSawReviewer` says it did.
+    var agentIds: [UUID] = [], reviewerIds: [UUID] = [], reviewers: [String] = [], liveReviewers: [UUID] = []
+    var reviewerPrompts: [String: String] = [:], reviewerModels: [String: String] = [:]
+    var reviewAnswers: [String: String?] = [:], othersSawReviewer = false
+    func setReviewAnswer(_ persona: String, _ text: String?) { reviewAnswers[persona] = .some(text) }
+    /// F2 X1: each reviewer's folder (by name) and what was in it when it was born.
+    var reviewerCwds: [String: URL] = [:], reviewerSaw: [String: [String]] = [:]
+    /// F2 W2: path → text of each reviewer's `reviewSnapshot` as it read it.
+    var snapshotFiles: [String: [String: String]] = [:]
+    /// F2 X1: `reviewerActs[<reviewer's name> or <persona>]` runs in the worktree during its ask (a reviewer that
+    /// touches the tree); `reviewerAsked` hits once per reviewer asked.
+    var reviewerActs: [String: @Sendable (URL) async throws -> Void] = [:]
+    nonisolated let reviewerAsked = Arrivals()
+    func setReviewerAct(_ who: String, _ act: @escaping @Sendable (URL) async throws -> Void) { reviewerActs[who] = act }
+    /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
+    var reviewTimeouts: Set<String> = []
+    func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
+        events.append("reviewer \(name)")
+        reviewerModels[name] = loop.model ?? "-"
+        reviewerCwds[name] = cwd
+        reviewerSaw[name] = (try? FileManager.default.contentsOfDirectory(atPath: cwd.path)) ?? ["<no folder>"]
+        return id
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        let name = names[terminal] ?? "?"
+        reviewerPrompts[name] = prompt
+        // the persona is the prompt's own first line: "Você é o revisor '<persona>'."
+        let persona = prompt.split(separator: "'").dropFirst().first.map(String.init) ?? "?"
+        await reviewerAsked.hit()
+        if let act = reviewerActs[name] ?? reviewerActs[persona] {
+            do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
+        }
+        // F2 W2: what the reviewer's copy of the judged commit holds when it reads it (after its act)
+        if let cwd = reviewerCwds[name] {
+            let snap = cwd.appendingPathComponent(WorkLoop.reviewSnapshotDir).path
+            var files: [String: String] = [:]
+            if let walk = FileManager.default.enumerator(atPath: snap) {
+                while let rel = walk.nextObject() as? String {
+                    files[rel] = (try? String(contentsOfFile: snap + "/" + rel, encoding: .utf8)) ?? "<dir>"
+                }
+            }
+            snapshotFiles[name] = files
+        }
+        if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
+        // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
+        let nonce = Self.nonce(in: prompt)
+        guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {
+            return prompt + "\n" + ReviewPrompt.endMarker(nonce) + "\n" + #"{"persona":"\#(persona)","nonce":"\#(nonce)","verdict":"approve","findings":[]}"#
+        }
+        guard let answer else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+        if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return answer }   // a blank screen: mute
+        return prompt + "\n" + answer.replacingOccurrences(of: "<NONCE>", with: nonce)
+    }
+    /// The nonce a review prompt carries: the 32 hex digits after its end marker's head.
+    static func nonce(in prompt: String) -> String {
+        let head = "=== FIM DO PEDIDO DE REVISÃO "
+        guard let r = prompt.range(of: head, options: .backwards) else { return "" }
+        return String(prompt[r.upperBound...].prefix(32))
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
@@ -123,11 +202,27 @@ actor LoopFakeHost: LoopHost {
         if !dismissed.contains(n) { tokensRead.append(n) }
         return tokenCounts[n]
     }
-    func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
+    func dismiss(_ terminal: UUID) async {
+        dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")")
+        liveReviewers.removeAll { $0 == terminal }
+    }
+    /// F2 Z3b: the process group each agent (by name) left behind; `dismissReaping` kills it for real (`reapGroup`).
+    var agentGroups: [String: pid_t] = [:]
+    func setAgentGroup(_ n: String, _ g: pid_t) { agentGroups[n] = g }
+    func dismissReaping(_ terminal: UUID) async {
+        await dismiss(terminal)
+        let n = names[terminal] ?? "?"
+        if let g = agentGroups[n] { WorkLoop.reapGroup(g) }
+        events.append("reap \(n)")
+    }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?
     func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
-    func othersWorking() async -> String? { await othersProbe?(); return busyOther }
+    func othersWorking() async -> String? {
+        await othersProbe?()
+        if let r = liveReviewers.first { othersSawReviewer = true; return busyOther ?? names[r] }
+        return busyOther
+    }
     /// M3b.2: the starter in a turn (only `anyoneWorking` counts it).
     var busyStarter: String?
     func setStarterBusy(_ n: String?) { busyStarter = n }
@@ -151,6 +246,13 @@ actor LoopFakeHost: LoopHost {
         let r = try await GitRunner.run(args, in: dir)
         await gitProbe?(args)
         if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
+        return r
+    }
+    /// T1 f2fix8: `cat-file --batch` with its stdin, counted in `gits` like any other.
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        gits.append(args)
+        let r = try await GitRunner.run(args, in: dir, timeout: timeout, cap: cap, stdin: stdin)
+        await gitProbe?(args)
         return r
     }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
@@ -201,13 +303,14 @@ struct LoopRig {
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
+        try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
                         notices: LoopNotices(window: noticeWindow))
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
-    func cleanup() { for u in [repo, storeDir, host.patches] { try? FileManager.default.removeItem(at: u) } }
+    func cleanup() { for u in [repo, storeDir, host.patches, host.root] { try? FileManager.default.removeItem(at: u) } }
 }
 
 private typealias Script = LoopScript

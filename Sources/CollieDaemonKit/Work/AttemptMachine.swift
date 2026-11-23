@@ -6,7 +6,7 @@ import CollieCore
 /// `attempt()` is the interpreter: it carries each effect out and hands the resulting event back, until `finished`.
 /// In every list `reduce` returns, only the last effect answers with an event (`Effect.answers`).
 enum AttemptMachine {
-    enum Phase: Sendable, Equatable, CaseIterable { case summoning, turn, waitingCommit, checking, gating, deciding, finished }
+    enum Phase: Sendable, Equatable, CaseIterable { case summoning, turn, waitingCommit, checking, gating, reviewing, deciding, finished }
 
     /// What `measureFacts` read from the tree once the agent is gone.
     struct Measured: Sendable, Equatable {
@@ -42,6 +42,12 @@ enum AttemptMachine {
         /// Another terminal of the paddock still working (its name), or none.
         case blocked(String?)
         case decided(AttemptDecision.Outcome)
+        /// F2 R3: what the personas said (`ReviewVerdict.aggregate`).
+        case reviewDone(ReviewOutcome)
+        /// F2 X3: less than `WorkLoop.reviewMinTurn` of the budget is left for the reviewers: no review, no verdict.
+        case reviewBudgetOut
+        /// F2 Y2a: a reviewer touched the tree: the attempt fails, but nobody judged it, so it is no refusal.
+        case reviewerTouched
     }
 
     enum Effect: Sendable, Equatable {
@@ -65,6 +71,8 @@ enum AttemptMachine {
         /// Gives another working terminal `othersWait` to finish: `blocked`.
         case awaitOthers
         case settle(reset: Bool)
+        /// F2 R3: the personas judge the attempt (spec and personas from the attempt's BASE commit): `reviewDone`.
+        case runReview
         /// `AttemptDecision.decide` on the state's facts: `decided`.
         case decide
         case discard, markDone
@@ -85,7 +93,7 @@ enum AttemptMachine {
         /// Carrying it out answers with an event.
         var answers: Bool {
             switch self {
-            case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
+            case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .runReview, .decide: true
             case .dismiss, .show, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
@@ -109,11 +117,15 @@ enum AttemptMachine {
         var adopted = false
         /// M3.8: the agent's name, for the journal (`AgentNaming`; the interpreter passes the one it summons with).
         let name: String
+        /// F2 R3: the review by personas is on: an attempt that would pass goes to `reviewing` first.
+        let reviewer: Bool
 
-        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil, precheck: Bool = false) {
-            self.task = task; self.n = n; self.before = before; judged = before; hasPrecheck = precheck
+        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil, precheck: Bool = false,
+             reviewer: Bool = false, reviewRejectsInRow: Int = 0) {
+            self.task = task; self.n = n; self.before = before; judged = before; hasPrecheck = precheck; self.reviewer = reviewer
             self.name = name ?? AgentNaming.name(work: "", task: "", taskId: task, attempt: n, lane: nil)
             facts = .init(attempt: n, tries: tries, hasGate: hasGate)
+            facts.reviewRejectsInRow = reviewRejectsInRow
         }
     }
 
@@ -222,6 +234,19 @@ enum AttemptMachine {
             if moved { s.facts.moves.append("o portão moveu o HEAD") }
             return verdict(&s, resetLine(moved, reset))
 
+        // F2 R3: a veto is a failure as any other (retry, defer on the last try or after two in a row)
+        // A1 (reviewAdvisory): only a veto; approve, mute, invalid and minor-only reject are notes ('sem parecer: ...')
+        case (.reviewing, .reviewDone(let outcome)):
+            if outcome.approved { s.facts.reviewNotes = outcome.notes } else { s.facts.review = outcome.reason ?? "revisor recusou" }
+            return verdict(&s)
+        // F2 X3: the budget ran out, not the attempt: like a cancel it is not counted (nor as a refusal), the loop stops
+        // F2 Y2a: the attempt fails on it (a move, not `review`): it is not counted in reviewRejects nor "in a row"
+        case (.reviewing, .reviewerTouched):
+            s.facts.moves.append(WorkLoop.reviewerTouched)
+            return verdict(&s)
+        case (.reviewing, .reviewBudgetOut):
+            return leave(&s, [.uncount, .note(WorkLoop.reviewBudgetNote), .stopLoop(.init(.budgetSpent))])
+
         case (.deciding, .blocked(let who)):
             s.facts.blockedBy = who
             return (s, [.decide])
@@ -237,8 +262,10 @@ enum AttemptMachine {
             switch outcome {
             case .pass:
                 // the task passed and another terminal works: nothing to discard, the loop stops after it
-                guard let who = s.facts.blockedBy else { return (s, [.markDone]) }
-                return (s, [.markDone, .note(WorkLoop.blockedNote(who)), .stopLoop(.init(.othersWorking, detail: who))])
+                let notes = s.facts.reviewNotes
+                let done: [Effect] = [.markDone] + (notes.isEmpty ? [] : [.note("[loop \(s.task)] parecer: " + notes.joined(separator: "; "))])
+                guard let who = s.facts.blockedBy else { return (s, done) }
+                return (s, done + [.note(WorkLoop.blockedNote(who)), .stopLoop(.init(.othersWorking, detail: who))])
             case .retry(let reason, let discards):
                 return (s, (discards ? patch : []) + [.markOpenOrDeferred(reason: reason, last: false)])
             case .defer(let reason, let discards):
@@ -267,9 +294,14 @@ enum AttemptMachine {
 
     /// Into `deciding`, after `fx`. A failed attempt that did not ask yet (it failed before its check, or its tree was
     /// dirty) asks about other terminals now: the discard is a reset too. Not a failed adoption: it discards nothing.
+    /// F2 R3: with the review on, an attempt that would pass is reviewed first (once: `reviewing` comes back here).
     private static func verdict(_ s: inout State, _ fx: [Effect] = []) -> (State, [Effect]) {
-        s.phase = .deciding
         let failed = AttemptDecision.reason(s.facts)
+        if s.reviewer, s.phase != .reviewing, failed == nil {
+            s.phase = .reviewing
+            return (s, fx + [.show(.review), .runReview])
+        }
+        s.phase = .deciding
         return (s, fx + [.show(nil), .journal(.verdict, failed ?? "passou"), failed != nil && s.facts.blockedBy == nil && !s.adopted ? .awaitOthers : .decide])
     }
 

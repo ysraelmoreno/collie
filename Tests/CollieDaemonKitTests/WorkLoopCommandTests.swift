@@ -137,7 +137,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     /// M3.8: the terminals of `work`'s loop attempts still there, found by the id on their job (never by a name's prefix).
     private func loopAgentsLeft(_ d: Daemon, _ work: UUID) async -> Int {
         guard let w = try? await d.router.work.get(work) else { return 0 }
-        return CommandRouter.loopAgents(of: w, in: await d.router.ws.terminals).count
+        return CommandRouter.loopAgents(of: w, in: await d.router.ws.terminals, reviewRoot: WorkLoop.reviewRoot(of: await d.router.config.paths.root)).count
     }
     /// A loop notice typed into the starter's shell (`asks.inject`, `afterQuiet`: after its queue, its quiet window and
     /// a readiness gate). Delivery is fire-and-forget, so there is no event to await: 90 s absorbs a loaded CI runner

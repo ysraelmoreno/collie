@@ -444,3 +444,125 @@ extension WorkCommandTests {
         }
     }
 }
+
+/// F2 R1: `work task add --agent --model` and `work run --review --personas --reviewer-model`: recorded, shown, validated.
+extension WorkCommandTests {
+    @Test func taskAddKeepsItsWorkerAndShowsIt() async throws {
+        try await withDaemon { d, p in
+            let a = try await spawnIn(d, p, "A", cwd: URL(fileURLWithPath: "/tmp"))
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T1", "agent": "codex", "model": "gpt-5"]).ok)
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T2"]).ok)
+            let w = try #require(try await d.router.work.active(terminal: a.uuid))
+            #expect(w.tasks.map(\.agent) == ["codex", nil] && w.tasks.map(\.model) == ["gpt-5", nil])
+            guard case .object(let g)? = try await work(d, p, a, "work.get", ["id": w.id.uuidString]).result,
+                  case .array(let ts)? = g["tasks"], case .object(let t1)? = ts.first else { Issue.record("get"); return }
+            #expect(t1["agent"] == .string("codex") && t1["model"] == .string("gpt-5"))
+            guard case .object(let s)? = try await work(d, p, a, "work.status").result, case .string(let out)? = s["output"] else { Issue.record("status"); return }
+            #expect(out.contains("T1 (agente codex, modelo gpt-5) [") && out.contains("  - T2 ["), "\(out)")
+            // unknown agent or model: invalidArgs, nothing added
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T3", "agent": "gemini"]).error?.code == .invalidArgs)
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T3", "model": "no model; rm"]).error?.code == .invalidArgs)
+            #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.count == 2)
+        }
+    }
+
+    /// F2 Z2: `--review` runs only when the loop's agent and its reviewers start strict: a sandboxed daemon in strict
+    /// mode. Open mode, or no terminal sandbox, is refused with the reason.
+    @Test func reviewNeedsStrictMode() {
+        #expect(CommandRouter.reviewNeedsStrict(sandboxed: true, mode: .strict) == nil)
+        for (sandboxed, mode) in [(true, SandboxMode.open), (false, .strict), (false, .open)] {
+            #expect(CommandRouter.reviewNeedsStrict(sandboxed: sandboxed, mode: mode)
+                    == "--review exige agentes em modo strict: o modo open deixa o agente julgado escrever instruções que o revisor carrega")
+        }
+    }
+
+    /// F2 X4: `--review` with no persona committed at HEAD is refused at launch, before any agent is spent.
+    @Test func runReviewWithoutCatalogIsRefused() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)
+        try "# Fake\n".write(to: repo.appendingPathComponent("docs/fabrica/personas/correcao.md"), atomically: true, encoding: .utf8)   // not committed
+        for personas in [nil, "auto", "correcao"] {
+            do {
+                _ = try await CommandRouter.loopReview(review: true, personas: personas, reviewerModel: nil, dir: repo)
+                Issue.record("accepted \(String(describing: personas))")
+            } catch {
+                #expect(error.code == .invalidArgs && error.message.contains("sem personas em docs/fabrica/personas"), "\(error)")
+            }
+        }
+        // without --review nothing changes
+        #expect(try await CommandRouter.loopReview(review: false, personas: nil, reviewerModel: nil, dir: repo) == (false, nil, nil))
+    }
+
+    /// F2 X4: a reviewer is marked inside its summon (before the launch), so it never stands unmarked in the paddock;
+    /// a dismiss unmarks it.
+    @Test func reviewerIsMarkedByItsSummon() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("x4-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true)
+            let r = Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let id = try await d.router.loopSummon(r, as: s.uuid, scratch: scratch)
+            #expect(await d.router.loopReviewers.contains(id))
+            await d.router.loopDismiss(id)
+            #expect(await !d.router.loopReviewers.contains(id))
+            // a refused summon (the name is taken) leaves no mark behind
+            let before = await d.router.loopReviewers
+            await #expect(throws: ProtocolError.self) {
+                _ = try await d.router.loopSummon(Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("S"), "preset": .string("shell")]),
+                                                  as: s.uuid, scratch: scratch)
+            }
+            #expect(await d.router.loopReviewers == before)
+        }
+    }
+
+    @Test func runReviewFlagsAreValidatedAgainstTheCommittedPersonas() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)
+        try await commit("docs/fabrica/personas/correcao.md", "# Correção\n", in: repo)
+        try "# Fake\n".write(to: repo.appendingPathComponent("docs/fabrica/personas/fake.md"), atomically: true, encoding: .utf8)   // not committed
+        // pure: without --review, off; with it, auto or the names; the worktree's persona is no persona
+        #expect(try await CommandRouter.loopReview(review: false, personas: nil, reviewerModel: nil, dir: repo) == (false, nil, nil))
+        #expect(try await CommandRouter.loopReview(review: true, personas: nil, reviewerModel: nil, dir: repo) == (true, nil, nil))
+        #expect(try await CommandRouter.loopReview(review: true, personas: "auto", reviewerModel: "opus", dir: repo) == (true, nil, "opus"))
+        #expect(try await CommandRouter.loopReview(review: true, personas: "correcao", reviewerModel: nil, dir: repo) == (true, ["correcao"], nil))
+        for (review, personas, model) in [(false, "auto", nil), (false, nil, "opus"), (true, "fake", nil), (true, "correcao,nope", nil),
+                                          (true, "../x", nil), (true, "", nil), (true, nil, "bad model")] as [(Bool, String?, String?)] {
+            await #expect(throws: ProtocolError.self, "\(review) \(String(describing: personas)) \(String(describing: model))") {
+                _ = try await CommandRouter.loopReview(review: review, personas: personas, reviewerModel: model, dir: repo)
+            }
+        }
+        try await withDaemon { d, p in
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true, paddock: "feat")
+            #expect(try await work(d, p, s, "work.start", ["title": "Loop work"]).ok)
+            #expect(try await work(d, p, s, "work.task.add", ["title": "A", "check": "true"]).ok)
+            let base = ["max": "3", "command": "true"]
+            #expect(try await work(d, p, s, "work.run", base.merging(["personas": "correcao"]) { $1 }).error?.code == .invalidArgs)
+            #expect(try await work(d, p, s, "work.run", base.merging(["reviewer-model": "opus"]) { $1 }).error?.code == .invalidArgs)
+            #expect(try await work(d, p, s, "work.run", base.merging(["personas": "nope"]) { $1 }, flags: ["review"]).error?.code == .invalidArgs)
+            // F2 Z2: a test daemon sandboxes no terminal (open mode): --review is refused with its reason, nothing awaits the owner
+            let refused = try await work(d, p, s, "work.run", base.merging(["personas": "correcao", "reviewer-model": "opus"]) { $1 }, flags: ["review"])
+            #expect(refused.error?.code == .invalidArgs && refused.error?.message.contains("--review exige agentes em modo strict") == true, "\(refused)")
+            #expect(await d.router.appCards.first { $0.app == "work-loop" } == nil)
+            // without --review nothing changes: the run waits for its card
+            #expect(try await work(d, p, s, "work.run", base).ok)
+            // the card's text with the review (what a strict daemon's card shows)
+            let w = try #require(try await d.router.work.active(terminal: s.uuid))
+            let call = CommandRouter.loopCardText(w, w.tasks, WorkLoopState(state: .running, tries: 3, timeout: 3600, max: 3, used: 0, budget: 14_400,
+                                                                            spent: 0, tasks: w.tasks.map(\.id), review: true, personas: ["correcao"], reviewerModel: "opus"),
+                                                  paddock: "feat")
+            #expect(call?.contains("revisão por personas: «correcao», revisor «opus».") == true, "\(String(describing: call))")
+            // what the loop's state holds is what status shows
+            let id = w.id
+            try await d.router.work.update(id) { $0.loop = WorkLoopState(state: .stopped, tasks: [], review: true, reviewerModel: "opus") }
+            guard case .object(let o)? = try await work(d, p, s, "work.status").result, case .string(let out)? = o["output"] else { Issue.record("status"); return }
+            #expect(out.contains("revisão: ligada, personas auto, revisor opus"), "\(out)")
+            try await d.router.work.update(id) { $0.loop?.personas = ["correcao", "testes"]; $0.loop?.reviewerModel = nil }
+            guard case .object(let o2)? = try await work(d, p, s, "work.status").result, case .string(let out2)? = o2["output"] else { Issue.record("status"); return }
+            #expect(out2.contains("revisão: ligada, personas correcao, testes\n"), "\(out2)")
+        }
+    }
+}

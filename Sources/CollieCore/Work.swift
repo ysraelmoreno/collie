@@ -46,6 +46,12 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var needs: [String]?; public var scope: [String]?
     /// M5.4: the token counts of every attempt of the loop on this task, summed (nil: none read). Counts only.
     public var tokens: TokenCount?
+    /// F2 R1, `work task add --agent --model`: the agent (claude|cursor|codex) and model of WHO WORKS on the task (nil:
+    /// the loop's). Only recorded and shown for now; R4 uses them.
+    public var agent: String?; public var model: String?
+    /// F2 R4: the last review of the task, as the summary shows it ("parecer: sem veto (personas: a, b; 2 achados)"),
+    /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
+    public var review: String?; public var reviewRejects: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -80,6 +86,10 @@ public struct WorkTask: Codable, Sendable, Equatable {
         needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
         scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
         tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
+        agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? nil   // F2 R1: tolerant too
+        model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
+        review = (try? c.decodeIfPresent(String.self, forKey: .review)) ?? nil   // F2 R4: tolerant too
+        reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
     }
 }
 
@@ -168,11 +178,20 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
     /// agent is told its output's tail once (nil: none, the loop as before).
     public var precheck: String?
+    /// F2 R1, `work run --review`: the review by personas is on (nil/false: off, the loop as before); `personas` the
+    /// names chosen (nil: auto, R5's router picks); `reviewerModel` the model that overrides every persona's (nil: each
+    /// persona's own, else the loop's). Only recorded and shown for now.
+    public var review: Bool?; public var personas: [String]?; public var reviewerModel: String?
+    /// F2 U1 (`--review`): `~/.claude.json` as the loop began, before its first judged agent: its hash
+    /// (`reviewGlobalConfigHash`) and its `env`/`autoConnectIde` (`reviewGlobalConfigRisky`). Every attempt of the run is
+    /// compared with these, never with a base taken after an agent ran. nil: not taken (no review, or a loop from before).
+    public var reviewConfigBase: String?, reviewConfigBaseRisky: String?
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
-        case agent, check, gate
-        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão" } }
+        /// F2 R3: `review`, the personas judging the attempt.
+        case agent, check, gate, review
+        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão" } }
     }
     public var phase: Phase?
     /// When `phase` last changed (`show`); nil: no phase, or a loop written before this existed.
@@ -274,8 +293,10 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil) {
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil,
+                review: Bool? = nil, personas: [String]? = nil, reviewerModel: String? = nil) {
         self.parallel = parallel; self.notify = notify; self.precheck = precheck
+        self.review = review; self.personas = personas; self.reviewerModel = reviewerModel
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
@@ -303,6 +324,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
         precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
+        review = (try? c.decodeIfPresent(Bool.self, forKey: .review)) ?? nil   // F2 R1: tolerant, like the newer ones
+        personas = (try? c.decodeIfPresent([String].self, forKey: .personas)) ?? nil
+        reviewerModel = (try? c.decodeIfPresent(String.self, forKey: .reviewerModel)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

@@ -134,6 +134,17 @@ public enum WorkStatusText {
     /// M3c.4: a loop run with `--notify end`: "avisos: só no fim". nil: no loop, or one that notifies every task.
     /// M5.6: the model the loop's agents run on, when it has one (`--model` or the daemon's `loopModel`).
     public static func modelLine(_ w: Work) -> String? { w.loop?.model.map { "modelo dos agentes: " + RerailText.clean($0, max: 64) } }
+    /// F2 R1: "revisão: ligada, personas auto" (+ ", revisor <model>"); nil: review off.
+    public static func reviewLine(_ w: Work) -> String? {
+        guard let l = w.loop, l.review == true else { return nil }
+        return "revisão: ligada, personas " + (l.personas.map { RerailText.clean($0.joined(separator: ", "), max: 200) } ?? "auto")
+            + (l.reviewerModel.map { ", revisor " + RerailText.clean($0, max: 100) } ?? "")
+    }
+    /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
+    public static func workerLabel(_ t: WorkTask) -> String {
+        let parts = [t.agent.map { "agente " + RerailText.clean($0, max: 20) }, t.model.map { "modelo " + RerailText.clean($0, max: 100) }].compactMap { $0 }
+        return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
+    }
     public static func notifyLine(_ w: Work) -> String? { w.loop?.notify == .end ? "avisos: só no fim" : nil }
 
     /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> [<lane>] <detail>`
@@ -204,6 +215,9 @@ public enum WorkStatusText {
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
         let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
         var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" \(how): \(done.count) feitas, \(deferred.count) adiadas." + stateHint]
+        // A1 (reviewAdvisory): the tasks the review gave no opinion on
+        let silent = ran.filter { $0.review?.hasPrefix("parecer: " + ReviewVerdict.reviewAdvisoryNone) == true }.count
+        if silent > 0 { lines.append("parecer: \(silent) " + (silent == 1 ? "tarefa" : "tarefas") + " " + ReviewVerdict.reviewAdvisoryNone) }
         lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)

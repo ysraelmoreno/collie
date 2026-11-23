@@ -7,6 +7,7 @@ extension CommandRouter {
     func pluginHook(_ r: Request, from tid: UUID) async -> JSONValue {
         let none = JSONValue.object([:])
         guard let me = ws.terminals.first(where: { $0.id == tid }), me.preset == .claude,   // Cursor/Codex: not this phase
+              !reviewerHooksBare(me),   // F2 Z1: no plug-in guide (text from files in reach) into a reviewer
               let event = PluginHooks.Event(rawValue: str(r, "event") ?? ""),
               let payload = str(r, "payload").map({ Data($0.utf8) }), payload.count <= PluginHooks.maxInput,
               let project = try? await projectRoot(of: me) else { return none }

@@ -1,0 +1,8 @@
+f5453f2 fix(work): X5, line counts sent as a let, actor read out of an autoclosure
+899c272 fix(work): X5, test gaps and the personas' line contract
+4d68c30 fix(work): X4, reviewer marked before it exists, orphans swept, catalog checked at launch
+db2fea6 fix(work): X3, cancel, budget and the count of refusals in a row
+9578e3b test(work): X2, spec fence and check-output assertions match the prompt
+7bc20ff fix(work): X2, the verdict cannot be forged by text of the diff
+d14e79f test(work): X1, the agent's Tests folder exists before its commit
+8832a69 fix(work): X1, the reviewer runs in an empty scratch folder and the tree is rechecked

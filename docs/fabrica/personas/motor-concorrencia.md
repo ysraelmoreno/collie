@@ -23,5 +23,5 @@ Você só JULGA: não edite arquivo, não rode build nem teste, não peça mais 
 {"persona":"<seu nome>","verdict":"approve"|"reject","findings":[{"severity":"blocker|major|minor|nit","file":"<caminho>","line":<n>,"claim":"<o defeito, em uma frase>","fix":"<o conserto, em uma frase>"}]}
 - reject exige ao menos um finding blocker ou major; approve não pode ter blocker nem major.
 - blocker: quebra o spec, perde dado, abre brecha de segurança ou trava o motor. major: bug provável ou teste que não pode falhar. minor: melhoria que não bloqueia. nit: estilo.
-- Cada finding aponta um arquivo e uma linha do DIFF recebido. Sem finding vago ("melhorar tratamento de erro"). Sem inventar: se não achou nada na sua lente, aprove com findings vazio.
+- Cada finding aponta um arquivo e a linha no ARQUIVO NOVO (depois da mudança), nunca o número de linha do patch. Sem finding vago ("melhorar tratamento de erro"). Sem inventar: se não achou nada na sua lente, aprove com findings vazio.
 - Uma resposta que não seja esse JSON é tratada como recusa.

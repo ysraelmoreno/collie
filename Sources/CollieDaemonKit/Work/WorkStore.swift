@@ -129,6 +129,7 @@ actor WorkStore {
             if from == .deferred || from == .abandoned {
                 w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].updatedAt = at
                 if !keepTries { w.tasks[i].tries = nil }
+                if w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }   // F2 X3: reopened, the refusals in a row start over
                 w.tasks[i].forgetResume()   // M2b.1: it starts over, with a fresh agent
                 w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
             }

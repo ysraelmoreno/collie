@@ -1,0 +1,8 @@
+f4f2bff0 fix(work): W3, patchDir takes the work id
+30143f81 fix(work): W3, config written by another terminal during the review is moved, not a touch
+e955ec5c fix(work): W2, Self.agentConfigs in reviewSnapshot
+390095a0 fix(work): W2, reviewer reads a read-only reviewSnapshot of the judged commit
+2de94829 fix(work): W1, restore the quote lost before --mcp-config
+d0824b09 fix(work): W1, reviewer launches with no MCP (reviewerNoMcp) and joins no lot
+a5d0ed10 docs(fabrica): specs e check do quarto laço de correção da F2 (W1, W2, W3)
+466ec2e8 docs(fabrica): revisão independente da F2, quarta rodada (MCP do usuário e processos em segundo plano)

@@ -36,6 +36,8 @@ actor CommandRouter {
     /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
     /// M3d.1: each wait keeps its client's pid and when it began (`activitySeq`), against the terminal's last tool call.
     var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
+    /// F2 R4: the loops' reviewer terminals, alive: never counted as someone working in the paddock (`loopOthersWorking`).
+    var loopReviewers: Set<UUID> = []
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
@@ -1071,13 +1073,19 @@ actor CommandRouter {
             e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.gitBranch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
+        // F2 Z3b: a loop reviewer loads no auto-memory (Claude Code's own switch, read in its 2.1.x build): a process the
+        // judged agent left alive could have planted a `MEMORY.md` under `~/.claude/projects/`, writable in strict
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1" }
+        // F2 V2: nor connects to an IDE (`autoConnectIde` of `~/.claude.json`, writable in strict): Claude Code checks
+        // `CLAUDE_CODE_AUTO_CONNECT_IDE === false` first (read in the installed 2.1.x build)
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_AUTO_CONNECT_IDE"] = "false" }
         if sandboxed(rec), let home = config.sandboxHome {
             e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
         }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
                                           resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil,
-                                          pluginDirs: pluginDirs)
+                                          pluginDirs: pluginDirs, reviewerNoMcp: reviewerHooksBare(rec))
     }
 
     /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable

@@ -1,0 +1,10 @@
+f67774e test(work): Y2c, the review's cancel tests time-limited; the daemon's start sweep removes an orphan reviewer
+dc03987 fix(work): Y2b, the line check capped and skipped past it; ignored files in the review's tree check
+c6686d7 fix(work): Y2a, a reviewer whose summon fails after its launch is removed before it is unmarked
+3600f5c fix(work): Y2a, a reviewer that touched the tree is no review refusal
+ef5a119 docs(fabrica): Y2 dividido em Y2a, Y2b e Y2c depois de 3 tentativas sem commit
+6ea2713 test(work): Y1, the reviewer's profile checked by its rules' order; run for real where a sandbox applies
+0b1594a fix(work): Y1, paths compared raw (standardizedFileURL turns /private/tmp into the /tmp symlink)
+335394e fix(work): Y1, mkdtemp's path read while its buffer lives; the rig makes its daemon root
+884ec46 test(work): Y1, the router's config read with await
+00cf10c fix(work): Y1, the reviewer's folder leaves the temp dir for the daemon's root

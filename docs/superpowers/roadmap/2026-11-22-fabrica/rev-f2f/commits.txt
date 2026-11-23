@@ -1,0 +1,6 @@
+6b49bacd fix(work): V3, reviewMemoryDenied and reviewPathLinked
+94e2428e fix(work): V2, globalConfigHome: the tests' fake home moves only .claude.json, not plantedConfig's home
+b4f0e425 fix(work): V2, reviewGlobalConfigHash: ~/.claude.json changed by the judged agent silences the reviewers
+c28cb773 fix(work): V1, reviewSnapshotOutside: the reviewer's copy is exported outside the loop's profile
+fa157792 docs(fabrica): specs e check do quinto laço de correção da F2 (V1, V2, V3)
+1500e2ca docs(fabrica): revisão independente da F2, quinta rodada (config global e snapshot sob sandbox)

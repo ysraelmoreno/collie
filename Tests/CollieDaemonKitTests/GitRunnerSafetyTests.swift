@@ -28,3 +28,26 @@ import Foundation
         #expect(!FileManager.default.fileExists(atPath: sentinel.path))
     }
 }
+
+/// F2 U2 (reviewNoReplace): no git of the daemon reads a replacement object.
+@Suite struct GitRunnerTests {
+    @Test func replaceObjectsAreIgnored() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-replace-\(UUID().uuidString)").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        func git(_ a: String...) async throws -> String {
+            try await GitRunner.run(["-c", "user.name=t", "-c", "user.email=t@t"] + a, in: d).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try await git("init", "-q", "-b", "main")
+        try "real\n".write(to: d.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        _ = try await git("add", "f"); _ = try await git("commit", "-qm", "real")
+        let real = try await git("rev-parse", "HEAD")
+        try "fake\n".write(to: d.appendingPathComponent("f"), atomically: true, encoding: .utf8)
+        _ = try await git("commit", "-qam", "fake")
+        let fake = try await git("rev-parse", "HEAD")
+        _ = try await git("replace", real, fake)
+        _ = try await git("commit-graph", "write", "--reachable")
+        #expect(try await git("show", "\(real):f") == "real")
+        #expect(try await git("log", "-1", "--format=%s", real) == "real")
+    }
+}

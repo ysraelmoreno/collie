@@ -8,6 +8,19 @@ import Foundation
         #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
     }
 
+    /// A2 (reviewAdvisoryDoc): `work run --review` is an opinion (parecer), never an approval, in the CLI help and the
+    /// MCP `work_run` alike.
+    @Test func reviewHelpSaysParecer() throws {
+        let help = try #require(Commands.spec("work.run")?.params.first { $0.name == "review" }?.help)
+        let tool = MCPSchema.tools(shepherd: true).first { if case .object(let o) = $0 { o["name"] == .string("work_run") } else { false } }
+        guard case .object(let o)? = tool, case .object(let schema)? = o["inputSchema"], case .object(let props)? = schema["properties"],
+              case .object(let review)? = props["review"], case .string(let mcp)? = review["description"] else { Issue.record("work_run --review"); return }
+        for h in [help, mcp] {
+            #expect(h.contains("parecer") && h.contains("vetoes with a blocker or major") && h.contains("never approves alone")
+                    && h.contains("equals no --review") && h.contains("strict") && !h.contains("aprovado pelo revisor"), "\(h)")
+        }
+    }
+
     @Test func adminRemoteFromTheCLI() throws {
         let r = try ArgvParser.parse(["admin", "remote", "on", "--port", "47821", "--tailscale-only", "off"])
         #expect(r.command == "admin.remote" && r.args["action"] == .string("on") && r.args["port"] == .number(47821)

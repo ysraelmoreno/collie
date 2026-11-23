@@ -175,6 +175,28 @@ import CollieProtocol
         #expect(r.tasks.first?.tries == 1 && r.tasks.first?.lastFailure == "no new commit")
     }
 
+    /// F2 R1: a loop and a task written before the review and the worker existed decode as before (nil); a malformed one
+    /// is nil too, and the new fields round-trip.
+    @Test func reviewAndWorkerFieldsDecodeOldAndRoundTrip() async throws {
+        let old = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"A","terminalId":"6F9619FF-8B86-D011-B42D-00C04FC964F0","openedAt":"2026-11-01T10:00:00Z","tasks":[{"id":"1","title":"t","state":"open","updatedAt":"2026-11-01T10:00:00Z"}],"jobs":[],"notes":[],"commits":[],"loop":{"state":"running","attempt":1,"tries":3,"timeout":3600,"used":0,"startedAt":"2026-11-01T10:00:00Z"}}"#
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        let w = try d.decode(Work.self, from: Data(old.utf8))
+        let l = try #require(w.loop)
+        #expect(l.review == nil && l.personas == nil && l.reviewerModel == nil && w.tasks[0].agent == nil && w.tasks[0].model == nil)
+        let bad = old.replacingOccurrences(of: #""used":0"#, with: #""used":0,"review":"yes","personas":7,"reviewerModel":[1]"#)
+            .replacingOccurrences(of: #""state":"open""#, with: #""state":"open","agent":3"#)
+        let b = try d.decode(Work.self, from: Data(bad.utf8))
+        #expect(b.loop != nil && b.loop?.review == nil && b.loop?.personas == nil && b.loop?.reviewerModel == nil && b.tasks[0].agent == nil)
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let s = WorkStore(dir: dir)
+        let n = try await s.start(title: "A", terminal: UUID(), paddockId: UUID(), branch: "b")
+        var task = WorkTask(id: "1", title: "t"); task.agent = "cursor"; task.model = "sonnet"
+        let loop = WorkLoopState(tasks: ["1"], startedAt: Date(timeIntervalSince1970: 1_800_000_000), review: true, personas: ["correcao"], reviewerModel: "opus")
+        try await s.update(n.id) { $0.loop = loop; $0.tasks = [task] }
+        let r = try #require(try await WorkStore(dir: dir).get(n.id))
+        #expect(r.loop == loop && r.tasks.map(\.agent) == ["cursor"] && r.tasks.map(\.model) == ["sonnet"])
+    }
+
     @Test func malformedLoopIsNoLoop() throws {
         let json = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"A","terminalId":"6F9619FF-8B86-D011-B42D-00C04FC964F0","openedAt":"2026-11-01T10:00:00Z","tasks":[],"jobs":[],"notes":[],"commits":[],"loop":7}"#
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601

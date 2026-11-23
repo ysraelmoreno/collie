@@ -90,6 +90,9 @@ extension CommandRouter {
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
         let notify = try Self.loopNotify(str(r, "notify"))
+        let review = try await Self.loopReview(review: flag(r, "review"), personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
+        // F2 Z2: fail closed, the loop's agent and its reviewers start strict or there is no review (none without it)
+        if review.on, let why = Self.reviewNeedsStrict(sandboxed: config.sandboxHome != nil, mode: sandboxMode) { throw invalid(why) }
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
@@ -97,7 +100,8 @@ extension CommandRouter {
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck,
+                                 review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -189,6 +193,54 @@ extension CommandRouter {
         return n
     }
 
+    /// F2 R1: `--review` with `--personas auto|a,b,c` and `--reviewer-model`. F2 X4: `--review` with no persona committed
+    /// at HEAD is refused. Either without `--review`, a persona whose
+    /// name is no file in `docs/fabrica/personas/` AS COMMITTED AT HEAD (the loop's base: the worktree's edits never pick
+    /// who judges), or a model that is no model name: invalidArgs. `personas` nil: auto.
+    static func loopReview(review: Bool, personas: String?, reviewerModel: String?, dir: URL) async throws(ProtocolError)
+        -> (on: Bool, personas: [String]?, reviewerModel: String?) {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard review else {
+            if personas != nil || reviewerModel != nil { throw invalid("--personas and --reviewer-model go with --review only") }
+            return (false, nil, nil)
+        }
+        if let reviewerModel { try ClaudeModel.validate(reviewerModel) }
+        // F2 X4: no catalog at HEAD is refused now, not after an agent's whole turn
+        let known = await committedPersonas(dir)
+        guard !known.isEmpty else { throw invalid("--review: sem personas em docs/fabrica/personas no HEAD") }
+        guard let personas, personas != "auto" else { return (true, nil, reviewerModel) }
+        let names = TaskScheduler.list(personas)
+        if let bad = names.first(where: { !known.contains($0) }) {
+            throw invalid("unknown persona '\(RerailText.clean(bad, max: 60))'; known (\(personasDir), at HEAD): " + known.sorted().joined(separator: ", "))
+        }
+        return (true, names, reviewerModel)
+    }
+    static let personasDir = "docs/fabrica/personas/"
+
+    /// F2 Z2: why `--review` is refused, nil when it runs: the loop's agent (off a lane it takes the workspace's mode) and
+    /// its reviewers start strict only in a sandboxed daemon in strict mode. Open mode, or no terminal sandbox at all,
+    /// lets the judged agent write the CLAUDE.md files the reviewer loads (~/CLAUDE.md, ~/.claude/CLAUDE.md…).
+    static func reviewNeedsStrict(sandboxed: Bool, mode: SandboxMode) -> String? {
+        sandboxed && mode == .strict ? nil
+            : "--review exige agentes em modo strict: o modo open deixa o agente julgado escrever instruções que o revisor carrega"
+    }
+
+    /// F2 Z2: what a strict loop agent writes under the home besides caches (`WorkLoop.strictWritable`): its write
+    /// grants (any terminal's: fail closed) and each paddock's folder with its lanes (the paddock's parent).
+    func loopStrictWrites() -> (home: URL, paths: [String]) {
+        (sandboxHomeDir, sandboxGrants.filter { $0.access == .write }.map(\.path)
+            + ws.paddocks.map { URL(fileURLWithPath: $0.path).deletingLastPathComponent().path })
+    }
+    /// The persona names (`<name>.md`) in `personasDir` at HEAD; none: no such folder, or no git.
+    static func committedPersonas(_ dir: URL) async -> Set<String> {
+        let out = (try? await GitRunner.run(["ls-tree", "--name-only", "HEAD", "--", personasDir], in: dir, timeout: .seconds(30)))
+        guard let out, out.status == 0 else { return [] }
+        return Set(out.stdout.split(separator: "\n").compactMap { line in
+            let name = (line as Substring).split(separator: "/").last.map(String.init) ?? ""
+            return name.hasSuffix(".md") ? String(name.dropLast(3)) : nil
+        })
+    }
+
     /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.
     private func takeLoopCard(_ work: UUID) -> Bool { loopCards.removeValue(forKey: work) == nil }
 
@@ -264,6 +316,8 @@ extension CommandRouter {
             + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
+            + (l.review == true ? "revisão por personas: \(l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto")"
+               + (l.reviewerModel.map { ", revisor \(quoted($0))" } ?? "") + ". " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {
@@ -370,13 +424,16 @@ extension CommandRouter {
     /// `collie work run` again continues from the next open task. M3.6: its lanes go first (no orphan lane is left
     /// behind), the tasks that ran in them are open again and `lanes` is empty.
     func stopLoopsLeftRunning() async {
+        // F2 Y1: no reviewer of this daemon exists yet: every folder a fallen one left goes, and their parent
+        let reviewRoot = WorkLoop.reviewRoot(of: config.paths.root)
+        try? FileManager.default.removeItem(at: reviewRoot)
         guard let all = try? await work.list(includeClosed: true) else { return }
         let now = Date()
         for w in all where w.loop?.state == .running {
             await removeLanes(of: w)
             SandboxLaunch.remove(w.id, root: config.paths.root)
             // its agents' records (the processes died with the daemon)
-            for t in Self.loopAgents(of: w, in: ws.terminals) { try? await remove(t) }
+            for t in Self.loopAgents(of: w, in: ws.terminals, reviewRoot: reviewRoot) { try? await remove(t) }
             try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
         await sweepOrphanLanes()
@@ -385,10 +442,14 @@ extension CommandRouter {
     /// M3.8: the terminals of `w`'s loop attempts, in its paddock: those whose id is on a loop job (`WorkJob.terminal`),
     /// whatever they are called. A job with no terminal on record (a work written before the field, or a daemon that
     /// fell between the summon and its write) still finds its agent by the job's id, the name it was summoned with.
-    static func loopAgents(of w: Work, in terminals: [TerminalRecord]) -> [TerminalRecord] {
+    /// Called only at the daemon's start, when no reviewer of this daemon exists yet.
+    static func loopAgents(of w: Work, in terminals: [TerminalRecord], reviewRoot: URL) -> [TerminalRecord] {
         let jobs = w.jobs.filter { $0.kind == .loop }
         let ids = Set(jobs.compactMap(\.terminal)), named = Set(jobs.filter { $0.terminal == nil }.map(\.id))
-        return terminals.filter { $0.paddockId == w.paddockId && (ids.contains($0.id) || named.contains($0.name)) }
+        // F2 X4: and every reviewer in the paddock (`AgentNaming.isReviewer`): a daemon that fell mid-review left it,
+        // and `loopReviewers` (memory only) no longer knows it, so it would count as someone working
+        return terminals.filter { $0.paddockId == w.paddockId
+            && (ids.contains($0.id) || named.contains($0.name) || AgentNaming.isReviewer(name: $0.name, cwd: $0.cwd, reviewRoot: reviewRoot)) }
     }
 
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
@@ -445,14 +506,15 @@ extension CommandRouter {
     // MARK: what RouterLoopHost needs from the router
 
     /// `lane` (M3.3): the agent is born in the work's paddock (no `--paddock`) with the lane as its folder and project.
-    func loopSummon(_ r: Request, as starter: UUID, lane: URL? = nil) async throws(ProtocolError) -> UUID {
+    /// `scratch` (F2 X1): a reviewer, born in that empty folder the loop made, as its folder and project.
+    func loopSummon(_ r: Request, as starter: UUID, lane: URL? = nil, scratch: URL? = nil) async throws(ProtocolError) -> UUID {
         let v: JSONValue
         do {
-            if let lane {
+            if lane != nil || scratch != nil {
                 guard let me = ws.terminals.first(where: { $0.id == starter }), me.isShepherd else {
-                    throw ProtocolError(code: .notShepherd, message: "a lane's agent is summoned as the loop's Shepherd")
+                    throw ProtocolError(code: .notShepherd, message: "a loop's agent is summoned as the loop's Shepherd")
                 }
-                v = try await summon(r, by: me, lane: lane)
+                v = try await summon(r, by: me, lane: lane, scratch: scratch)
             } else { v = try await shepherd(r, from: starter) }
         } catch {
             throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)")
@@ -467,7 +529,7 @@ extension CommandRouter {
     /// M3.3: `dir` is the host's own tree: a lane's host counts only what reaches its lane.
     /// M3b.2: `starter` nil counts the starter too (`anyoneWorking`).
     func loopOthersWorking(paddock: UUID, starter: UUID?, dir: URL) async -> String? {
-        for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir) {
+        for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir, reviewers: loopReviewers) {
             if await targetBusy(t.id) { return t.name }
         }
         return nil
@@ -532,8 +594,9 @@ extension CommandRouter {
 
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
     /// For a lane: not the other lanes' agents, nor a terminal in the paddock's worktree (that tree is the integrator's, M3.4).
-    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL) -> [TerminalRecord] {
-        terminals.filter { $0.paddockId == paddock && $0.id != starter && loopSharesWorktree($0, dir) }
+    /// F2 R4: a loop's reviewer (`reviewers`) only reads the text it was given: it never reaches the tree.
+    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL, reviewers: Set<UUID> = []) -> [TerminalRecord] {
+        terminals.filter { $0.paddockId == paddock && $0.id != starter && !reviewers.contains($0.id) && loopSharesWorktree($0, dir) }
     }
 
     /// A terminal can edit the loop's worktree only when its folder is inside it (or cannot be told): one working
@@ -564,6 +627,19 @@ extension CommandRouter {
 
     func loopDismiss(_ id: UUID) async {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
+        loopReviewers.remove(id)
+    }
+
+    /// F2 Z3b: `loopDismiss`, then what is left of the terminal's process group killed. Its PTY's process leads its own
+    /// session (`setsid`), so its pid is the group's id, read before the dismiss forgets it.
+    /// F2 W2: and every descendant (each Bash of Claude Code is a group of its own), swept before the dismiss and again
+    /// after (`WorkLoop.reap`). The pid is read only while its process runs: a reaped pid may be reused.
+    func loopDismissReaping(_ id: UUID) async {
+        let p = await registry.process(id)
+        let running = p?.isRunning == true, leader = running ? p?.pid : nil
+        let known = leader.map { WorkLoop.descendants(of: [$0]) } ?? []
+        await loopDismiss(id)
+        WorkLoop.reap(leader: leader, running: running, known: known)
     }
 
     /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never
@@ -602,14 +678,16 @@ extension CommandRouter {
 
     /// With a terminal sandbox in force, an attempt's agent must run in one too (a free one is dismissed, the attempt fails).
     /// A lane's agent (M3.3) also when no terminal is sandboxed (then never): sandboxed, strict, the lane its project.
-    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil) -> Bool {
+    /// F2 Z2 (`strict`: a loop with `--review`, its agent or a reviewer): it must have started strict, never in a
+    /// daemon with no terminal sandbox (`reviewNeedsStrict`, again at each summon: the mode may change mid-loop).
+    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil, strict: Bool = false) -> Bool {
         let t = ws.terminals.first { $0.id == id }
         if let lane {
             guard let t, sandboxed(t), t.startMode == .strict, lanePaddock(of: t) != nil else { return false }
             return t.projectRoot == SignedAppCheck.realPath(lane)
         }
-        guard config.sandboxHome != nil else { return true }
-        return t.map(sandboxed) ?? false
+        guard config.sandboxHome != nil else { return !strict }
+        return t.map { sandboxed($0) && (!strict || $0.startMode == .strict) } ?? false
     }
 
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
@@ -634,7 +712,7 @@ struct LoopRevertGit: RevertGit {
 }
 
 /// M3b.1: git for the lanes' birth and removal: (args, dir, sandbox profile or nil).
-typealias LaneGit = @Sendable (_ args: [String], _ dir: URL, _ profile: URL?) async throws(ProtocolError) -> ProcessResult
+typealias LaneGit = @Sendable (_ args: [String], _ dir: URL, _ profile: URL?, _ stdin: Data?, _ timeout: Duration, _ cap: Int) async throws(ProtocolError) -> ProcessResult
 
 struct RouterLoopHost: LoopHost {
     let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID, dir: URL
@@ -669,15 +747,18 @@ struct RouterLoopHost: LoopHost {
                                             "DEVELOPER_DIR", "SDKROOT", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "GOPATH", "GOROOT",
                                             "CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PYENV_ROOT", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
 
-    func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        // no --paddock: the starter stands in the work's paddock (work.start took it from there)
+    /// The summon the loop sends as its starter. No --paddock: the starter stands in the work's paddock (work.start took it from there).
+    func summonRequest(_ name: String, _ loop: WorkLoopState) -> Request {
         var args: [String: JSONValue] = ["name": .string(name)]
         if let p = loop.preset { args["preset"] = .string(p) }
         if let m = loop.model { args["model"] = .string(m) }
         if let c = loop.command { args["command"] = .string(c) }
-        let id = try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter,
-                                             lane: lane?.path)
-        guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
+        return Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args)
+    }
+
+    func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, lane: lane?.path)
+        guard await router.loopAgentSandboxed(id, lane: lane?.path, strict: loop.review == true) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }
@@ -686,6 +767,26 @@ struct RouterLoopHost: LoopHost {
 
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
+    }
+    /// F2 R4/X4: marked as a reviewer inside the summon, before its terminal is launched (`summon(scratch:)`): never a
+    /// moment in the paddock unmarked.
+    /// F2 X1: born in `cwd` (the loop's empty `reviewScratch`), never in the worktree or a lane: its project, so its
+    /// sandbox profile writes there and not in the worktree nor the repository's git dir (`cwd` is no repo). F2 Y1:
+    /// `cwd` is inside Collie's closed dir (`reviewRoot`); the profile opens that folder alone again. The limit:
+    /// the strict profile still writes the temp dirs and the write grants of the reviewer's lot; a worktree under one
+    /// of those stays writable, and the tree's recheck after the review (`reviewTree`) is what catches that.
+    // F2 X4: a daemon that falls mid-review leaves the reviewer terminals; the start sweep removes them (`loopAgents`)
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, scratch: cwd)
+        guard await router.loopAgentSandboxed(id, strict: true) else {
+            await router.loopDismiss(id)
+            throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
+        }
+        return id
+    }
+    func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output
     }
     func resubmitted(_ terminal: UUID) async -> Bool { await router.asks.submitRetried(terminal) }
 
@@ -700,6 +801,7 @@ struct RouterLoopHost: LoopHost {
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
+    func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
@@ -723,7 +825,10 @@ struct RouterLoopHost: LoopHost {
     /// M3b.1: the daemon's own git, as `PaddockManager` runs for a paddock's worktree: no profile (the loop's cannot
     /// write a lane), with `loopGit`'s care (hooks, fsmonitor and the repo's own filters off: `worktree add` checks out).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
-        try await laneRunner(args, dir, nil)
+        try await laneRunner(args, dir, nil, nil, .seconds(120), 1 << 20)
+    }
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await laneRunner(args, dir, nil, stdin, timeout, cap)
     }
     /// M3b.5: the install id (`remote/install-id` of this daemon's root): a dev daemon and the installed one differ.
     func laneOwner() async -> String { (try? await router.remoteInstallId()) ?? "" }
@@ -731,7 +836,8 @@ struct RouterLoopHost: LoopHost {
     /// Git for the loop, in an agent-writable repo: under `profile`, hooks and fsmonitor off (GitRunner), and the filter
     /// drivers the repo's own config defines (local/worktree scope: what an agent can plant), external diffs and textconv off.
     /// The user's global drivers (git-lfs) stay.
-    static func loopGit(_ args: [String], in dir: URL, profile: URL?) async throws(ProtocolError) -> ProcessResult {
+    static func loopGit(_ args: [String], in dir: URL, profile: URL?, stdin: Data? = nil,
+                        timeout: Duration = .seconds(120), cap: Int = 1 << 20) async throws(ProtocolError) -> ProcessResult {
         do {
             return try await GitRunner.$sandbox.withValue(profile) {
                 var off = [("diff.external", "")]
@@ -749,7 +855,8 @@ struct RouterLoopHost: LoopHost {
                 var a = args
                 if a.first == "diff" { a.insert(contentsOf: ["--no-ext-diff", "--no-textconv"], at: 1) }
                 // by env, not `-c`: a driver name may hold `=`
-                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off)
+                // T2 f2fix8: 1 MiB, as GitRunner's; only the reviewer's copy asks more (`reviewSnapshotCap`)
+                return try await GitRunner.run(a, in: dir, timeout: timeout, config: off, cap: cap, stdin: stdin)
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }
@@ -784,6 +891,7 @@ struct RouterLoopHost: LoopHost {
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path, isDirectory: &isDir) && !isDir.boolValue
     }
     /// A lane's patches (and evidence) in its own subfolder, `lanes/<the lane's folder name>`: never mixed with another lane's.
+    var reviewRoot: URL { WorkLoop.reviewRoot(of: root) }
     func patchDir(_ work: UUID) -> URL {
         let d = root.appendingPathComponent("work-loops").appendingPathComponent(work.uuidString.lowercased())
         return lane.map { d.appendingPathComponent("lanes").appendingPathComponent($0.path.lastPathComponent) } ?? d

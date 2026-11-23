@@ -27,15 +27,49 @@ extension WorkLoop {
     /// or not committed): said, never the title in silence.
     static let noSpec = "sem spec no commit base"
 
-    /// F2 X1: a reviewer's own folder, empty (no agent config of anyone's), made by the daemon under its temp dir, outside
-    /// every worktree and paddock: one per attempt and persona (the name carries both), removed once its reviewer is
-    /// dismissed. nil: it could not be made (that reviewer is mute, a refusal).
-    /// ponytail: a daemon that falls mid-review leaves it in the temp dir, which the system clears.
-    static func reviewScratch(_ name: String) -> URL? {
-        let d = FileManager.default.temporaryDirectory.appendingPathComponent(AgentNaming.reviewDir)
-            .appendingPathComponent(name + "-" + UUID().uuidString.prefix(8).lowercased())
-        do { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) } catch { return nil }
-        return d
+    /// F2 Y1: the parent of every reviewer's folder: `<daemon root>/<AgentNaming.reviewDir>`, inside Collie's own dir,
+    /// which every terminal's profile keeps closed (read and write, `SandboxProfile`): no agent, the judged one
+    /// included, plants a CLAUDE.md there or swaps a component for a symlink. Never the temp dir, which every terminal writes.
+    static func reviewRoot(of daemonRoot: URL) -> URL { daemonRoot.appendingPathComponent(AgentNaming.reviewDir) }
+
+    /// What an agent loads from its folder's ancestors: none may be in a reviewer's parent.
+    static let agentConfigs = ["CLAUDE.md", "AGENTS.md", ".claude", ".cursor"]
+
+    /// F2 X1/Y1: a reviewer's own folder, empty, made by the daemon under `reviewRoot` (outside every worktree, paddock
+    /// and temp dir) by `mkdtemp` (a name no one can guess), mode 0700, one per attempt and persona. nil (that reviewer
+    /// is mute, a refusal): a component of the path is a symlink or not a folder, the parent is not the daemon's
+    /// user's, it holds an agent's config, or the folder could not be made. Removed once its reviewer is dismissed
+    /// (`dropScratch`); what a fallen daemon left goes at the next start (`stopLoopsLeftRunning`).
+    static func reviewScratch(_ name: String, in reviewRoot: URL) -> URL? {
+        let root = reviewRoot.standardizedFileURL.path
+        func plainDir(_ p: String, owned: Bool) -> Bool {
+            var st = stat()
+            guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return false }   // a symlink is S_IFLNK
+            return !owned || st.st_uid == geteuid()
+        }
+        // ponytail: two tries: a loop that just removed the empty parent (`dropScratch`) makes the first fail
+        for _ in 0..<2 {
+            var prefix = ""
+            for c in URL(fileURLWithPath: root).deletingLastPathComponent().pathComponents.dropFirst() {
+                prefix += "/" + c
+                guard plainDir(prefix, owned: false) else { return nil }
+            }
+            if mkdir(root, 0o700) != 0, errno != EEXIST { return nil }
+            guard plainDir(root, owned: true) else { return nil }
+            guard !agentConfigs.contains(where: { var st = stat(); return lstat(root + "/" + $0, &st) == 0 }) else { return nil }
+            var tmpl = Array((root + "/" + name + "-XXXXXXXX").utf8CString)
+            if let made = tmpl.withUnsafeMutableBufferPointer({ mkdtemp($0.baseAddress!) }) {
+                return URL(fileURLWithPath: String(cString: made), isDirectory: true)
+            }
+            guard errno == ENOENT else { return nil }
+        }
+        return nil
+    }
+
+    /// A reviewer's folder goes, and its parent with it once no other reviewer's folder is in it (`rmdir` of an empty dir).
+    static func dropScratch(_ scratch: URL) {
+        try? FileManager.default.removeItem(at: scratch)
+        rmdir(scratch.deletingLastPathComponent().path)
     }
 
     /// No answer (summon refused, terminal gone, past the turn's time, empty text): a refusal, fail closed.
@@ -99,7 +133,7 @@ extension WorkLoop {
         let spec = await specText(task.spec, at: before, dir)
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
-        let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name)) }
+        let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
@@ -132,7 +166,7 @@ extension WorkLoop {
         // every reviewer goes, whatever it answered, before the machine moves on
         for case let (_, _, id?) in runs { await host.dismiss(id) }
         // nothing above throws: the folders go whatever happened, a cancelled loop included
-        for case let s? in scratch { try? FileManager.default.removeItem(at: s) }
+        for case let s? in scratch { Self.dropScratch(s) }
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
         let outcome = ReviewVerdict.aggregate(verdicts)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }

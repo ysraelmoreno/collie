@@ -57,9 +57,11 @@ protocol LoopHost: Sendable {
     /// F2 R4: a reviewer's terminal: `summon` as the starter's (never leashed to the agent that worked; `loop.model` is
     /// the persona's), and marked so that `othersWorking`/`anyoneWorking` never count it (the loop's own reviewer is
     /// no one working in the paddock). Dismissed with `dismiss`.
-    /// F2 X1: `cwd` is its folder and its project: an empty one the loop made (`reviewScratch`), never the worktree nor
+    /// F2 X1: `cwd` is its folder and its project: an empty one the loop made (`reviewScratch`, under `reviewRoot`), never the worktree nor
     /// a checkout of it, so no CLAUDE.md, AGENTS.md, settings or hooks the judged agent committed ever load there.
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID
+    /// F2 Y1: where the reviewers' folders are made (`WorkLoop.reviewScratch`): `<daemon root>/collie-review`.
+    var reviewRoot: URL { get }
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -85,6 +87,8 @@ extension LoopHost {
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
         throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
     }
+    /// The tests' fakes: beside their patches (a fake with reviewers puts it outside the temp dir).
+    var reviewRoot: URL { WorkLoop.reviewRoot(of: patchDir(UUID()).deletingLastPathComponent()) }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {

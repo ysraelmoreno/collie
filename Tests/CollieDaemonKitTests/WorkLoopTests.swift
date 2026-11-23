@@ -56,6 +56,14 @@ actor LoopFakeHost: LoopHost {
     private var starterGone = false
     private var names: [UUID: String] = [:], workingCalls: [UUID: Int] = [:]
 
+    /// F2 Y1: the daemon's root as the reviewers see it: under the package's `.build`, never in the temp dir.
+    nonisolated let root = LoopFakeHost.testRoot()
+    nonisolated var reviewRoot: URL { WorkLoop.reviewRoot(of: root) }
+    /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
+    static func testRoot() -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/collie-test-\(UUID().uuidString.prefix(8).lowercased())")
+    }
     init(dir: URL) {
         self.dir = dir
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
@@ -263,7 +271,7 @@ struct LoopRig {
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
-    func cleanup() { for u in [repo, storeDir, host.patches] { try? FileManager.default.removeItem(at: u) } }
+    func cleanup() { for u in [repo, storeDir, host.patches, host.root] { try? FileManager.default.removeItem(at: u) } }
 }
 
 private typealias Script = LoopScript

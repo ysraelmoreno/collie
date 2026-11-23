@@ -275,7 +275,16 @@ enum SandboxProfile {
             var u = URL(fileURLWithPath: f).deletingLastPathComponent()
             while u.path.count >= collie.count { vetted.insert(u.path); u = u.deletingLastPathComponent() }
         }
+        // F2 Y1: a loop reviewer's project is its own folder in `<collie>/collie-review` (`WorkLoop.reviewScratch`):
+        // that folder alone open again (it is its cwd), its ancestors examined, never listed; the parent stays closed
+        let reviewRoot = collie + "/" + AgentNaming.reviewDir
+        let reviewer = URL(fileURLWithPath: project).deletingLastPathComponent().path == reviewRoot
+        if reviewer {
+            var u = URL(fileURLWithPath: project).deletingLastPathComponent()
+            while u.path.count >= collie.count { vetted.insert(u.path); u = u.deletingLastPathComponent() }
+        }
         rule("allow", "file-read-metadata", vetted.sorted().map(lit))
+        if reviewer { rule("allow", "file-read* file-write*", [sub(project)]) }
         rule("allow", "file-write*", [sub(tdir + "/state")])
         rule("deny", "network-outbound", tagged: true, ["(remote unix-socket \(sub(collie)))"])
         rule("allow", "network-outbound", ["(remote unix-socket (path-literal \(q(real(i.socket)))))"])

@@ -407,13 +407,16 @@ extension CommandRouter {
     /// `collie work run` again continues from the next open task. M3.6: its lanes go first (no orphan lane is left
     /// behind), the tasks that ran in them are open again and `lanes` is empty.
     func stopLoopsLeftRunning() async {
+        // F2 Y1: no reviewer of this daemon exists yet: every folder a fallen one left goes, and their parent
+        let reviewRoot = WorkLoop.reviewRoot(of: config.paths.root)
+        try? FileManager.default.removeItem(at: reviewRoot)
         guard let all = try? await work.list(includeClosed: true) else { return }
         let now = Date()
         for w in all where w.loop?.state == .running {
             await removeLanes(of: w)
             SandboxLaunch.remove(w.id, root: config.paths.root)
             // its agents' records (the processes died with the daemon)
-            for t in Self.loopAgents(of: w, in: ws.terminals) { try? await remove(t) }
+            for t in Self.loopAgents(of: w, in: ws.terminals, reviewRoot: reviewRoot) { try? await remove(t) }
             try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
         await sweepOrphanLanes()
@@ -423,13 +426,13 @@ extension CommandRouter {
     /// whatever they are called. A job with no terminal on record (a work written before the field, or a daemon that
     /// fell between the summon and its write) still finds its agent by the job's id, the name it was summoned with.
     /// Called only at the daemon's start, when no reviewer of this daemon exists yet.
-    static func loopAgents(of w: Work, in terminals: [TerminalRecord]) -> [TerminalRecord] {
+    static func loopAgents(of w: Work, in terminals: [TerminalRecord], reviewRoot: URL) -> [TerminalRecord] {
         let jobs = w.jobs.filter { $0.kind == .loop }
         let ids = Set(jobs.compactMap(\.terminal)), named = Set(jobs.filter { $0.terminal == nil }.map(\.id))
         // F2 X4: and every reviewer in the paddock (`AgentNaming.isReviewer`): a daemon that fell mid-review left it,
         // and `loopReviewers` (memory only) no longer knows it, so it would count as someone working
         return terminals.filter { $0.paddockId == w.paddockId
-            && (ids.contains($0.id) || named.contains($0.name) || AgentNaming.isReviewer(name: $0.name, cwd: $0.cwd)) }
+            && (ids.contains($0.id) || named.contains($0.name) || AgentNaming.isReviewer(name: $0.name, cwd: $0.cwd, reviewRoot: reviewRoot)) }
     }
 
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
@@ -737,7 +740,8 @@ struct RouterLoopHost: LoopHost {
     /// F2 R4/X4: marked as a reviewer inside the summon, before its terminal is launched (`summon(scratch:)`): never a
     /// moment in the paddock unmarked.
     /// F2 X1: born in `cwd` (the loop's empty `reviewScratch`), never in the worktree or a lane: its project, so its
-    /// sandbox profile writes there and not in the worktree nor the repository's git dir (`cwd` is no repo). The limit:
+    /// sandbox profile writes there and not in the worktree nor the repository's git dir (`cwd` is no repo). F2 Y1:
+    /// `cwd` is inside Collie's closed dir (`reviewRoot`); the profile opens that folder alone again. The limit:
     /// the strict profile still writes the temp dirs and the write grants of the reviewer's lot; a worktree under one
     /// of those stays writable, and the tree's recheck after the review (`reviewTree`) is what catches that.
     // F2 X4: a daemon that falls mid-review leaves the reviewer terminals; the start sweep removes them (`loopAgents`)
@@ -849,6 +853,7 @@ struct RouterLoopHost: LoopHost {
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path, isDirectory: &isDir) && !isDir.boolValue
     }
     /// A lane's patches (and evidence) in its own subfolder, `lanes/<the lane's folder name>`: never mixed with another lane's.
+    var reviewRoot: URL { WorkLoop.reviewRoot(of: root) }
     func patchDir(_ work: UUID) -> URL {
         let d = root.appendingPathComponent("work-loops").appendingPathComponent(work.uuidString.lowercased())
         return lane.map { d.appendingPathComponent("lanes").appendingPathComponent($0.path.lastPathComponent) } ?? d

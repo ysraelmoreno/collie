@@ -124,7 +124,7 @@ import CollieProtocol
         let agent = term(terminal, "renamed-by-the-owner", paddock: fallen.paddockId)
         let terminals = [agent, term(UUID(), name, paddock: fallen.paddockId), term(UUID(), "loop-a-1", paddock: fallen.paddockId),
                          term(UUID(), "other", paddock: UUID()), term(fallen.terminalId, "Rex", paddock: fallen.paddockId)]
-        #expect(CommandRouter.loopAgents(of: fallen, in: terminals) == [agent])
+        #expect(CommandRouter.loopAgents(of: fallen, in: terminals, reviewRoot: URL(fileURLWithPath: "/nowhere")) == [agent])
         CommandRouter.sweepLeftRunning(&fallen, now: Date(timeIntervalSince1970: 9))
         #expect(fallen.loop?.state == .stopped && fallen.jobs[0].state == .gone && fallen.tasks[0].state == .open)
     }
@@ -172,10 +172,10 @@ import CollieProtocol
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
         let old = term("loop-a-1"), new = term("anything", known)
         let terminals = [old, new, term("w-b-t1"), term("sub"), term("sh"), term("loop-zz-9")]
-        #expect(CommandRouter.loopAgents(of: w, in: terminals) == [old, new])
+        #expect(CommandRouter.loopAgents(of: w, in: terminals, reviewRoot: URL(fileURLWithPath: "/nowhere")) == [old, new])
         // another paddock's terminals are never the loop's
         var elsewhere = w; elsewhere.paddockId = UUID()
-        #expect(CommandRouter.loopAgents(of: elsewhere, in: terminals).isEmpty)
+        #expect(CommandRouter.loopAgents(of: elsewhere, in: terminals, reviewRoot: URL(fileURLWithPath: "/nowhere")).isEmpty)
     }
 
     @Test func theJobsTerminalIsOptionalAndTolerant() throws {

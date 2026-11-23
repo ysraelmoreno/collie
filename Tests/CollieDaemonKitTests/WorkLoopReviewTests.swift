@@ -417,7 +417,7 @@ import CollieProtocol
     }
 
     /// F2 X1: the loop cancelled mid-review: the reviewers go, and their folders with them.
-    @Test func scratchFoldersGoOnCancel() async throws {
+    @Test(.timeLimit(.minutes(1))) func scratchFoldersGoOnCancel() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1)
         await r.host.setReviewerAct("correcao", { _ in try await Task.sleep(for: .seconds(3600)) })
@@ -461,7 +461,7 @@ import CollieProtocol
     }
 
     /// F2 X3: cancelled mid-review, the mute reviewers are no refusal: `cancelled`, no review, count or note written.
-    @Test func cancelMidReviewWritesNoRefusal() async throws {
+    @Test(.timeLimit(.minutes(1))) func cancelMidReviewWritesNoRefusal() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1)
         await r.host.setReviewerAct("correcao", { _ in try await Task.sleep(for: .seconds(3600)) })
@@ -558,6 +558,33 @@ import CollieProtocol
                          term("w-task-a-t1-testes-rev", cwd: root.path), term("w-task-a-t1-testes-rev", cwd: scratch + "/sub")]
         #expect(orphan.name == "w-task-a-t1-correcao-rev")
         #expect(CommandRouter.loopAgents(of: w, in: terminals, reviewRoot: root) == [orphan, retried])
+    }
+
+    /// F2 Y2c: the start sweep in a daemon (`withDaemon`), not only the pure filter: an orphan reviewer a fallen daemon
+    /// left in a running loop's paddock (its name's tail, its folder in the daemon's `reviewRoot`) goes, record and
+    /// folder; a terminal of the same paddock that is no reviewer stays. `stopLoopsLeftRunning` is what `Daemon.start`
+    /// runs; the records are put in by hand because a reviewer of a fallen daemon has no process.
+    @Test(.timeLimit(.minutes(2))) func daemonStartRemovesAnOrphanReviewer() async throws {
+        try await withDaemon { d, _ in
+            let root = WorkLoop.reviewRoot(of: await d.router.config.paths.root)
+            let paddock = UUID()
+            let w = try await d.router.work.start(title: "W", terminal: UUID(), paddockId: paddock, branch: nil)
+            try await d.router.work.update(w.id) { $0.loop = WorkLoopState(state: .running, task: "a", attempt: 1) }
+            let folder = root.appendingPathComponent("w-task-a-t1-correcao-rev-1a2b3c4d")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let orphan = TerminalRecord(id: UUID(), name: WorkLoop.reviewerName("w-task-a-t1", persona: "correcao"), preset: .shell,
+                                        command: nil, cwd: SignedAppCheck.realPath(folder), isShepherd: false, paddockId: paddock)
+            let other = TerminalRecord(id: UUID(), name: "dev", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, paddockId: paddock)
+            await d.router.y2cAdd([orphan, other])
+            #expect(CommandRouter.loopAgents(of: try #require(try await d.router.work.get(w.id)), in: await d.router.ws.terminals,
+                                             reviewRoot: root) == [orphan], "the rig is an orphan reviewer")
+            await d.router.stopLoopsLeftRunning()
+            let ids = await d.router.ws.terminals.map(\.id)
+            #expect(!ids.contains(orphan.id), "the orphan reviewer survived the start")
+            #expect(ids.contains(other.id))
+            #expect(!FileManager.default.fileExists(atPath: folder.path))
+            #expect(try await d.router.work.get(w.id)?.loop?.state == .stopped)
+        }
     }
 
     /// The temp dir as the kernel sees it (`/private/var/folders/…`).
@@ -684,4 +711,9 @@ import CollieProtocol
 extension CommandRouter {
     /// F2 Y2a test seam: the paddock as if mid-delete, so `ensurePaddock` fails right after a launch.
     func y2aMarkDeleting(_ id: UUID) { paddockDeleting.insert(id) }
+}
+
+private extension CommandRouter {
+    /// F2 Y2c: terminal records a fallen daemon left (no process behind them).
+    func y2cAdd(_ t: [TerminalRecord]) { ws.terminals += t }
 }

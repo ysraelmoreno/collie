@@ -1439,12 +1439,49 @@ extension WorkLoopReviewTests {
         let none = try Self.v3Home(nil); defer { try? FileManager.default.removeItem(at: none) }
         #expect(WorkLoop.trustReviewRoot(home: none, reviewRoot: root) == nil)
         #expect(!FileManager.default.fileExists(atPath: none.appendingPathComponent(".claude.json").path))
-        for text in ["[1,2]", "não é json", #"{"projects":[]}"#] {
+        let entry = #"{"projects":{"\#(SignedAppCheck.realPath(root))":1}}"#
+        for text in ["[1,2]", "não é json", #"{"projects":[]}"#, entry] {
             let home = try Self.v3Home(text); defer { try? FileManager.default.removeItem(at: home) }
             let note = WorkLoop.trustReviewRoot(home: home, reviewRoot: root)
             #expect(note?.hasPrefix(WorkLoop.reviewTrustNotWritten) == true, "\(text): \(note ?? "-")")
             #expect(try String(contentsOf: home.appendingPathComponent(".claude.json"), encoding: .utf8) == text)
         }
+    }
+
+    /// F2 V3b: the temp file is born 0600 (read while it waits for the rename), the file then keeps its own mode (0644).
+    @Test func trustTempFileIsBornPrivate() throws {
+        let root = URL(fileURLWithPath: "/collie-v3-root/collie-review")
+        let home = try Self.v3Home(#"{"primaryApiKey":"k"}"#); defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(".claude.json").path
+        chmod(file, 0o644)
+        var tmpMode: mode_t?
+        let note = WorkLoop.trustReviewRoot(home: home, reviewRoot: root) { tmp in
+            var st = stat(); if lstat(tmp, &st) == 0 { tmpMode = st.st_mode }
+        }
+        #expect(note == WorkLoop.reviewTrustWritten)
+        #expect(tmpMode.map { $0 & S_IFMT == S_IFREG && $0 & 0o777 == 0o600 } == true, "\(String(tmpMode ?? 0, radix: 8))")
+        let attrs = try FileManager.default.attributesOfItem(atPath: file)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o644)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == [".claude.json"])
+    }
+
+    /// F2 V3b (rule 4): the write fails (the home not writable): the loop goes on, the reviewers are summoned, the note
+    /// says why, the file is untouched and no temp file is left.
+    @Test func trustWriteFailureIsNotedAndTheLoopGoesOn() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let text = #"{"numStartups":1}"#
+        let home = try Self.v3Home(text)
+        chmod(home.path, 0o555)
+        defer { chmod(home.path, 0o755); try? FileManager.default.removeItem(at: home) }
+        await r.host.setHome(home)
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(Self.said(w, WorkLoop.reviewTrustNotWritten + ": "), "\(w.notes.map(\.text))")
+        #expect(!Self.said(w, WorkLoop.reviewTrustWritten), "\(w.notes.map(\.text))")
+        #expect(!(await r.host.reviewers.isEmpty))
+        #expect(try String(contentsOf: home.appendingPathComponent(".claude.json"), encoding: .utf8) == text)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == [".claude.json"])
     }
 
     /// F2 V3: the loop writes the trust before its base: the write is not "changed during the attempt", the reviewers are

@@ -355,7 +355,10 @@ extension WorkLoop {
     /// written), touching nothing else. nil: no file (Claude Code never ran: not made) or already true (not rewritten).
     /// Else the note: written, or why not (not a JSON object, `projects` or the entry not an object, a write error).
     // ponytail: read-modify-write, no lock; a Claude Code exit rewriting the file in between drops the entry, the next run writes it again
-    static func trustReviewRoot(home: URL, reviewRoot: URL) -> String? {
+    /// F2 V3b: the temp file is born 0600 (`O_EXCL|O_NOFOLLOW`, written through its descriptor): a copy of the file (it may
+    /// hold `primaryApiKey`, `oauthAccount`) is never readable by others, then takes the original's mode before the `rename`.
+    /// `beforeRename` (tests): the temp file's path, written, before it takes that mode.
+    static func trustReviewRoot(home: URL, reviewRoot: URL, beforeRename: (String) -> Void = { _ in }) -> String? {
         let file = SignedAppCheck.realPath(home.appendingPathComponent(".claude.json"))
         guard let data = FileManager.default.contents(atPath: file) else { return nil }
         guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
@@ -369,10 +372,23 @@ extension WorkLoop {
         }
         let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
         let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
-        guard FileManager.default.createFile(atPath: tmp, contents: out), chmod(tmp, mode_t(mode)) == 0, rename(tmp, file) == 0 else {
-            let why = String(cString: strerror(errno)); unlink(tmp)
-            return reviewTrustNotWritten + ": " + why
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return reviewTrustNotWritten + ": " + String(cString: strerror(errno)) }
+        let wrote = out.withUnsafeBytes { buf -> Bool in
+            var off = 0
+            while off < buf.count {
+                let n = write(fd, buf.baseAddress! + off, buf.count - off)
+                if n < 0 { if errno == EINTR { continue }; return false }
+                off += n
+            }
+            return true
         }
+        func err() -> String { String(cString: strerror(errno)) }
+        var why: String? = wrote ? nil : err()
+        if why == nil { beforeRename(tmp); if fchmod(fd, mode_t(mode)) != 0 { why = err() } }
+        if close(fd) != 0, why == nil { why = err() }
+        if why == nil, rename(tmp, file) != 0 { why = err() }
+        if let why { unlink(tmp); return reviewTrustNotWritten + ": " + why }
         return reviewTrustWritten
     }
 

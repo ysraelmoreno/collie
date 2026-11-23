@@ -59,13 +59,15 @@ extension WorkLoop {
         return try PersonaCatalog.parse(files: files)
     }
 
-    /// What the reviewers read as evidence: the attempt's commits, its shortstat and the check's (and the gate's) tail.
-    func reviewEvidence(before: String, judged: String, check: String, gate: String?, _ dir: URL) async -> String {
-        let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
+    /// What the reviewers read as evidence: the attempt's commit hashes, its shortstat and the check's (and the gate's)
+    /// exit status. F2 X2: never the commits' subjects nor the check's output, words of who worked.
+    func reviewEvidence(before: String, judged: String, check: Int32?, gate: Int32??, _ dir: URL) async -> String {
+        let log = await out(["log", "--format=%h", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
         let stat = await out(["diff", "--shortstat", before, judged], dir) ?? ""
-        let commits = log.split(separator: "\n").map { "- " + Self.evidenceCommit(String($0)) }.joined(separator: "\n")
-        return ["Commits:\n" + commits, "Diffstat: " + stat, "Saída do check (fim):\n" + Self.evidenceTail(check: check, gate: gate)]
-            .joined(separator: "\n\n")
+        func status(_ s: Int32?) -> String { s.map { "saiu com \($0)" } ?? "sem status (não rodou ou passou do tempo)" }
+        var parts = ["Commits: " + log.split(separator: "\n").joined(separator: " "), "Diffstat: " + stat, "Check: " + status(check)]
+        if let gate { parts.append("Portão: " + status(gate)) }
+        return parts.joined(separator: "\n")
     }
 
     /// The review of one attempt: pick the personas, run one reviewer per persona (at once), read each answer, dismiss
@@ -93,7 +95,9 @@ extension WorkLoop {
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
                 let as_ = { var l = loop; l.model = model; return l }()
-                let prompt = ReviewPrompt.build(persona: p, spec: spec.isEmpty ? task.title : spec, diff: diff, evidence: evidence, check: check)
+                // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
+                let nonce = ReviewPrompt.newNonce()
+                let prompt = ReviewPrompt.build(persona: p, spec: spec.isEmpty ? task.title : spec, diff: diff, evidence: evidence, check: check, nonce: nonce)
                 let name = Self.reviewerName(agent, persona: p.name), cwd = scratch[i]
                 g.addTask {
                     var id: UUID?
@@ -105,7 +109,7 @@ extension WorkLoop {
                         }
                         id = t
                         let text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn))
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = ReviewVerdict.parse(text, persona: p.name) }
+                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce) }
                     } catch {}
                     return (i, PersonaRun(persona: p.name, model: model, approved: verdict.approved, invalid: verdict.invalid, findings: verdict.findings), id)
                 }

@@ -328,6 +328,8 @@ actor WorkLoop {
         var on: String, loose: Set<String> = []
         var output = ""
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
+        /// F2 X2: the check's and the gate's exit status, the only part of their run the reviewers read.
+        var checkStatus: Int32?, gateStatus: Int32?
         /// When the verdict was reached.
         var at: Date
         var end = AttemptEnd.go
@@ -484,7 +486,7 @@ actor WorkLoop {
             do {
                 let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                r.output = res.stdout + res.stderr; r.checkOutput = r.output
+                r.output = res.stdout + res.stderr; r.checkOutput = r.output; r.checkStatus = res.status
                 return .checkDone(status: res.status, broken: nil)
             } catch where error.code == .timeout {
                 return .checkDone(status: nil, broken: nil)
@@ -508,7 +510,7 @@ actor WorkLoop {
             do {
                 let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(r.loop.gate ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                r.output = res.stdout + res.stderr
+                r.output = res.stdout + res.stderr; r.gateStatus = res.status
                 return .gateDone(status: res.status, broken: nil)
             } catch where error.code == .timeout {
                 r.output = ""
@@ -519,7 +521,7 @@ actor WorkLoop {
             }
         case .runReview:
             // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
-            let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkOutput, gate: r.loop.gate == nil ? nil : r.output, dir)
+            let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
             let tree = await reviewTree(dir)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, turn: Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started)), dir)

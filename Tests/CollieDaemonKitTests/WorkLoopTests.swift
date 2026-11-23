@@ -103,9 +103,20 @@ actor LoopFakeHost: LoopHost {
         if let act = reviewerActs[name] ?? reviewerActs[persona] {
             do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
         }
-        guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else { return #"{"persona":"\#(persona)","verdict":"approve","findings":[]}"# }
+        // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
+        let nonce = Self.nonce(in: prompt)
+        guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {
+            return prompt + "\n" + ReviewPrompt.endMarker(nonce) + "\n" + #"{"persona":"\#(persona)","nonce":"\#(nonce)","verdict":"approve","findings":[]}"#
+        }
         guard let answer else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
-        return answer
+        if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return answer }   // a blank screen: mute
+        return prompt + "\n" + answer.replacingOccurrences(of: "<NONCE>", with: nonce)
+    }
+    /// The nonce a review prompt carries: the 32 hex digits after its end marker's head.
+    static func nonce(in prompt: String) -> String {
+        let head = "=== FIM DO PEDIDO DE REVISÃO "
+        guard let r = prompt.range(of: head, options: .backwards) else { return "" }
+        return String(prompt[r.upperBound...].prefix(32))
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()

@@ -85,7 +85,10 @@ private let full = """
         #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "a", "measure": "m"}, {"name": "a", "measure": "n"}]}}"#) == .duplicate(path: "factory.static.ratchets[].name", value: "a"))
         #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "Lint", "measure": "m"}]}}"#) == .badName(path: "factory.static.ratchets[0].name", name: "Lint"))
         #expect(error(#"{"version": 1, "verification": {"scenarios": [{"area": "u i", "command": "c"}]}}"#) == .badName(path: "factory.verification.scenarios[0].area", name: "u i"))
-        for bad in ["../x", "a/../b", "/etc/x", "", "a\\u0000b", String(repeating: "a", count: 201)] {
+        for bad in ["../x", "a/../b", "/etc/x", "", "a\\u0000b", String(repeating: "a", count: 201),
+                    // F1: dangerous places and odd components, the same rule as `FactoryRatchet.target`
+                    ".git", "dir/.git", "x.git/y", "sub/.GIT", ".collie/b", "a/.Collie/b", "collie-work.json", "sub/collie-work.json",
+                    "a//b", "a/", "./a", "a/./b"] {
             #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "a", "measure": "m", "baseline": "\#(bad)"}]}}"#) == .badBaseline(path: "factory.static.ratchets[0].baseline"), "\(bad)")
         }
         #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "a", "measure": "m", "baseline": "a..b/c.txt"}]}}"#) == nil)

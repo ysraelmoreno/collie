@@ -61,7 +61,7 @@ public struct FactoryProfile: Sendable, Equatable {
             case .badName(let p, let n): "nome inválido '\(n)' em '\(p)': use a-z, 0-9 e '-', de 1 a \(ProjectWorkConfig.maxAreaName) caracteres"
             case .duplicate(let p, let v): "'\(v)' aparece repetido em '\(p)'"
             case .tooMany(let p, let n, let l): "'\(p)' tem \(n) itens; o limite é \(l)"
-            case .badBaseline(let p): "'\(p)' precisa ser caminho relativo ao repositório (sem '..', sem '/' inicial, sem controle, até \(maxBaseline) caracteres)"
+            case .badBaseline(let p): "'\(p)' precisa ser caminho relativo ao repositório (sem '..', '.', parte vazia, '.git', '.collie' ou 'collie-work.json', sem '/' inicial, sem controle, até \(maxBaseline) caracteres)"
             case .badChoice(let p, let v, let a): "'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))"
             case .outOfRange(let p, let v, let r): "'\(p)' é \(v); precisa ser inteiro de \(r.lowerBound) a \(r.upperBound)"
             case .badText(let p): "'\(p)' precisa ser texto não vazio de até \(maxDestructiveText) caracteres, sem controle"
@@ -195,11 +195,16 @@ public struct FactoryProfile: Sendable, Equatable {
         return s
     }
 
-    /// A repository-relative path: not empty, at most `maxBaseline` characters, no leading '/', no '..', no control.
-    /// U4's bait catalog uses the same rule.
+    /// A repository-relative path: not empty, at most `maxBaseline` characters, no leading '/', no control, and no component
+    /// that is empty, `.`, `..`, `.git` or ends in `.git` (a nested repo's config runs `core.fsmonitor` outside the sandbox),
+    /// `.collie` or `collie-work.json` (the daemon writes there unsandboxed). Case-insensitive: the default macOS volume is.
+    /// U4's bait catalog and `FactoryRatchet.target` use the same rule.
     public static func confinedPath(_ s: String) -> Bool {
-        !s.isEmpty && s.count <= maxBaseline && !s.hasPrefix("/") && !hasControl(s)
-            && !s.split(separator: "/", omittingEmptySubsequences: false).contains("..")
+        guard !s.isEmpty, s.count <= maxBaseline, !s.hasPrefix("/"), !hasControl(s) else { return false }
+        return s.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { c in
+            let l = c.lowercased()
+            return !l.isEmpty && l != "." && l != ".." && !l.hasSuffix(".git") && l != ".collie" && l != "collie-work.json"
+        }
     }
 
     private static func choice<T: RawRepresentable & CaseIterable>(_ v: Any, _ path: String) throws -> T where T.RawValue == String {

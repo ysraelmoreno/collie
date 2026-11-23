@@ -120,6 +120,93 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
         }
     }
 
+    /// F1 (blocker 2): the command refuses what the parser refuses, folder present or not, and writes nothing.
+    @Test func dangerousBaselinesRefused() throws {
+        try project { dir in
+            for d in ["dir/.git", "x.git", ".collie", "scripts/.git"] {
+                try FileManager.default.createDirectory(at: dir.appendingPathComponent(d), withIntermediateDirectories: true)
+            }
+            let bad = ["dir/.git", "dir/.git/config", "x.git/y", ".collie/b", ".git", "scripts/.git/HEAD", "collie-work.json",
+                       "scripts/collie-work.json", "scripts/./base.txt", "./base.txt", "scripts/ci/", "SCRIPTS/.GIT/x"]
+            for rel in bad {
+                #expect(!FactoryProfile.confinedPath(rel), "\(rel)")
+                #expect(throws: ProtocolError.self, "\(rel)") { try apply(.raise, dir, measured: "a 1\n", reason: "r", rel: rel) }
+            }
+            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("x.git/y").path))
+            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("collie-work.json").path))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent(".collie").path).isEmpty)
+        }
+    }
+
+    /// F1 (major 2): the folder is walked by fd without following links: a link on the way, even to a folder inside the
+    /// project, is refused; nothing lands at the link's target and no temporary file is left.
+    @Test func symlinkedFolderRefusedByFd() throws {
+        try project { dir in
+            let out = dir.deletingLastPathComponent().appendingPathComponent("ratchet-fora-\(UUID().uuidString.prefix(6))")
+            try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: out) }
+            try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("scripts/fora"), withDestinationURL: out)
+            try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("dentro"), withDestinationURL: dir.appendingPathComponent("scripts/ci"))
+            for rel in ["scripts/fora/base.txt", "dentro/base.txt"] {
+                #expect(throws: ProtocolError.self, "\(rel)") { try apply(.raise, dir, measured: "a 1\n", reason: "r", rel: rel) }
+                #expect(throws: ProtocolError.self, "\(rel)") { try FactoryRatchet.openDir(root: dir, rel: rel) }
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("scripts/ci").path).isEmpty)
+            // the fd path: read and write go through the opened folder
+            let fd = try FactoryRatchet.openDir(root: dir, rel: "scripts/ci/base.txt")
+            defer { close(fd) }
+            #expect(try FactoryRatchet.read(dir: fd, "base.txt", rel: "scripts/ci/base.txt") == "")
+            try FactoryRatchet.write("a 1\n", dir: fd, "base.txt", rel: "scripts/ci/base.txt")
+            #expect(try FactoryRatchet.read(dir: fd, "base.txt", rel: "scripts/ci/base.txt") == "a 1\n")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("scripts/ci").path) == ["base.txt"])
+            // a link as the file itself: read and write refuse it
+            try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("scripts/ci/l.txt"), withDestinationURL: out.appendingPathComponent("x"))
+            #expect(throws: ProtocolError.self) { try FactoryRatchet.read(dir: fd, "l.txt", rel: "l.txt") }
+            #expect(throws: ProtocolError.self) { try FactoryRatchet.write("a 1\n", dir: fd, "l.txt", rel: "l.txt") }
+            #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("x").path))
+        }
+    }
+
+    /// F1 (minor 6): an empty measurement over a non-empty baseline is refused by update and flagged by check.
+    @Test func emptyMeasurementRefused() throws {
+        try project { dir in
+            try Data("r a 2\n".utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))
+            #expect(throws: ProtocolError.self) { try apply(.update, dir, measured: "") }
+            #expect(file(dir, "scripts/ci/base.txt") == "r a 2\n")
+            let c = try apply(.check, dir, measured: "\n")
+            #expect(!c.passed && c.output.contains("vazia (0 chaves)"))
+            // empty over empty is just equal
+            #expect(try apply(.update, dir, measured: "", rel: "scripts/ci/new.txt").passed)
+        }
+    }
+
+    /// F1 (blocker 1): with `sandboxHome` the measure gets the terminal's profile and the sandbox's HOME; without a profile it
+    /// is refused and nothing runs; without `sandboxHome` it runs unsandboxed. No real `sandbox-exec` (it does not nest).
+    @Test func measureRunsSandboxed() async throws {
+        let collie = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory)).appendingPathComponent("ratchet-sb-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: collie.appendingPathComponent("sandbox"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: collie) }
+        let id = UUID(), home = collie.appendingPathComponent("home"), root = collie.appendingPathComponent("proj")
+        final class Calls: @unchecked Sendable { var list: [(URL?, [String: String])] = [] }
+        let calls = Calls()
+        func run(sandboxHome: URL?, sandboxed: Bool) async throws(ProtocolError) -> ProcessResult {
+            try await FactoryRatchet.measure("echo a 1", in: root, sandboxHome: sandboxHome, terminal: id, sandboxed: sandboxed, collieRoot: collie,
+                                             shell: "/bin/zsh", user: ["HOME": "/Users/real", "PATH": "/usr/bin:/bin"]) { (_, _, p, e) async throws(ProtocolError) in
+                calls.list.append((p, e)); return ProcessResult(status: 0, stdout: "a 1\n", stderr: "", truncated: false)
+            }
+        }
+        // no profile file yet: refused, nothing run (sandboxed terminal or not)
+        await #expect(throws: ProtocolError.self) { try await run(sandboxHome: home, sandboxed: true) }
+        try Data("(version 1)".utf8).write(to: SandboxLaunch.profileFile(id, root: collie))
+        await #expect(throws: ProtocolError.self) { try await run(sandboxHome: home, sandboxed: false) }
+        #expect(calls.list.isEmpty)
+        _ = try await run(sandboxHome: home, sandboxed: true)
+        #expect(calls.list.count == 1 && calls.list[0].0 == SandboxLaunch.profileFile(id, root: collie) && calls.list[0].1["HOME"] == home.path)
+        _ = try await run(sandboxHome: nil, sandboxed: false)
+        #expect(calls.list.count == 2 && calls.list[1].0 == nil && calls.list[1].1["HOME"] == "/Users/real")
+    }
+
     @Test func commandIsRegistered() throws {
         for a in ["check", "update", "raise"] { #expect(Commands.spec("factory.ratchet.\(a)") != nil) }
         let r = try ArgvParser.parse(["factory", "ratchet", "raise", "lint", "--reason", "porque sim"])

@@ -149,43 +149,90 @@ enum FactoryRatchet {
     static let maxBaselineBytes = 1 << 20
     static let measureTimeout: Duration = .seconds(600)
 
-    /// The baseline's URL, or why it is refused: relative, no `..`, its folder existing inside the root, not a link.
+    /// The baseline's path checked by `FactoryProfile.confinedPath` (the parser's rule, one function): relative, no `..`,
+    /// `.`, empty part, `.git`/`*.git`, `.collie` nor `collie-work.json`. Its folder is opened by `openDir`.
     static func target(root: URL, rel: String) throws(ProtocolError) -> URL {
-        let parts = rel.split(separator: "/", omittingEmptySubsequences: false)
-        guard !rel.isEmpty, !rel.hasPrefix("/"), !parts.contains(".."), !parts.contains(""), !FactoryDoctor.outsideRepo(rel)
-        else { throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' fora do projeto") }
-        let url = root.appendingPathComponent(rel)
-        var isDir: ObjCBool = false
-        let dir = url.deletingLastPathComponent().path
-        guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue
-        else { throw ProtocolError(code: .invalidArgs, message: "a pasta do baseline '\(rel)' não existe") }
-        guard ProjectRoot.contains(dir, root: root) else { throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' fora do projeto") }
-        return url
+        guard FactoryProfile.confinedPath(rel), !FactoryDoctor.outsideRepo(rel)
+        else { throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' fora do projeto ou em lugar proibido (.git, .collie, collie-work.json)") }
+        return root.appendingPathComponent(rel)
     }
 
-    /// The file's text; "" when absent (a first baseline). A link, a folder or a big file is refused.
-    static func read(_ url: URL, name: String) throws(ProtocolError) -> String {
-        switch WorkConfigFile.regular(url.path, name: name, max: maxBaselineBytes, tooLarge: { "\(name) passa de \($0) bytes" }) {
-        case .absent: return ""
-        case .loaded(let d): return String(decoding: d, as: UTF8.self)
-        case .refused(let m): throw ProtocolError(code: .invalidArgs, message: m)
+    /// The baseline's folder as a fd, opened component by component from the root with `openat(O_DIRECTORY|O_NOFOLLOW)`:
+    /// a link anywhere on the way is refused, and read/write go through this fd, so swapping a folder for a link after the
+    /// check leads nowhere (MAJOR 2). The caller closes it.
+    static func openDir(root: URL, rel: String) throws(ProtocolError) -> Int32 {
+        var fd = open(root.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { throw ProtocolError(code: .invalidArgs, message: "não consegui abrir a raiz do projeto") }
+        for c in rel.split(separator: "/").dropLast() {
+            let next = openat(fd, String(c), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            let e = errno
+            close(fd)
+            guard next >= 0 else {
+                throw ProtocolError(code: .invalidArgs, message: e == ENOENT ? "a pasta do baseline '\(rel)' não existe"
+                                    : "a pasta do baseline '\(rel)' não é uma pasta comum (link simbólico?)")
+            }
+            fd = next
         }
+        return fd
     }
 
-    /// Temporary file in the same folder, then `rename`: a reader sees the old file or the new one, never half.
-    static func write(_ text: String, to url: URL) throws(ProtocolError) {
+    /// The file `name` in `dir`'s text; "" when absent (a first baseline). A link, a folder, a FIFO or a big file is refused.
+    static func read(dir: Int32, _ name: String, rel: String) throws(ProtocolError) -> String {
+        let fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0 {
+            if errno == ENOENT { return "" }
+            throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular")
+        }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         var st = stat()
-        if lstat(url.path, &st) == 0, st.st_mode & S_IFMT != S_IFREG {
-            throw ProtocolError(code: .invalidArgs, message: "\(url.lastPathComponent) não é um arquivo regular")
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular") }
+        guard st.st_size <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
+        let d = (try? h.read(upToCount: maxBaselineBytes + 1)) ?? Data()
+        guard d.count <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
+        return String(decoding: d, as: UTF8.self)
+    }
+
+    /// Temporary file made with `openat(O_CREAT|O_EXCL|O_NOFOLLOW, 0600)` in `dir`, then `renameat` in the same fd: a reader
+    /// sees the old file or the new one, never half, and nothing lands outside the folder `openDir` opened.
+    static func write(_ text: String, dir: Int32, _ name: String, rel: String) throws(ProtocolError) {
+        var st = stat()
+        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT != S_IFREG {
+            throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular")
         }
-        let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString).tmp")
-        guard FileManager.default.createFile(atPath: tmp.path, contents: Data(text.utf8)) else {
-            throw ProtocolError(code: .internal, message: "não consegui gravar \(tmp.lastPathComponent)")
+        let tmp = ".\(name).\(UUID().uuidString).tmp"
+        let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw ProtocolError(code: .internal, message: "não consegui gravar o temporário de \(rel): \(errno)") }
+        let bytes = Array(text.utf8)
+        var off = 0
+        while off < bytes.count {
+            let n = bytes[off...].withUnsafeBytes { Foundation.write(fd, $0.baseAddress, $0.count) }
+            if n < 0 { if errno == EINTR { continue }; break }
+            off += n
         }
-        guard rename(tmp.path, url.path) == 0 else {
-            let e = errno; unlink(tmp.path)
+        close(fd)
+        guard off == bytes.count else {
+            unlinkat(dir, tmp, 0)
+            throw ProtocolError(code: .internal, message: "não consegui gravar o temporário de \(rel)")
+        }
+        guard renameat(dir, tmp, dir, name) == 0 else {
+            let e = errno; unlinkat(dir, tmp, 0)
             throw ProtocolError(code: .internal, message: "rename do baseline falhou: \(e)")
         }
+    }
+
+    /// BLOCKER 1: `measure` is text an agent can write, so with terminal sandboxes on (`sandboxHome`) it runs under the calling
+    /// terminal's own profile and sandbox env (HOME the sandbox's), as the loop's check does; no profile (a free terminal, or
+    /// its file gone): refused, nothing run. No `sandboxHome` (tests, a daemon without sandbox): unsandboxed, as before.
+    /// `run` is `RouterLoopHost.runCheck` (a test passes its own: `sandbox-exec` does not nest inside an agent).
+    static func measure(_ command: String, in root: URL, sandboxHome: URL?, terminal: UUID, sandboxed: Bool, collieRoot: URL, shell: String,
+                        user: [String: String],
+                        run: (String, URL, URL?, [String: String]) async throws(ProtocolError) -> ProcessResult) async throws(ProtocolError) -> ProcessResult {
+        guard let home = sandboxHome else { return try await run(command, root, nil, RouterLoopHost.checkEnv(user, sandbox: nil)) }
+        let profile = SandboxLaunch.profileFile(terminal, root: collieRoot)
+        guard sandboxed, FileManager.default.fileExists(atPath: profile.path) else {
+            throw ProtocolError(code: .unavailable, message: "o measure só roda no sandbox do terminal, e este terminal não tem perfil de sandbox; nada foi executado")
+        }
+        return try await run(command, root, profile, RouterLoopHost.checkEnv(user, sandbox: (terminal, collieRoot, shell, home)))
     }
 
     /// The decision on one measurement. `check`: 0 only when equal (improved exits 1 too, like scripts/ci/lint.sh: the lowered
@@ -199,8 +246,10 @@ enum FactoryRatchet {
             case .badReason: return ProtocolError(code: .invalidArgs, message: "--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle")
             }
         }
-        let url = try target(root: root, rel: rel)
-        let old = try read(url, name: rel)
+        let file = try target(root: root, rel: rel).lastPathComponent
+        let dir = try openDir(root: root, rel: rel)
+        defer { close(dir) }
+        let old = try read(dir: dir, file, rel: rel)
         let base: Ratchet.Baseline, cur: Ratchet.Baseline
         do { base = try Ratchet.Baseline.parse(old) } catch { throw bad(error, rel) }
         do { cur = try Ratchet.Baseline.parse(measured) } catch { throw bad(error, "a medição de '\(name)'") }
@@ -208,36 +257,41 @@ enum FactoryRatchet {
         let header = old.split(separator: "\n").filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.map { "\($0)\n" }.joined()
         func list(_ cs: [Ratchet.Change]) -> String { cs.map { "  \($0.key): \($0.before) -> \($0.after)" }.joined(separator: "\n") }
         let verdict = Ratchet.compare(baseline: base, current: cur)
+        // minor 6: a measure that exits 0 with no output would zero the baseline; refused in update, flagged in check
+        let empty = cur.counts.isEmpty && !base.counts.isEmpty
+        let emptyNote = "a medição de '\(name)' veio vazia (0 chaves) e \(rel) não está vazio: o measure pode ter quebrado"
 
         switch action {
         case .check:
             switch verdict {
             case .same: return Outcome(output: "catraca \(name): igual ao baseline\n", passed: true, wrote: false)
             case .improved(let cs):
+                if empty { return Outcome(output: "catraca \(name): \(emptyNote)\n", passed: false, wrote: false) }
                 return Outcome(output: "catraca \(name): melhorou. Rode `collie factory ratchet update \(name)` e commite \(rel):\n\(list(cs))\n", passed: false, wrote: false)
             case .worse(let cs):
                 return Outcome(output: "catraca \(name): piorou (passou de \(rel)):\n\(list(cs))\n", passed: false, wrote: false)
             }
         case .update:
+            guard !empty else { throw ProtocolError(code: .invalidArgs, message: "\(emptyNote); nada gravado") }
             guard let low = Ratchet.lowered(baseline: base, current: cur) else {
                 guard case .worse(let cs) = verdict else { preconditionFailure() }
                 return Outcome(output: "catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n", passed: false, wrote: false)
             }
             guard verdict != .same else { return Outcome(output: "catraca \(name): igual ao baseline; nada a gravar\n", passed: true, wrote: false) }
-            try write(header + low.render(), to: url)
+            try write(header + low.render(), dir: dir, file, rel: rel)
             return Outcome(output: "catraca \(name): baseline abaixado em \(rel)\n", passed: true, wrote: true)
         case .raise:
             let up: Ratchet.Raised
             do { up = try Ratchet.raise(baseline: base, to: cur, reason: reason ?? "", date: now) } catch { throw bad(error, "") }
-            try write(header + up.log.map { "\($0)\n" }.joined() + up.baseline.render(), to: url)
+            try write(header + up.log.map { "\($0)\n" }.joined() + up.baseline.render(), dir: dir, file, rel: rel)
             return Outcome(output: "catraca \(name): baseline gravado em \(rel)\n" + up.log.map { "  \($0)\n" }.joined(), passed: true, wrote: true)
         }
     }
 }
 
 extension CommandRouter {
-    /// `factory.ratchet.<action>`: runs the ratchet's `measure` once (bash in the project, bounded like a loop check, no sandbox
-    /// of its own) and applies `FactoryRatchet.apply`. `passed` false: the CLI exits 1.
+    /// `factory.ratchet.<action>`: runs the ratchet's `measure` once (bash in the project, bounded and sandboxed like a loop
+    /// check: `FactoryRatchet.measure`) and applies `FactoryRatchet.apply`. `passed` false: the CLI exits 1.
     func factoryRatchet(_ t: TerminalRecord, _ action: FactoryRatchet.Action, name: String, reason: String?) async throws(ProtocolError) -> JSONValue {
         let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
         let config: ProjectWorkConfig?
@@ -253,8 +307,10 @@ extension CommandRouter {
             do { _ = try Ratchet.raise(baseline: .init(), to: .init(), reason: reason ?? "", date: Date()) }
             catch { throw ProtocolError(code: .invalidArgs, message: "--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle") }
         }
-        let env = RouterLoopHost.checkEnv(await loopUserEnv(), sandbox: nil)
-        let res = try await RouterLoopHost.runCheck(r.measure, in: root, profile: nil, env: env, timeout: FactoryRatchet.measureTimeout)
+        let res = try await FactoryRatchet.measure(r.measure, in: root, sandboxHome: config.sandboxHome, terminal: t.id, sandboxed: sandboxed(t),
+                                                   collieRoot: config.paths.root, shell: config.shell, user: await loopUserEnv()) {
+            (c, d, p, e) async throws(ProtocolError) in try await RouterLoopHost.runCheck(c, in: d, profile: p, env: e, timeout: FactoryRatchet.measureTimeout)
+        }
         guard res.status == 0, !res.truncated else {
             throw ProtocolError(code: .invalidArgs, message: "measure de '\(name)' falhou (código \(res.status)\(res.truncated ? ", saída cortada" : "")): \(RerailText.clean(String(res.stderr.suffix(300)), max: 300))")
         }

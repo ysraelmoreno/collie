@@ -851,7 +851,8 @@ struct RouterLoopHost: LoopHost {
                 var a = args
                 if a.first == "diff" { a.insert(contentsOf: ["--no-ext-diff", "--no-textconv"], at: 1) }
                 // by env, not `-c`: a driver name may hold `=`
-                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off)
+                // 64 MiB: the reviewer's copy reads each blob whole (`cat-file blob`)
+                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off, cap: 64 << 20)
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }

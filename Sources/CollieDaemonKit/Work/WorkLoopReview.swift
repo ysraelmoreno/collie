@@ -135,71 +135,66 @@ extension WorkLoop {
     /// F2 V1: why a reviewer's copy could not be made (that reviewer is mute, with this reason).
     struct SnapshotFailure: Error { let why: String }
 
-    /// F2 W2: the judged commit (`git archive`, never the live worktree, where a process the judged agent left may
-    /// swap a file between the commit and the review) exported to `<scratch>/reviewSnapshot`, read-only. Its agent
-    /// configs (`agentConfigs`, `CLAUDE.local.md`, at any depth) and its symlinks (one may point into the worktree)
-    /// are left out: the diff shows them. A failure: that reviewer is mute (fail closed), the reason said.
-    /// F2 V1 (reviewSnapshotOutside): the export runs through the daemon's own git (`laneGit`), outside the loop's
-    /// profile, which denies reading and writing Collie's root, where the reviewer's folder is: under it the archive
-    /// failed in every real loop. Fixed arguments, the commit resolved to its hash first; every path of the tar is
-    /// checked before it is extracted (`--no-same-owner`, never `-P`), and the copy is then compared with the commit's
-    /// own file list (`ls-tree`): an `export-ignore` of the commit's `.gitattributes` that hides a file is a failure.
-    /// Removed with the reviewer's folder (`dropScratch`).
-    // ponytail: one archive per reviewer and attempt; a big repo makes it slow, share one export across reviewers then
+    /// F2 W2: the judged commit (never the live worktree, where a process the judged agent left may swap a file between
+    /// the commit and the review) copied to `<scratch>/reviewSnapshot`, read-only. Its agent configs (`agentConfigs`,
+    /// `CLAUDE.local.md`, at any depth) are left out: the diff shows them. A failure: that reviewer is mute (fail closed),
+    /// the reason said. Removed with the reviewer's folder (`dropScratch`).
+    /// F2 V1 (reviewSnapshotOutside): through the daemon's own git (`laneGit`), outside the loop's profile, which denies
+    /// Collie's root, where the reviewer's folder is. Fixed arguments, the commit resolved to its hash first.
+    /// F2 U2 (reviewNoReplace): built from the commit's blobs (`ls-tree -r -z`, then `cat-file blob` by oid), never
+    /// `git archive`: the commit's `.gitattributes` (working-tree-encoding, eol, export-subst, export-ignore, an LFS
+    /// filter run outside any sandbox) cannot change nor hide what the reviewer reads, and no replacement object
+    /// (`GitRunner`) stands in for the commit. Every path checked (no absolute, empty, `.`, `..` nor `.git` component);
+    /// written with O_EXCL|O_NOFOLLOW in folders made here; a symlink (120000) becomes a text file holding its target;
+    /// a submodule (160000) is left out.
+    // ponytail: one `cat-file` per blob and reviewer; a big repo makes it slow, `cat-file --batch` with a stdin then
     func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> Result<URL, SnapshotFailure> {
         func fail(_ why: String) -> Result<URL, SnapshotFailure> { .failure(SnapshotFailure(why: "cópia do commit: " + why)) }
         let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
-        let tar = scratch.appendingPathComponent("reviewSnapshot.tar")
-        defer { try? FileManager.default.removeItem(at: tar) }
         guard let r = try? await host.laneGit(["rev-parse", "--verify", "--end-of-options", judged + "^{commit}"], in: dir), r.status == 0 else {
             return fail("o commit não resolveu")
         }
         let hash = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else { return fail("hash inválido") }
         guard mkdir(snap.path, 0o700) == 0 else { return fail("pasta não criada") }
-        guard let a = try? await host.laneGit(["archive", "--format=tar", "-o", tar.path, hash], in: dir), a.status == 0 else {
-            return fail("git archive falhou")
-        }
-        func tarRun(_ args: [String]) async -> ProcessResult? {
-            try? await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/tar"), args: args, in: scratch, env: [:],
-                                          timeout: .seconds(120), cap: 16 << 20)
-        }
-        // every name checked before anything is written: no absolute path, no `..` (a name with a newline splits into more lines, each checked)
-        guard let list = await tarRun(["-t", "-f", tar.path]), list.status == 0, !list.truncated else { return fail("tar não listou") }
-        for name in list.stdout.split(separator: "\n") where name.hasPrefix("/") || name.split(separator: "/").contains("..") {
-            return fail("caminho recusado no tar: \(name)")
-        }
-        guard let x = await tarRun(["-x", "--no-same-owner", "-f", tar.path, "-C", snap.path]), x.status == 0 else { return fail("tar não extraiu") }
-        let names = Set(Self.agentConfigs + ["CLAUDE.local.md"]), fm = FileManager.default
-        var dirs: [String] = [], files: Set<String> = []
-        guard let walk = fm.enumerator(atPath: snap.path) else { return fail("cópia ilegível") }
-        while let rel = walk.nextObject() as? String {
-            let p = snap.path + "/" + rel
-            var st = stat()
-            guard lstat(p, &st) == 0 else { continue }
-            if st.st_mode & S_IFMT == S_IFLNK || names.contains((rel as NSString).lastPathComponent) {
-                if st.st_mode & S_IFMT == S_IFDIR { walk.skipDescendants() }
-                guard (try? fm.removeItem(atPath: p)) != nil else { return fail("\(rel) não saiu") }
-            } else if st.st_mode & S_IFMT == S_IFDIR { dirs.append(p) }
-            else if st.st_mode & S_IFMT == S_IFREG { chmod(p, 0o444); files.insert(rel) }
-            else { return fail("\(rel) não é arquivo comum") }
-        }
-        // folders read-only before the comparison too: a failure below leaves nothing writable (`dropScratch` reopens them)
-        for d in dirs.reversed() + [snap.path] { chmod(d, 0o555) }
-        // what the commit holds as plain files (blobs, not symlinks nor submodules), less the agent configs left out
+        var dirs: [String] = [snap.path]
+        // folders read-only on any way out: a failure leaves nothing writable (`dropScratch` reopens them)
+        defer { for d in dirs.reversed() { chmod(d, 0o555) } }
         guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "--full-tree", hash], in: dir), ls.status == 0, !ls.truncated else {
             return fail("git ls-tree falhou")
         }
-        var expected: Set<String> = []
+        let names = Set(Self.agentConfigs + ["CLAUDE.local.md"])
+        var made: Set<String> = []
         for entry in ls.stdout.split(separator: "\0") {
-            guard let tab = entry.firstIndex(of: "\t") else { continue }
-            let mode = entry.prefix(6), path = String(entry[entry.index(after: tab)...])
-            guard mode == "100644" || mode == "100755", !path.split(separator: "/").contains(where: { names.contains(String($0)) }) else { continue }
-            expected.insert(path)
+            guard let tab = entry.firstIndex(of: "\t") else { return fail("ls-tree ilegível") }
+            let meta = entry[..<tab].split(separator: " "), path = String(entry[entry.index(after: tab)...])
+            guard meta.count == 3 else { return fail("ls-tree ilegível") }
+            let mode = meta[0], oid = String(meta[2])
+            if mode == "160000" { continue }
+            guard ["100644", "100755", "120000"].contains(mode) else { return fail("modo \(mode) em \(path)") }
+            let comps = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard !path.hasPrefix("/"), comps.allSatisfy({ !["", ".", "..", ".git"].contains($0) }) else {
+                return fail("caminho recusado: \(path)")
+            }
+            if comps.contains(where: { names.contains(String($0)) }) { continue }
+            guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else { return fail("oid inválido em \(path)") }
+            guard let blob = try? await host.laneGit(["cat-file", "blob", oid], in: dir), blob.status == 0, !blob.truncated else {
+                return fail("blob ilegível: \(path)")
+            }
+            var p = snap.path
+            for c in comps.dropLast() {
+                p += "/" + c
+                if made.contains(p) { continue }
+                guard mkdir(p, 0o700) == 0 else { return fail("pasta não criada: \(path)") }
+                made.insert(p); dirs.append(p)
+            }
+            p += "/" + comps.last!
+            let fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+            guard fd >= 0 else { return fail("arquivo não criado: \(path)") }
+            let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            guard (try? h.write(contentsOf: blob.stdoutData)) != nil, (try? h.close()) != nil else { return fail("arquivo não escrito: \(path)") }
+            chmod(p, 0o444)
         }
-        let missing = expected.subtracting(files).sorted(), extra = files.subtracting(expected).sorted()
-        if let m = missing.first { return fail("\(missing.count) arquivo(s) do commit fora da cópia (export-ignore?), como \(m)") }
-        if let e = extra.first { return fail("\(extra.count) arquivo(s) na cópia que o commit não tem, como \(e)") }
         return .success(snap)
     }
 

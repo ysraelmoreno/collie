@@ -662,6 +662,44 @@ import CollieProtocol
         #expect(!FileManager.default.fileExists(atPath: cwd.path))
     }
 
+    /// F2 U2 (reviewNoReplace): the judged agent's `git replace C C2` in its worktree changes neither the reviewer's
+    /// copy nor the diff it reads: both are of the real commit, the one the check ran on.
+    @Test func reviewNoReplaceObjectFoolsTheReviewer() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            func git(_ a: String...) async throws -> String {
+                try await GitRunner.run(["-c", "user.name=t", "-c", "user.email=t@t"] + a, in: d).stdout
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+            try await commit("Tests/a1.swift", "let a = 1\n", in: d)
+            let real = try await git("rev-parse", "HEAD")
+            try await commit("Tests/a1.swift", "let a = FALSO\n", in: d)
+            let fake = try await git("rev-parse", "HEAD")
+            _ = try await git("reset", "-q", "--hard", real)
+            _ = try await git("replace", real, fake)
+        }))
+        _ = await r.run()
+        let files = try #require(await r.host.snapshotFiles["w-task-a-t1-testes-rev"])
+        #expect(files["Tests/a1.swift"] == "let a = 1\n", "\(files)")
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-testes-rev"])
+        #expect(prompt.contains("+let a = 1") && !prompt.contains("FALSO"))
+    }
+
+    /// F2 U2: the commit's `.gitattributes` (working-tree-encoding, export-subst) does not change the copy's content.
+    @Test func reviewSnapshotIgnoresTheCommitsAttributes() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+            try await commit("Tests/u.txt", "olá\n", in: d)
+            try await commit("Tests/s.txt", "$Format:%H$\n", in: d)
+            try await commit(".gitattributes", "Tests/u.txt working-tree-encoding=UTF-16\nTests/s.txt export-subst\n", in: d)
+        }))
+        _ = await r.run()
+        let files = try #require(await r.host.snapshotFiles["w-task-a-t1-testes-rev"])
+        #expect(files["Tests/u.txt"] == "olá\n" && files["Tests/s.txt"] == "$Format:%H$\n", "\(files)")
+    }
+
     private static func spawnSleep(group: pid_t) -> pid_t {
         var attr: posix_spawnattr_t?
         posix_spawnattr_init(&attr); defer { posix_spawnattr_destroy(&attr) }
@@ -1103,9 +1141,9 @@ extension WorkLoopReviewTests {
         }
 
         let scratch = try #require(WorkLoop.reviewScratch("v1", in: host.reviewRoot)); defer { WorkLoop.dropScratch(scratch) }
-        // the old path: `git archive -o` under the loop's profile neither writes nor reads the tar
-        let tar = scratch.appendingPathComponent("reviewSnapshot.tar")
-        #expect(!rules.writes(tar) && !rules.reads(tar), "the loop's profile opens \(tar.path)")
+        // the loop's profile neither writes nor reads the reviewer's copy
+        let copy = scratch.appendingPathComponent(WorkLoop.reviewSnapshotDir)
+        #expect(!rules.writes(copy) && !rules.reads(copy), "the loop's profile opens \(copy.path)")
         let snap: URL
         switch await loop.reviewSnapshot(try await head(), f.paddock, into: scratch) {
         case .success(let u): snap = u
@@ -1116,13 +1154,14 @@ extension WorkLoopReviewTests {
             #expect(FileManager.default.fileExists(atPath: snap.appendingPathComponent(p).path), "\(p) missing")
         }
         let calls = await log.calls
-        #expect(calls.contains { $0.args.first == "archive" }, "\(calls.map(\.args))")
+        // F2 U2: from the blobs, never `git archive`
+        #expect(calls.contains { $0.args.first == "cat-file" } && !calls.contains { $0.args.first == "archive" }, "\(calls.map(\.args))")
         #expect(calls.allSatisfy { $0.profile == nil })
-        // the archive's argument is the resolved hash, never a name
-        let archive = try #require(calls.first { $0.args.first == "archive" })
-        #expect(archive.args.last == (try await head()))
+        // the tree's argument is the resolved hash, never a name
+        let tree = try #require(calls.first { $0.args.first == "ls-tree" })
+        #expect(tree.args.last == (try await head()))
 
-        // F2 V1: an `export-ignore` that hides a file of the commit: that reviewer is mute, the reason said
+        // F2 U2: an `export-ignore` of the commit hides nothing from the copy
         try "hidden.txt export-ignore\n".write(to: f.paddock.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
         try "segredo\n".write(to: f.paddock.appendingPathComponent("hidden.txt"), atomically: true, encoding: .utf8)
         _ = try await GitRunner.run(["add", ".gitattributes", "hidden.txt"], in: f.paddock)
@@ -1130,8 +1169,9 @@ extension WorkLoopReviewTests {
         #expect(ci.status == 0, "\(ci.stderr)")
         let s2 = try #require(WorkLoop.reviewScratch("v1b", in: host.reviewRoot)); defer { WorkLoop.dropScratch(s2) }
         switch await loop.reviewSnapshot(try await head(), f.paddock, into: s2) {
-        case .success: Issue.record("a commit with an export-ignore made a copy")
-        case .failure(let e): #expect(e.why.contains("export-ignore") && e.why.contains("hidden.txt"), "\(e.why)")
+        case .success(let u):
+            #expect((try? String(contentsOf: u.appendingPathComponent("hidden.txt"), encoding: .utf8)) == "segredo\n")
+        case .failure(let e): Issue.record("snapshot failed: \(e.why)")
         }
     }
 }

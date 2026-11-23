@@ -153,7 +153,7 @@ private let sample = BaitResults(runs: [
         // an invalid file does not take the doctor down: a bad root marks every layer, a bad run only its own layer
         try put(proj, FactoryBait.resultsPath, #"{"version": 1, "runs": [], "x": 1}"#)
         guard case .success(let bad) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("bad file took the doctor down"); return }
-        #expect(Set(bad.baits?.errors.keys ?? [:].keys) == Set(FactoryDoctor.Layer.allCases.map(\.rawValue)))
+        #expect(Set(bad.baits?.errors.keys.map { $0 } ?? []) == Set(FactoryDoctor.Layer.allCases.map(\.rawValue)))
         #expect(bad.baits?.errors["judge"]?.contains("campo desconhecido 'x'") == true)
         let good = #"{"bait": "a", "date": "d", "caught": true, "layer": "review", "costSeconds": 1}"#
         try put(proj, FactoryBait.resultsPath, #"{"version": 1, "runs": [\#(good), {"bait": "b", "date": "d", "caught": true, "layer": "judge", "costSeconds": -1}]}"#)

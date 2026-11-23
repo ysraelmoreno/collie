@@ -287,13 +287,40 @@ private func expectLaneProfile(_ text: String, _ r: Rig, at: SourceLocation = #_
     /// (`startedOpen`) is false for it: its review keeps the `plantedConfig` check.
     @Test func laneAgentIsNotOpenInAnOpenWorkspace() async throws {
         let r = try await Rig(open: true)
-        let rec = r.term("w-a-t1", r.a.path)
+        let rec = r.term("w-a-t1", r.a.path, project: r.a.path)   // as a lane summon makes it
         _ = try await r.d.router.launch(rec)
         let t = await r.d.router.ws.terminals.first { $0.id == rec.id }
         #expect(t?.sandbox == .sandboxed && t?.startMode == .strict, "\(String(describing: t))")
         #expect(await r.d.router.sandboxMode == .open)
         #expect(await !r.host.forLane(r.a).startedOpen(rec.id))
         await r.d.router.loopDismiss(rec.id)
+    }
+
+    /// F2 V2 (f2fix9) A5/A6: in an open workspace, the reviewer the loop's real `summonReviewer` makes is born strict:
+    /// the summon marks it before the launch and the launch reads the mark (without either it is born open, and
+    /// `summonReviewer` refuses it). A terminal born open (the Shepherd, launched for real) is refused where a reviewer
+    /// must be strict, and what the loop's dismiss reads is true for it, false for the strict reviewer and once gone.
+    @Test func reviewerIsBornStrictInAnOpenWorkspace() async throws {
+        let r = try await Rig(open: true)
+        let shepherd = TerminalRecord(id: r.starter, name: "S", preset: .shell, command: nil, cwd: r.f.paddock.path, isShepherd: true, paddockId: r.paddock.id)
+        _ = try await r.d.router.launch(shepherd)
+        let scratch = try #require(WorkLoop.reviewScratch("w-a-t1-testes-rev", in: r.host.reviewRoot))
+        defer { WorkLoop.dropScratch(scratch) }
+        var loop = WorkLoopState(); loop.preset = "shell"
+        let id = try await r.host.summonReviewer(name: "w-a-t1-testes-rev", for: Work(title: "W", terminalId: r.starter), loop: loop, cwd: scratch)
+        let rec = await r.d.router.ws.terminals.first { $0.id == id }
+        #expect(rec?.sandbox == .sandboxed && rec?.startMode == .strict, "\(String(describing: rec))")
+        // (b) the Shepherd was born open: a loop agent, never a reviewer
+        #expect(await r.d.router.ws.terminals.first { $0.id == r.starter }?.startMode == .open)
+        #expect(await !r.d.router.loopAgentSandboxed(r.starter, strict: true))
+        #expect(await r.d.router.loopAgentSandboxed(r.starter))
+        #expect(await r.d.router.loopAgentSandboxed(id, strict: true))
+        // (c) what the dismiss reads, by id
+        #expect(await r.host.startedOpen(r.starter))
+        #expect(await !r.host.startedOpen(id))
+        await r.d.router.loopDismiss(id)
+        #expect(await !r.host.startedOpen(id))
+        await r.d.router.loopDismiss(r.starter)
     }
 
     /// The real thing, where a sandbox can be applied: the check of lane A under its profile.

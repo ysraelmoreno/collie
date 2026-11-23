@@ -776,6 +776,7 @@ struct RouterLoopHost: LoopHost {
         return id
     }
     func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
+    func agentsOpen() async -> Bool { await router.sandboxMode == .open }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output
     }

@@ -72,6 +72,9 @@ protocol LoopHost: Sendable {
     func strictWrites() async -> (home: URL, paths: [String])
     /// F2 V2: the home whose `.claude.json` the reviewers read (`reviewGlobalConfigHash`): `strictWrites`'s.
     func globalConfigHome() async -> URL
+    /// F2 A4: the loop's agents run in open mode (they write the whole home): `plantedConfig` would find the user's own
+    /// `~/.claude` and mute every reviewer, so it is not asked; the parecer never approves, a swayed reviewer only goes mute.
+    func agentsOpen() async -> Bool
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -107,6 +110,7 @@ extension LoopHost {
     /// The tests' fakes: the user's home, no grants.
     func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), []) }
     func globalConfigHome() async -> URL { await strictWrites().home }
+    func agentsOpen() async -> Bool { false }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {

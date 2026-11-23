@@ -139,8 +139,8 @@ import CollieProtocol
         #expect(!prompt.contains("# Sua persona\nCorpo correcao EDITADO"))
     }
 
-    /// The reviewers are terminals of their own, never the agent's; one alive would be "someone working" to the fake
-    /// (as to the router without `loopReviewers`), yet none is ever there when the attempt asks, and the loop goes on.
+    /// The reviewers are terminals of their own, never the agent's, all dismissed before the attempt asks about others
+    /// (the order only; that the router never counts a busy reviewer is `routerNeverCountsABusyReviewer`).
     @Test func reviewersAreOtherTerminalsAndNeverBlockTheLoop() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1); await Self.works(r, 2)
@@ -151,13 +151,114 @@ import CollieProtocol
         #expect(await r.host.othersSawReviewer == false)
         let agents = Set(await r.host.agentIds), reviewers = Set(await r.host.reviewerIds)
         #expect(reviewers.count == 4 && agents.count == 2 && agents.isDisjoint(with: reviewers))
-        // the router's own rule: a reviewer busy in the paddock's tree is no one working there
-        let paddock = UUID(), starter = UUID(), reviewer = UUID(), dir = r.repo
-        func term(_ id: UUID, _ name: String) -> TerminalRecord {
-            TerminalRecord(id: id, name: name, preset: .shell, command: nil, cwd: dir.path, isShepherd: false, paddockId: paddock)
+    }
+
+    /// F2 X5: the real wiring. A reviewer summoned by the loop (`loopSummon` with its scratch folder) and in a turn
+    /// (its badge `working`) is never "someone working" to `loopOthersWorking`, even asked about its own folder, where
+    /// only the mark keeps it out; `loopDismiss` takes it and its mark. Deleting `reviewers: loopReviewers` from
+    /// `loopOthersWorking` fails this test.
+    @Test(.timeLimit(.minutes(2))) func routerNeverCountsABusyReviewer() async throws {
+        let repo = try await makeRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let scratch = try #require(WorkLoop.reviewScratch("x5-busy-rev"))
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            func spawn(_ args: [String: JSONValue]) async throws -> String {
+                let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
+                guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+                return id
+            }
+            let m = try await spawn(["name": "M", "preset": "shell", "cwd": .string(repo.path), "shepherd": true])
+            let made = try await send(p, Request(id: "p", terminalId: m, token: try await tokenOf(d, m), command: "paddock.create", args: ["name": "feat"]), timeoutSeconds: 60)
+            #expect(made.ok, "\(made)")
+            let s = try terminalUUID(try await spawn(["name": "S", "preset": "shell", "paddock": "feat", "shepherd": true]))
+            let pad = try #require(await d.router.ws.paddocks.first { $0.name == "feat" })
+            // output that never stops: the hub's own rule makes its badge `working`
+            let busy = "while :; do echo tick; sleep 0.1; done"
+            let r = Request(id: "loop", terminalId: s.uuidString, command: "summon",
+                            args: ["name": "w-a-t1-correcao-rev", "preset": "custom", "command": .string(busy)])
+            let id = try await d.router.loopSummon(r, as: s, scratch: scratch)
+            #expect(await d.router.loopReviewers.contains(id))
+            #expect(await waitFor(20) { await d.badge(id) == .working }, "the reviewer is in a turn")
+            // unmarked, it would be the one working in its folder: only the mark keeps it out
+            let terminals = await d.router.ws.terminals
+            #expect(CommandRouter.loopReaching(terminals, paddock: pad.id, starter: s, dir: scratch).map(\.name) == ["w-a-t1-correcao-rev"])
+            #expect(await d.router.loopOthersWorking(paddock: pad.id, starter: s, dir: scratch) == nil)
+            #expect(await d.router.loopAnyoneWorking(paddock: pad.id, starter: s, work: UUID(), dir: scratch) == nil)
+            await d.router.loopDismiss(id)
+            #expect(await !d.router.loopReviewers.contains(id))
+            #expect(await !d.router.loopTerminalExists(id))
         }
-        let all = [term(starter, "starter"), term(reviewer, "w-task-a-t1-testes-rev"), term(UUID(), "dev")]
-        #expect(CommandRouter.loopReaching(all, paddock: paddock, starter: starter, dir: dir, reviewers: [reviewer]).map(\.name) == ["dev"])
+    }
+
+    /// F2 X5: a reviewer whose turn runs past its time is mute (a refusal) and dismissed like any other.
+    @Test func reviewerPastItsTimeIsMute() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await Self.works(r, 1)
+        await r.host.setReviewTimeout("testes")
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains("revisor testes sem resposta") == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(await r.host.dismissed.contains("w-task-a-t1-testes-rev"))
+        #expect(await r.host.liveReviewers.isEmpty)
+    }
+
+    /// F2 X5: no time at all for the reviewers (a turn of zero): every persona mute, and no terminal summoned for nothing.
+    @Test func zeroTurnIsMuteWithoutReviewers() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.loop?.timeout = 0 }
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        let failure = w.tasks[0].lastFailure ?? "-"
+        #expect(failure.contains("revisor correcao sem resposta") && failure.contains("revisor testes sem resposta"), "\(failure)")
+        #expect(await r.host.reviewers.isEmpty && r.host.liveReviewers.isEmpty)
+    }
+
+    /// F2 X5: no catalog at the base (the folder gone, `ls-tree` failing, a persona malformed there): a refusal that
+    /// says so, and no reviewer is summoned.
+    @Test(arguments: ["vazia", "ls-tree", "malformada"]) func noPersonasAtTheBaseRefusesWithoutReviewers(_ how: String) async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        switch how {
+        case "vazia":
+            _ = try await GitRunner.run(["rm", "-rq", CommandRouter.personasDir], in: r.repo)
+            try await commit("sem-personas.txt", "x\n", in: r.repo)
+        case "ls-tree": await r.host.setFault(["ls-tree", "-z", "--name-only"], "fatal: boom")
+        default: try await commit(CommandRouter.personasDir + "correcao.md", "# sem front-matter\n", in: r.repo)
+        }
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains("sem personas no commit base") == true, "\(how): \(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].review == "revisão: recusada (sem personas)")
+        #expect(await r.host.reviewers.isEmpty)
+    }
+
+    /// F2 X5: the agent deletes a persona in its worktree and commits: its reviewer still runs, with the base's text.
+    @Test func personaDeletedInTheWorktreeStillJudges() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try FileManager.default.removeItem(at: d.appendingPathComponent(CommandRouter.personasDir + "correcao.md"))
+            try await commit("x.txt", "x\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
+        #expect(prompt.contains("# Sua persona\nCorpo correcao ORIGINAL"))
+        #expect(prompt.contains("-Corpo correcao ORIGINAL"))   // the deletion, in the diff judged
+    }
+
+    /// F2 X5: a reviewer's finding past the end of the new file (a patch's line number) loses the line and says so.
+    @Test func findingLineIsCheckedInTheNewFile() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await Self.works(r, 1)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject.replacingOccurrences(of: #""line":1"#, with: #""line":7"#))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].lastFailure?.contains("[testes] Tests/a1.swift falta o caso vazio (linha 7 não existe no arquivo novo, de 1 linhas)") == true,
+                "\(w.tasks[0].lastFailure ?? "-")")
     }
 
     @Test func withoutReviewNoReviewerRuns() async throws {

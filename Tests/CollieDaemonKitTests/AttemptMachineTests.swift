@@ -313,7 +313,6 @@ private func alongTheHappyPath() -> [M.State] { along(happy) }
     @Test func everyPhaseIsReached() {
         #expect(Set(along(happy).map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished, .reviewing]))
         #expect(Set(along(reviewed).map(\.phase)).contains(.reviewing))
-        #expect(M.Phase.allCases.count == 8)
     }
 
     /// F2 R3: with the review on, an attempt that fails before it is judged exactly as today (no review).

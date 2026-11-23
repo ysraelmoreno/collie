@@ -17,10 +17,10 @@ struct ReviewFinding: Sendable, Equatable, Codable {
 
     /// `src/X.swift:12 claim (fix: ...)`, the text a refusal or a note carries.
     var text: String {
-        var where_ = file ?? ""
-        if let line, !where_.isEmpty { where_ += ":\(line)" }
+        var location = file ?? ""
+        if let line, !location.isEmpty { location += ":\(line)" }
         let fixText = fix.map { $0.isEmpty ? "" : " (fix: \($0))" } ?? ""
-        return (where_.isEmpty ? "" : where_ + " ") + claim + fixText
+        return (location.isEmpty ? "" : location + " ") + claim + fixText
     }
 }
 
@@ -31,7 +31,7 @@ struct PersonaVerdict: Sendable, Equatable {
     var findings: [ReviewFinding]
     var invalid: String?
 
-    static func invalid(_ persona: String, _ reason: String) -> PersonaVerdict {
+    static func refused(_ persona: String, _ reason: String) -> PersonaVerdict {
         PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "resposta do revisor inválida: \(reason)")
     }
 }
@@ -60,14 +60,16 @@ enum ReviewVerdict {
     /// loop for this reviewer and attempt after the agent's turn, so no JSON planted in the diff can pass. Then reads the LAST JSON object carrying `"verdict"` out of terminal text (screen plus noise). Anything else is a
     /// refusal: no JSON, truncated JSON, wrong types, unknown verdict or severity, another persona, limits passed,
     /// or an approve with a blocker/major finding.
-    static func parse(_ text: String, persona: String, nonce: String) -> PersonaVerdict {
+    /// F2 X5: `lineCounts` (path → lines of the NEW file, when its text is known): a finding whose line is not in that
+    /// file (a patch's line number, say) keeps its severity but loses the line, with a note saying so.
+    static func parse(_ text: String, persona: String, nonce: String, lineCounts: [String: Int] = [:]) -> PersonaVerdict {
         let all = Array(text.utf8), marker = Array(ReviewPrompt.endMarker(nonce).utf8)
         guard !nonce.isEmpty, let at = lastRange(of: marker, in: all) else {
-            return .invalid(persona, "marcador de fim do pedido ausente")
+            return .refused(persona, "marcador de fim do pedido ausente")
         }
         let bytes = Array(all[(at + marker.count)...])
         guard let key = lastRange(of: Array(#""verdict""#.utf8), in: bytes) else {
-            return .invalid(persona, "nenhum JSON com \"verdict\"")
+            return .refused(persona, "nenhum JSON com \"verdict\"")
         }
         // The innermost-to-outermost '{' before the key whose balanced object holds the key and decodes.
         var start = key
@@ -86,32 +88,48 @@ enum ReviewVerdict {
             }
             break
         }
-        guard let (raw, end) = found else { return .invalid(persona, lastError) }
+        guard let (raw, end) = found else { return .refused(persona, lastError) }
         // ponytail: a later, unclosed answer (truncated) must not let an earlier complete one through.
         if lastRange(of: Array(#""persona""#.utf8), in: Array(bytes[(end + 1)...])) != nil {
-            return .invalid(persona, "JSON truncado depois do último veredito")
+            return .refused(persona, "JSON truncado depois do último veredito")
         }
-        guard raw.nonce == nonce else { return .invalid(persona, "nonce") }
+        guard raw.nonce == nonce else { return .refused(persona, "nonce") }
         guard raw.persona == persona else {
-            return .invalid(persona, "persona '\(clip(raw.persona))' diferente da pedida '\(persona)'")
+            return .refused(persona, "persona '\(clip(raw.persona))' diferente da pedida '\(persona)'")
         }
         guard raw.verdict == "approve" || raw.verdict == "reject" else {
-            return .invalid(persona, "verdict desconhecido '\(clip(raw.verdict))'")
+            return .refused(persona, "verdict desconhecido '\(clip(raw.verdict))'")
         }
         guard raw.findings.count <= maxFindings else {
-            return .invalid(persona, "\(raw.findings.count) findings (máximo \(maxFindings))")
+            return .refused(persona, "\(raw.findings.count) findings (máximo \(maxFindings))")
         }
         for finding in raw.findings {
             let fields = [finding.file, finding.claim, finding.fix].compactMap { $0 }
             if fields.contains(where: { $0.count > maxFieldChars }) {
-                return .invalid(persona, "campo com mais de \(maxFieldChars) caracteres")
+                return .refused(persona, "campo com mais de \(maxFieldChars) caracteres")
             }
         }
-        if raw.verdict == "approve", raw.findings.contains(where: \.severity.blocks) {
-            return PersonaVerdict(persona: persona, approved: false, findings: raw.findings,
+        let findings = raw.findings.map { located($0, lineCounts) }
+        if raw.verdict == "approve", findings.contains(where: \.severity.blocks) {
+            return PersonaVerdict(persona: persona, approved: false, findings: findings,
                                   invalid: "resposta do revisor inválida: approve com finding blocker/major (incoerente)")
         }
-        return PersonaVerdict(persona: persona, approved: raw.verdict == "approve", findings: raw.findings, invalid: nil)
+        return PersonaVerdict(persona: persona, approved: raw.verdict == "approve", findings: findings, invalid: nil)
+    }
+
+    /// F2 X5: a line outside the new file's `1...n` is dropped and said in the claim; an unknown file is left as is.
+    static func located(_ f: ReviewFinding, _ lineCounts: [String: Int]) -> ReviewFinding {
+        guard let line = f.line, let file = f.file, let n = lineCounts[file], line < 1 || line > n else { return f }
+        var g = f
+        g.line = nil
+        g.claim += " (linha \(line) não existe no arquivo novo, de \(n) linhas)"
+        return g
+    }
+
+    /// The lines of a file's text, as `located` counts them (a last newline closes a line, not opens one).
+    static func lineCount(_ text: String) -> Int {
+        let n = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        return text.hasSuffix("\n") ? n - 1 : (text.isEmpty ? 0 : n)
     }
 
     /// Refuses if ANY persona refuses (or none answered); minor/nit of approving personas become notes.

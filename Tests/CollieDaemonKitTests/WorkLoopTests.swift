@@ -87,6 +87,9 @@ actor LoopFakeHost: LoopHost {
     var reviewerActs: [String: @Sendable (URL) async throws -> Void] = [:]
     nonisolated let reviewerAsked = Arrivals()
     func setReviewerAct(_ who: String, _ act: @escaping @Sendable (URL) async throws -> Void) { reviewerActs[who] = act }
+    /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
+    var reviewTimeouts: Set<String> = []
+    func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
         reviewerModels[name] = loop.model ?? "-"
@@ -103,6 +106,7 @@ actor LoopFakeHost: LoopHost {
         if let act = reviewerActs[name] ?? reviewerActs[persona] {
             do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
         }
+        if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
         let nonce = Self.nonce(in: prompt)
         guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {

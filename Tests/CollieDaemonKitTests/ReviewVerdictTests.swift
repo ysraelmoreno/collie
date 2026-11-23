@@ -28,6 +28,21 @@ struct ReviewVerdictTests {
                                                claim: "token vaza no log", fix: "redigir o token"))
     }
 
+    /// F2 X5: a finding's line is the NEW file's: one past its end (a patch's number, say) keeps its severity, loses
+    /// the line and says so; a line inside it, or a file whose text is unknown, is left as is.
+    @Test func findingOutsideTheNewFileLosesItsLine() {
+        let answer = ReviewPrompt.endMarker(Self.n) + "\n" + Self.reject.replacingOccurrences(of: #"{"persona":"#, with: #"{"nonce":"\#(Self.n)","persona":"#)
+        let v = ReviewVerdict.parse(answer, persona: "seguranca", nonce: Self.n, lineCounts: ["src/X.swift": 5, "src/Y.swift": 3])
+        #expect(!v.approved && v.invalid == nil)
+        #expect(v.findings[0] == ReviewFinding(severity: .blocker, file: "src/X.swift", line: nil,
+                                               claim: "token vaza no log (linha 12 não existe no arquivo novo, de 5 linhas)", fix: "redigir o token"))
+        #expect(v.findings[1].line == 3)
+        #expect(ReviewVerdict.parse(answer, persona: "seguranca", nonce: Self.n).findings[0].line == 12)
+        #expect(ReviewVerdict.located(ReviewFinding(severity: .nit, file: "a", line: 0, claim: "c"), ["a": 4]).line == nil)
+        #expect(ReviewVerdict.lineCount("") == 0 && ReviewVerdict.lineCount("a") == 1 && ReviewVerdict.lineCount("a\nb\n") == 2
+            && ReviewVerdict.lineCount("\n\na") == 3)
+    }
+
     @Test func noiseBeforeAndAfter() {
         let text = "⏺ lendo o diff {sem json aqui\n> \(Self.approve)\n\n  ? for shortcuts  } esc to interrupt"
         let v = Self.parse(text, persona: "correcao")

@@ -8,14 +8,14 @@ struct PersonaTests {
         "---\nname: \(name)\nmodel: \(model)\npaths: \(paths)\n---\n# \(name)\nlente de \(name)\n"
     }
 
-    /// The five personas, with the globs of docs/fabrica/personas/.
-    static let files: [String: String] = [
-        "correcao.md": file("correcao"),
-        "testes.md": file("testes", paths: #"["Tests/**", "Sources/**"]"#),
-        "motor-concorrencia.md": file("motor-concorrencia", paths: #"["Sources/CollieDaemonKit/Work/**", "Sources/CollieDaemonKit/Daemon*", "Sources/CollieDaemonKit/Sandbox/**", "Sources/CollieDaemonKit/Remote/**"]"#),
-        "seguranca.md": file("seguranca", paths: #"["Sources/CollieDaemonKit/Sandbox/**", "Sources/CollieDaemonKit/Remote/**", "Helpers/**", "scripts/**", "Resources/**"]"#),
-        "simplicidade.md": file("simplicidade", model: "haiku"),
-    ]
+    /// F2 X5: the repository's own personas (docs/fabrica/personas/*.md), read as they are: the routing tested is theirs.
+    static let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/fabrica/personas")
+    static let files: [String: String] = {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return Dictionary(uniqueKeysWithValues: names.filter { $0.hasSuffix(".md") }.compactMap { n in
+            (try? String(contentsOf: dir.appendingPathComponent(n), encoding: .utf8)).map { (n, $0) }
+        })
+    }()
 
     static func router() throws -> PersonaRouter { PersonaRouter(catalog: try PersonaCatalog.parse(files: files)) }
 
@@ -25,7 +25,7 @@ struct PersonaTests {
     }
 
     @Test func validFrontMatterParses() throws {
-        let p = try PersonaCatalog.parse(file: "testes.md", text: Self.files["testes.md"] ?? "")
+        let p = try PersonaCatalog.parse(file: "testes.md", text: Self.file("testes", paths: #"["Tests/**", "Sources/**"]"#))
         #expect(p == Persona(name: "testes", model: "sonnet", paths: ["Tests/**", "Sources/**"], body: "# testes\nlente de testes"))
         let noModel = try PersonaCatalog.parse(file: "x.md", text: "---\nname: x\npaths: [\"*\"]\n---\ncorpo")
         #expect(noModel.model == nil)
@@ -56,14 +56,15 @@ struct PersonaTests {
     }
 
     @Test func repoPersonasParse() throws {
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/fabrica/personas")
-        var files: [String: String] = [:]
-        for name in try FileManager.default.contentsOfDirectory(atPath: dir.path) where name.hasSuffix(".md") {
-            files[name] = try String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
-        }
-        let catalog = try PersonaCatalog.parse(files: files)
+        let catalog = try PersonaCatalog.parse(files: Self.files)
         #expect(catalog.map(\.name) == ["correcao", "motor-concorrencia", "seguranca", "simplicidade", "testes"])
         #expect(catalog.allSatisfy { $0.body.contains("Contrato de saída") })
+        // F2 X5: the line a finding points at is the new file's, never the patch's
+        #expect(catalog.allSatisfy { $0.body.contains("a linha no ARQUIVO NOVO (depois da mudança), nunca o número de linha do patch") })
+        // routed with the real catalog: each area calls the persona whose globs name it
+        #expect(try Self.names([".github/workflows/ci.yml"]) == ["correcao", "seguranca"])
+        #expect(try Self.names(["Helpers/x.swift"]) == ["correcao", "seguranca"])
+        #expect(try Self.names(["Sources/CollieDaemonKit/Remote/R.swift"]) == ["correcao", "seguranca", "motor-concorrencia", "testes"])
     }
 
     @Test func docsOnlyCallsOnlyCorrecao() throws {
@@ -120,15 +121,13 @@ struct PersonaTests {
             == ["correcao", "seguranca", "testes", "simplicidade"])
     }
 
-    /// F2 X4: a persona or a spec of the work's tasks is what judges the next attempts: seguranca reviews the change,
-    /// with the fixture's globs and with the repository's own catalog.
+    /// F2 X4: a persona or a spec of the work's tasks is what judges the next attempts: seguranca reviews the change.
     @Test func personasAndSpecsCallSeguranca() throws {
         #expect(try Self.names(["docs/fabrica/personas/correcao.md"]) == ["correcao", "seguranca"])
         let r = try Self.router()
         #expect(try r.select(changedPaths: ["docs/x/spec.md"], diffLines: 1, specs: ["docs/x/spec.md"]).map(\.name) == ["correcao", "seguranca"])
         #expect(try r.select(changedPaths: ["docs/x/other.md"], diffLines: 1, specs: ["docs/x/spec.md"]).map(\.name) == ["correcao"])
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/fabrica/personas")
-        let real = try PersonaCatalog.parse(file: "seguranca.md", text: String(contentsOf: dir.appendingPathComponent("seguranca.md"), encoding: .utf8))
+        let real = try PersonaCatalog.parse(file: "seguranca.md", text: Self.files["seguranca.md"] ?? "")
         #expect(PersonaRouter.matches(real.paths, any: ["docs/fabrica/personas/testes.md"]))
         #expect(PersonaRouter.matches(real.paths, any: ["docs/superpowers/specs/dl14/x4.md"]))
     }

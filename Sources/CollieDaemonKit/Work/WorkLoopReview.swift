@@ -90,6 +90,11 @@ extension WorkLoop {
             return Reviewed(outcome: .init(approved: false, reason: why, notes: []), line: "revisão: recusada (sem personas)",
                             note: LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): \(why)"))
         }
+        // F2 X5: the lines of each changed file as judged (deleted ones have none to point at): a finding's line is checked there
+        var lineCounts: [String: Int] = [:]
+        for p in paths {
+            if let r = try? await host.git(["show", "\(judged):\(p)"], in: dir), r.status == 0 { lineCounts[p] = ReviewVerdict.lineCount(r.stdout) }
+        }
         let spec = await specText(task.spec, at: before, dir)
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
@@ -107,12 +112,14 @@ extension WorkLoop {
                     var verdict = Self.mute(p.name)
                     do {
                         guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
+                        // F2 X5: no time left to answer in: mute, and no terminal summoned for nothing
+                        guard turn > 0 else { throw ProtocolError(code: .timeout, message: "no turn left") }
                         let t = try await AgentNaming.summon(name, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
                             try await host.summonReviewer(name: x, for: work, loop: as_, cwd: cwd)
                         }
                         id = t
                         let text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn))
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce) }
+                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce, lineCounts: lineCounts) }
                     } catch {}
                     return (i, PersonaRun(persona: p.name, model: model, approved: verdict.approved, invalid: verdict.invalid, findings: verdict.findings), id)
                 }

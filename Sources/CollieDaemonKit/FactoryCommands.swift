@@ -294,12 +294,12 @@ extension CommandRouter {
     /// check: `FactoryRatchet.measure`) and applies `FactoryRatchet.apply`. `passed` false: the CLI exits 1.
     func factoryRatchet(_ t: TerminalRecord, _ action: FactoryRatchet.Action, name: String, reason: String?) async throws(ProtocolError) -> JSONValue {
         let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
-        let config: ProjectWorkConfig?
+        let work: ProjectWorkConfig?
         switch WorkConfigFile.config(root: root) {
         case .failure(let e): throw e
-        case .success(let c): config = c
+        case .success(let c): work = c
         }
-        guard let r = config?.factory?.ratchets.first(where: { $0.name == name }) else {
+        guard let r = work?.factory?.ratchets.first(where: { $0.name == name }) else {
             throw ProtocolError(code: .notFound, message: "catraca '\(name)' não está em factory.static.ratchets de collie-work.json")
         }
         guard let rel = r.baseline else { throw ProtocolError(code: .invalidArgs, message: "catraca '\(name)' sem baseline no perfil") }

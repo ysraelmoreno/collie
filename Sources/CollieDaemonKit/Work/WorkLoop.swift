@@ -364,6 +364,9 @@ actor WorkLoop {
         var mark: UUID?
         /// When the turn's time is over (set by `ask`).
         var deadline: Date?
+        /// F2 V1: when the last turn (the attempt's or its nudge's) began, and what the loop saw at its end: how long it
+        /// lasted and whether the agent was still working (the `turnEnded` event's detail).
+        var turnAt: Date?, looked: (secs: Int, busy: Bool)?
         /// The branch and the untracked files (the owner's and the agent's) before the check: what `settle` puts back.
         var on: String, loose: Set<String> = []
         var output = ""
@@ -426,6 +429,9 @@ actor WorkLoop {
         }
     }
 
+    /// F2 V1: a turn's end before this many seconds, with its agent busy and no commit, leaves a note when no commit comes.
+    static let shortTurn = 60
+
     /// The `discarded` event's detail when no patch was written (the diff failed or was empty).
     static let noPatch = "sem alterações"
 
@@ -438,6 +444,13 @@ actor WorkLoop {
             // the journal: this attempt's events (it records, it never decides)
             // `discarded` names the patch only when one was written
             // `attemptStarted` went with the attempt's first write
+            var detail = detail
+            // F2 V1: the turn's end says how long it lasted and whether its agent was still working, e.g. `hook 38s ocupado`
+            if kind == .turnEnded, let agent = r.agent, let at = r.turnAt {
+                let secs = Int(host.now().timeIntervalSince(at).rounded()), busy = await host.working(agent)
+                r.looked = (secs, busy)
+                detail = "\(detail ?? "") \(secs)s \(busy ? "ocupado" : "ocioso")"
+            }
             if kind != .attemptStarted {
                 var e = entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
                 if kind == .agentDismissed { e.tokens = r.tokens; r.tokens = nil }
@@ -469,7 +482,7 @@ actor WorkLoop {
             for m in Self.featureMaps where map == nil { if await host.exists(m, in: dir) { map = m } }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
-            r.deadline = r.started + Double(turn)
+            r.deadline = r.started + Double(turn); r.turnAt = host.now()
             let ended = await talk(agent, prompt, .seconds(turn))
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
@@ -482,6 +495,7 @@ actor WorkLoop {
             // part of the same attempt (no `used`, no try); written now, with the turn's end: the nudge's turn may be long
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
+            r.turnAt = host.now()
             return await talk(agent, Self.nudgePrompt, .seconds(rest))
         case .precheckNudge(let tail):
             // as `nudge`: what is left of the turn, never when the loop or the daemon is stopping
@@ -503,8 +517,20 @@ actor WorkLoop {
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
             }
+            // F2 V1: a turn that ended (hook, error) with its agent still working is not over: wait while it works, never
+            // past the turn's time (a timeout's is already over) nor while the loop or the daemon is stopping
+            let looked = r.looked; r.looked = nil
+            if effect == .lookForCommit, looked?.busy == true, let agent = r.agent, let deadline = r.deadline {
+                while host.now() < deadline, !Task.isCancelled, !stopping.contains(id), await host.working(agent) { await Self.nap(poll) }
+            }
             // for the journal only: the verdict reads the commit again, after the dismiss
-            guard await committed(before: before, branch: branch, dir) else { return .waitExpired }
+            guard await committed(before: before, branch: branch, dir) else {
+                if let looked, looked.busy, looked.secs < Self.shortTurn {
+                    let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))"
+                    await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
+                }
+                return .waitExpired
+            }
             return .commitSeen(await out(["rev-parse", "--short", "HEAD"], dir))
         case .dismiss:
             // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)

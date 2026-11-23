@@ -56,6 +56,37 @@ m=$(scripts/factory-detect.sh "$tmp")
   = "('swift', ['swift', 'node'], {'checkScripts': ['scripts/check-a.sh'], 'collieWork': True, 'personas': True})" ] \
   || { echo "FAIL várias stacks/existing: $m"; fail=1; }
 
+# F3: a root with glob characters is that folder (glob.escape): its CI and check scripts are found
+g="$tmp/proj [a]*?"; mkdir -p "$g/.github/workflows" "$g/scripts" "$tmp/proj ab/.github/workflows"
+cp $fx/node/package.json "$g"/; echo 'on: push' > "$g/.github/workflows/ci.yml"; echo 'npx jest' > "$g/scripts/check-x.sh"
+echo 'on: push' > "$tmp/proj ab/.github/workflows/isca.yml"   # what the unescaped glob "proj [a]*?" would match instead
+check "$g" node "npx vitest run"
+[ "$(field "$(scripts/factory-detect.sh "$g")" "d['ci'], d['existing']['checkScripts']")" = "(['.github/workflows/ci.yml'], ['scripts/check-x.sh'])" ] \
+  || { echo "FAIL glob no caminho: ci/checkScripts"; fail=1; }
+
+# F3: a package.json that does not parse (too deep: RecursionError; broken JSON) is valid JSON out, the signal absent, no traceback
+mkdir -p "$tmp/deep"
+python3 -I -c 'print("[" * 200000 + "]" * 200000)' > "$tmp/deep/package.json"
+check "$tmp/deep" node None
+scripts/factory-detect.sh "$tmp/deep" 2>&1 >/dev/null | grep -q Traceback && { echo "FAIL deep: traceback"; fail=1; }
+printf '{"scripts": {"test": ' > "$tmp/deep/package.json"
+check "$tmp/deep" node None
+
+# F3: npm init's default test is no test runner; the manager comes from the lock file
+mkdir -p "$tmp/init"
+echo '{"name": "x", "scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}' > "$tmp/init/package.json"
+check "$tmp/init" node None
+pm() { field "$(scripts/factory-detect.sh "$tmp/init")" "d['tools']['node']['packageManager']"; }
+[ "$(pm)" = None ] || { echo "FAIL sem lock: packageManager $(pm)"; fail=1; }
+echo '{"name": "x", "scripts": {"test": "mocha"}}' > "$tmp/init/package.json"
+touch "$tmp/init/yarn.lock"
+[ "$(pm)" = yarn ] || { echo "FAIL yarn.lock: $(pm)"; fail=1; }
+[ "$(field "$(scripts/factory-detect.sh "$tmp/init")" "d['testRunner']")" = "yarn test" ] || { echo "FAIL yarn test"; fail=1; }
+rm "$tmp/init/yarn.lock"; touch "$tmp/init/pnpm-lock.yaml"
+[ "$(pm)" = pnpm ] || { echo "FAIL pnpm-lock.yaml: $(pm)"; fail=1; }
+rm "$tmp/init/pnpm-lock.yaml"; touch "$tmp/init/package-lock.json"
+[ "$(pm)" = npm ] || { echo "FAIL package-lock.json: $(pm)"; fail=1; }
+
 scripts/factory-detect.sh "$tmp/nao-existe" >/dev/null 2>&1 && { echo "FAIL: diretório ausente devia falhar"; fail=1; }
 [ $fail = 0 ] && echo "test-factory-detect: tudo ok"
 exit $fail

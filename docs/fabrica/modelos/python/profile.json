@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "gate": "python3 -m pytest -q",
+  "gate": "bash scripts/gate.sh",
   "precheck": "python3 -m compileall -q .",
   "smoke": "python3 -m pytest -q -x --co",
   "areas": {
@@ -10,7 +10,7 @@
     "version": 1,
     "static": {
       "ratchets": [
-        { "name": "todo", "measure": "grep -rIc --include=*.py --exclude-dir=.venv TODO . | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
+        { "name": "todo", "measure": "set -o pipefail; { grep -rIc --include=*.py --exclude-dir=.venv TODO . || [ $? = 1 ]; } | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
       ]
     },
     "review": { "personas": ["correcao", "testes", "simplicidade", "seguranca"], "threshold": "major", "callOwner": true },

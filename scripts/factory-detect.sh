@@ -15,7 +15,8 @@ def text(name):
     try:
         with open(p(name), encoding="utf-8", errors="replace") as f: return f.read(256 * 1024)
     except OSError: return ""
-def files(pattern): return sorted(os.path.relpath(x, root) for x in glob.glob(p(pattern)) if os.path.isfile(x))
+# the root is escaped: a folder named "proj [a]*?" is that folder, not a glob
+def files(pattern): return sorted(os.path.relpath(x, root) for x in glob.glob(os.path.join(glob.escape(root), pattern)) if os.path.isfile(x))
 
 stacks, tools = [], {}
 def found(stack, test=None, lint=None, fmt=None, **extra):
@@ -28,16 +29,22 @@ if has("Package.swift"):
           "swift-format" if has(".swift-format") else "swiftformat" if has(".swiftformat") else None)
 
 if has("package.json"):
+    # any parse failure (bad JSON, RecursionError on deep nesting) is a package.json with no signal, never a traceback
     try: pkg = json.loads(text("package.json"))
-    except ValueError: pkg = {}
+    except Exception: pkg = {}
     pkg = pkg if isinstance(pkg, dict) else {}
     deps = {}
     for k in ("dependencies", "devDependencies"):
         if isinstance(pkg.get(k), dict): deps.update(pkg[k])
     scripts = pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {}
-    test = "npx vitest run" if "vitest" in deps else "npx jest" if "jest" in deps else "npm test" if "test" in scripts else None
+    # the manager is the lock file's; none: unknown (the init asks, npm is the fallback)
+    pm = "pnpm" if has("pnpm-lock.yaml") else "yarn" if has("yarn.lock") else "npm" if has("package-lock.json") or has("npm-shrinkwrap.json") else None
+    # npm init's default "test" (echo "Error: no test specified" && exit 1) is no test at all
+    st = scripts.get("test")
+    real = isinstance(st, str) and "no test specified" not in st
+    test = "npx vitest run" if "vitest" in deps else "npx jest" if "jest" in deps else f"{pm or 'npm'} test" if real else None
     found("node", test, "eslint" if "eslint" in deps else None, "prettier" if "prettier" in deps else None,
-          typecheck="tsc --noEmit" if "typescript" in deps else None)
+          typecheck="tsc --noEmit" if "typescript" in deps else None, packageManager=pm)
 
 py = files("requirements*.txt")
 if has("pyproject.toml") or py:

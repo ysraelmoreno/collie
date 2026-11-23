@@ -10,7 +10,7 @@ O que vale aqui: **o Collie garante o isolamento do juiz, não a força dos chec
 
 Fontes (no repositório do Collie, `COLLIE` abaixo é a raiz dele):
 - detector: `COLLIE/scripts/factory-detect.sh`
-- modelos por stack: `COLLIE/docs/fabrica/modelos/<swift|node|python>/` (`profile.json`, `scripts/check-feature.sh`, `ci.yml`, `README.md`)
+- modelos por stack: `COLLIE/docs/fabrica/modelos/<swift|node|python>/` (`profile.json`, `scripts/gate.sh`, `scripts/check-feature.sh`, `ci.yml`, `README.md`)
 - personas padrão: `COLLIE/docs/fabrica/personas/*.md` (as mesmas que o `collie work run --review` lê)
 
 ## Regras que não mudam
@@ -47,9 +47,14 @@ Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci` e `existing`
 
 Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
 - `collie-work.json`: do `profile.json` do modelo com as respostas da entrevista. Já existe: mescle só a chave `factory` e as chaves que faltam; nunca troque o `gate` do dono sem ele dizer.
+- `scripts/gate.sh`, executável: o `gate` é `bash scripts/gate.sh`. Ele roda o runner direto e falha se um arquivo de config
+  listado no comentário do topo força sucesso; o juiz protege o `gate.sh` (o texto do gate o cita), não esses arquivos.
+  Node: o runner é o `tools.node.testRunner` do detector (vitest ou jest).
 - `scripts/check-feature.sh` (e um `scripts/check-<tipo>.sh` por tipo de tarefa que o dono citar), executável.
 - `docs/fabrica/personas/*.md`: copie as personas padrão; os nomes vão em `factory.review.personas`. O dono pode editar.
-- `.github/workflows/ci.yml`: só quando `ci` veio vazio no detector; o CI roda o mesmo comando do `gate`.
+- `.github/workflows/ci.yml`: só quando `ci` veio vazio no detector; o CI roda o mesmo comando do `gate`. Node: o modelo instala
+  com o gerenciador do arquivo de lock (`tools.node.packageManager`).
+- `docs/fabrica/iscas/`: só se o dono pedir isca (`factory-bait`); copie `COLLIE/docs/fabrica/iscas/` para o mesmo caminho.
 
 Valide o arquivo antes de seguir: `collie factory doctor` recusa um `collie-work.json` inválido com o caminho do erro; conserte até passar.
 
@@ -58,11 +63,13 @@ Valide o arquivo antes de seguir: `collie factory doctor` recusa um `collie-work
 Para cada catraca em `factory.static.ratchets` (o modelo traz `todo`):
 
 ```bash
-collie factory ratchet update <nome>    # grava o baseline inicial (o arquivo em 'baseline')
-collie factory ratchet check <nome>     # tem que passar logo em seguida
+collie factory ratchet raise <nome> --reason "baseline inicial (factory init)"   # grava o baseline inicial (o arquivo em 'baseline')
+collie factory ratchet check <nome>                                              # tem que passar logo em seguida
 ```
 
-O baseline entra no repositório. Subir o número depois só com `collie factory ratchet raise <nome> --reason "..."`.
+`update` não cria o primeiro baseline (só grava melhorias, quando o número cai). O arquivo de baseline (o caminho em
+`baseline`) entra no repositório: commite-o junto com o `collie-work.json`, com o dono de acordo. Se o `measure` falhar porque a
+pasta medida não existe, troque a pasta pela do projeto. Subir o número depois só com `raise <nome> --reason "..."`.
 
 ### 5. Doutor
 

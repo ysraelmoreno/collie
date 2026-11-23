@@ -1,13 +1,20 @@
 # Skeleton: copy to .github/workflows/ci.yml when the project has no CI. It runs the same gate as collie-work.json.
+# The package manager comes from the lock file (scripts/factory-detect.sh: tools.node.packageManager); no cache is fixed to npm.
 name: ci
 on: [push, pull_request]
+permissions: { contents: read }
 jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
+        with: { node-version: 20 }
+      - run: corepack enable
+      - run: |
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then yarn install --frozen-lockfile
+          elif [ -f package-lock.json ]; then npm ci
+          else npm install; fi
       - run: npm run lint --if-present
-      - run: npm test
+      - run: bash scripts/gate.sh

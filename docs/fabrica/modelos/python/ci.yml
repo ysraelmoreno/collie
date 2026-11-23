@@ -1,6 +1,7 @@
 # Skeleton: copy to .github/workflows/ci.yml when the project has no CI. It runs the same gate as collie-work.json.
 name: ci
 on: [push, pull_request]
+permissions: { contents: read }
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -8,5 +9,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: python3 -m pip install -e ".[dev]" || python3 -m pip install -r requirements.txt pytest
-      - run: python3 -m pytest -q
+      - run: python3 -m pip install pytest
+      - run: |
+          if [ -f requirements.txt ]; then python3 -m pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ]; then python3 -m pip install -e .; fi
+      - run: bash scripts/gate.sh

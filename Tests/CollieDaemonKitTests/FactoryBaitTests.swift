@@ -46,7 +46,10 @@ private let sample = BaitResults(runs: [
         guard case .success(let c) = FactoryBait.parseCatalog(d) else { Issue.record("\(String(describing: failure(FactoryBait.parseCatalog(d))?.message))"); return }
         #expect(c.baits.map(\.id) == ["logica", "teste-fraco", "segredo-no-diff", "corrida", "spec-editado"])
         #expect(Set(c.baits.map(\.id)).count == c.baits.count)
-        #expect(c.baits.first { $0.id == "spec-editado" }?.layer == .judge && c.baits.first { $0.id == "logica" }?.layer == .review)
+        // F3: the judge does not guard the task's check, so the edited check is the reviewer's to veto
+        let spec = c.baits.first { $0.id == "spec-editado" }
+        #expect(spec?.layer == .review && spec?.expect == .veto && spec?.description.contains("juiz não protege") == true)
+        #expect(c.baits.allSatisfy { $0.layer == .review && $0.expect == .veto })
         #expect(Set(c.baits.map(\.stack)) == ["swift", "any"])
         #expect(FactoryBait.text(c).split(separator: "\n").count == 5)
     }

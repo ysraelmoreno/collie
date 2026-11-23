@@ -1,10 +1,11 @@
 # Skeleton: copy to .github/workflows/ci.yml when the project has no CI. It runs the same gate as collie-work.json.
 name: ci
 on: [push, pull_request]
+permissions: { contents: read }
 jobs:
   gate:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - run: swift build --build-tests
-      - run: swift test
+      - run: bash scripts/gate.sh

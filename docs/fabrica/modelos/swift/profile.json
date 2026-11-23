@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "gate": "swift test",
+  "gate": "bash scripts/gate.sh",
   "precheck": "swift build --build-tests",
   "smoke": "swift build",
   "areas": {
@@ -10,7 +10,7 @@
     "version": 1,
     "static": {
       "ratchets": [
-        { "name": "todo", "measure": "grep -rIc TODO Sources | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
+        { "name": "todo", "measure": "set -o pipefail; [ -d Sources ] || { echo 'todo: a pasta Sources não existe; ajuste o measure' >&2; exit 1; }; { grep -rIc TODO Sources || [ $? = 1 ]; } | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
       ]
     },
     "review": { "personas": ["correcao", "testes", "simplicidade", "seguranca"], "threshold": "major", "callOwner": true },

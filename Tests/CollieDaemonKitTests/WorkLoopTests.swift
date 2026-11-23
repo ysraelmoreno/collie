@@ -265,6 +265,7 @@ struct LoopRig {
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
+        try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
                         notices: LoopNotices(window: noticeWindow))

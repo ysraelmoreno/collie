@@ -58,8 +58,9 @@ extension WorkLoop {
             guard plainDir(root, owned: true) else { return nil }
             guard !agentConfigs.contains(where: { var st = stat(); return lstat(root + "/" + $0, &st) == 0 }) else { return nil }
             var tmpl = Array((root + "/" + name + "-XXXXXXXX").utf8CString)
-            if let made = tmpl.withUnsafeMutableBufferPointer({ mkdtemp($0.baseAddress!) }) {
-                return URL(fileURLWithPath: String(cString: made), isDirectory: true)
+            // the path is read inside the closure: the buffer is `tmpl`'s, gone once it returns
+            if let made = tmpl.withUnsafeMutableBufferPointer({ mkdtemp($0.baseAddress!).map { String(cString: $0) } }) {
+                return URL(fileURLWithPath: made, isDirectory: true)
             }
             guard errno == ENOENT else { return nil }
         }

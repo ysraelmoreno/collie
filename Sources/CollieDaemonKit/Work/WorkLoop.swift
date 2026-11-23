@@ -62,6 +62,9 @@ protocol LoopHost: Sendable {
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID
     /// F2 Y1: where the reviewers' folders are made (`WorkLoop.reviewScratch`): `<daemon root>/collie-review`.
     var reviewRoot: URL { get }
+    /// F2 Z2: what a strict loop agent writes under the home besides caches (`WorkLoop.strictWritable`): the home and
+    /// those paths (write grants, paddocks).
+    func strictWrites() async -> (home: URL, paths: [String])
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -89,6 +92,8 @@ extension LoopHost {
     }
     /// The tests' fakes: beside their patches (a fake with reviewers puts it outside the temp dir).
     var reviewRoot: URL { WorkLoop.reviewRoot(of: patchDir(UUID()).deletingLastPathComponent()) }
+    /// The tests' fakes: the user's home, no grants.
+    func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), []) }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {

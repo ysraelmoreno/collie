@@ -466,6 +466,16 @@ extension WorkCommandTests {
         }
     }
 
+    /// F2 Z2: `--review` runs only when the loop's agent and its reviewers start strict: a sandboxed daemon in strict
+    /// mode. Open mode, or no terminal sandbox, is refused with the reason.
+    @Test func reviewNeedsStrictMode() {
+        #expect(CommandRouter.reviewNeedsStrict(sandboxed: true, mode: .strict) == nil)
+        for (sandboxed, mode) in [(true, SandboxMode.open), (false, .strict), (false, .open)] {
+            #expect(CommandRouter.reviewNeedsStrict(sandboxed: sandboxed, mode: mode)
+                    == "--review exige agentes em modo strict: o modo open deixa o agente julgado escrever instruções que o revisor carrega")
+        }
+    }
+
     /// F2 X4: `--review` with no persona committed at HEAD is refused at launch, before any agent is spent.
     @Test func runReviewWithoutCatalogIsRefused() async throws {
         let repo = try await makeRepo()
@@ -533,12 +543,20 @@ extension WorkCommandTests {
             #expect(try await work(d, p, s, "work.run", base.merging(["personas": "correcao"]) { $1 }).error?.code == .invalidArgs)
             #expect(try await work(d, p, s, "work.run", base.merging(["reviewer-model": "opus"]) { $1 }).error?.code == .invalidArgs)
             #expect(try await work(d, p, s, "work.run", base.merging(["personas": "nope"]) { $1 }, flags: ["review"]).error?.code == .invalidArgs)
-            let ok = try await work(d, p, s, "work.run", base.merging(["personas": "correcao", "reviewer-model": "opus"]) { $1 }, flags: ["review"])
-            #expect(ok.ok, "\(ok)")
-            let c = try #require(await d.router.appCards.first { $0.app == "work-loop" })
-            #expect(c.call?.contains("revisão por personas: «correcao», revisor «opus».") == true, "\(String(describing: c.call))")
+            // F2 Z2: a test daemon sandboxes no terminal (open mode): --review is refused with its reason, nothing awaits the owner
+            let refused = try await work(d, p, s, "work.run", base.merging(["personas": "correcao", "reviewer-model": "opus"]) { $1 }, flags: ["review"])
+            #expect(refused.error?.code == .invalidArgs && refused.error?.message.contains("--review exige agentes em modo strict") == true, "\(refused)")
+            #expect(await d.router.appCards.first { $0.app == "work-loop" } == nil)
+            // without --review nothing changes: the run waits for its card
+            #expect(try await work(d, p, s, "work.run", base).ok)
+            // the card's text with the review (what a strict daemon's card shows)
+            let w = try #require(try await d.router.work.active(terminal: s.uuid))
+            let call = CommandRouter.loopCardText(w, w.tasks, WorkLoopState(state: .running, tries: 3, timeout: 3600, max: 3, used: 0, budget: 14_400,
+                                                                            spent: 0, tasks: w.tasks.map(\.id), review: true, personas: ["correcao"], reviewerModel: "opus"),
+                                                  paddock: "feat")
+            #expect(call?.contains("revisão por personas: «correcao», revisor «opus».") == true, "\(String(describing: call))")
             // what the loop's state holds is what status shows
-            let id = try #require(try await d.router.work.active(terminal: s.uuid)).id
+            let id = w.id
             try await d.router.work.update(id) { $0.loop = WorkLoopState(state: .stopped, tasks: [], review: true, reviewerModel: "opus") }
             guard case .object(let o)? = try await work(d, p, s, "work.status").result, case .string(let out)? = o["output"] else { Issue.record("status"); return }
             #expect(out.contains("revisão: ligada, personas auto, revisor opus"), "\(out)")

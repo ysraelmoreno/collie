@@ -35,6 +35,30 @@ extension WorkLoop {
     /// What an agent loads from its folder's ancestors: none may be in a reviewer's parent.
     static let agentConfigs = ["CLAUDE.md", "AGENTS.md", ".claude", ".cursor"]
 
+    /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
+    /// in the home, or the home's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json`. The first one that exists and
+    /// the loop's agent may write (`strictWritable`); nil: none. One found: every reviewer is mute (fail closed).
+    static func plantedConfig(above reviewRoot: URL, home: URL, opened: [String]) -> String? {
+        var dirs: [String] = [], p = reviewRoot.path
+        while true { dirs.append(p); guard p != "/", !p.isEmpty else { break }; p = (p as NSString).deletingLastPathComponent }
+        dirs.append(home.path)
+        let paths = dirs.flatMap { d in agentConfigs.map { (d == "/" ? "" : d) + "/" + $0 } }
+            + [home.path + "/.claude/CLAUDE.md", home.path + "/.claude/settings.json"]
+        return paths.first { var st = stat(); return lstat($0, &st) == 0 && strictWritable($0, home: home, opened: opened) }
+    }
+
+    /// F2 Z2: whether a strict loop agent may write `path` (resolved: a symlink counts where it points), fail closed: the
+    /// user may write it or its folder, and it is outside the home (temp dirs, other volumes) or under `opened` (the
+    /// write grants, the paddocks). Inside the home a strict profile writes only the project, the caches and the grants.
+    /// ponytail: by path, not by the profile's rules; a cache under the home (`EssentialPaths.homeWrites`) holds no config a reviewer loads.
+    static func strictWritable(_ path: String, home: URL, opened: [String]) -> Bool {
+        let real = SignedAppCheck.realPath(URL(fileURLWithPath: path))
+        guard access(real, W_OK) == 0 || access((real as NSString).deletingLastPathComponent, W_OK) == 0 else { return false }
+        let c = URL(fileURLWithPath: real).pathComponents
+        func under(_ r: String) -> Bool { c.starts(with: URL(fileURLWithPath: SignedAppCheck.realPath(URL(fileURLWithPath: r))).pathComponents) }
+        return !under(home.path) || opened.contains(where: under)
+    }
+
     /// F2 X1/Y1: a reviewer's own folder, empty, made by the daemon under `reviewRoot` (outside every worktree, paddock
     /// and temp dir) by `mkdtemp` (a name no one can guess), mode 0700, one per attempt and persona. nil (that reviewer
     /// is mute, a refusal): a component of the path is a symlink or not a folder, the parent is not the daemon's
@@ -154,7 +178,10 @@ extension WorkLoop {
         let turn = await turn()
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
-        let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) }
+        // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
+        let opened = await host.strictWrites()
+        let planted = Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
+        let scratch = personas.map { planted == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) : nil }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
@@ -166,6 +193,7 @@ extension WorkLoop {
                 g.addTask {
                     var id: UUID?
                     var verdict = Self.mute(p.name)
+                    if let planted { verdict.invalid = "revisor \(p.name) mudo: \(planted) existe e o agente do laço pode gravá-lo" }
                     do {
                         guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
                         // F2 X5: no time left to answer in: mute, and no terminal summoned for nothing

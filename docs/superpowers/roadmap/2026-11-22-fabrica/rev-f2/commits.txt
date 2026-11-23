@@ -1,0 +1,9 @@
+7428e05 test(work): R4, await the rig's commit
+3990636 feat(work): R4, the loop runs the review (one fresh terminal per persona, base texts, evidence)
+01615b5 test(work): R3, the last-try review path names its agent t3
+b519af2 feat(work): R3, reviewing phase in the attempt machine and the decision
+8a5d694 feat(work): R2, ReviewVerdict, ReviewOutcome and ReviewPrompt (pure module)
+fbbbd9b feat(work): R5, personas e PersonaRouter (catálogo puro, roteador por caminho)
+7256028 test(work): R1, compare the task's agent and model (updatedAt loses its fraction too)
+555e4d9 test(work): R1, round-trip with a whole-second startedAt (ISO 8601 drops the fraction)
+e4ab394 feat(work): R1, revisão por personas e agente/modelo por tarefa (só dados e comandos)

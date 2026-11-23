@@ -1380,8 +1380,8 @@ extension WorkLoopReviewTests {
     /// F2 V3: missing, it is written, the rest of the file (other keys, other projects, the entry's own keys, the mode) kept;
     /// already true, not rewritten (the file's bytes and inode unchanged).
     @Test func trustIsWrittenOnceAndKeepsTheRest() throws {
-        let root = URL(fileURLWithPath: "/tmp/collie-v3-root/collie-review")
-        let home = try Self.v3Home(#"{"numStartups":3,"env":{"A":"1"},"projects":{"/x":{"lastCost":1},"/tmp/collie-v3-root/collie-review":{"allowedTools":["Bash"]}}}"#)
+        let root = URL(fileURLWithPath: "/collie-v3-root/collie-review")
+        let home = try Self.v3Home(#"{"numStartups":3,"env":{"A":"1"},"projects":{"/x":{"lastCost":1},"/collie-v3-root/collie-review":{"allowedTools":["Bash"]}}}"#)
         defer { try? FileManager.default.removeItem(at: home) }
         let file = home.appendingPathComponent(".claude.json").path
         chmod(file, 0o640)
@@ -1403,7 +1403,7 @@ extension WorkLoopReviewTests {
 
     /// F2 V3: no file is not made; a file that is not a JSON object (or whose `projects` is not one) is left as it was, with the note.
     @Test func trustLeavesAMissingOrForeignFileAlone() throws {
-        let root = URL(fileURLWithPath: "/tmp/collie-v3-root/collie-review")
+        let root = URL(fileURLWithPath: "/collie-v3-root/collie-review")
         let none = try Self.v3Home(nil); defer { try? FileManager.default.removeItem(at: none) }
         #expect(WorkLoop.trustReviewRoot(home: none, reviewRoot: root) == nil)
         #expect(!FileManager.default.fileExists(atPath: none.appendingPathComponent(".claude.json").path))

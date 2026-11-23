@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "gate": "npm test",
+  "precheck": "npm run lint --if-present",
+  "smoke": "npm run build --if-present",
+  "areas": {
+    "core": "scripts/check-feature.sh src"
+  },
+  "factory": {
+    "version": 1,
+    "static": {
+      "ratchets": [
+        { "name": "todo", "measure": "grep -rIc TODO src | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
+      ]
+    },
+    "review": { "personas": ["correcao", "testes", "simplicidade", "seguranca"], "threshold": "major", "callOwner": true },
+    "guardrails": { "budgetSeconds": 1800, "maxTries": 3, "destructive": ["rm -rf", "git push --force", "git reset --hard", "npm publish"], "land": "manual" }
+  }
+}

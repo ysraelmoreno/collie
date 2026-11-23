@@ -44,6 +44,8 @@ enum AttemptMachine {
         case decided(AttemptDecision.Outcome)
         /// F2 R3: what the personas said (`ReviewVerdict.aggregate`).
         case reviewDone(ReviewOutcome)
+        /// F2 X3: less than `WorkLoop.reviewMinTurn` of the budget is left for the reviewers: no review, no verdict.
+        case reviewBudgetOut
     }
 
     enum Effect: Sendable, Equatable {
@@ -234,6 +236,9 @@ enum AttemptMachine {
         case (.reviewing, .reviewDone(let outcome)):
             if outcome.approved { s.facts.reviewNotes = outcome.notes } else { s.facts.review = outcome.reason ?? "revisor recusou" }
             return verdict(&s)
+        // F2 X3: the budget ran out, not the attempt: like a cancel it is not counted (nor as a refusal), the loop stops
+        case (.reviewing, .reviewBudgetOut):
+            return leave(&s, [.uncount, .note(WorkLoop.reviewBudgetNote), .stopLoop(.init(.budgetSpent))])
 
         case (.deciding, .blocked(let who)):
             s.facts.blockedBy = who

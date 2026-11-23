@@ -180,7 +180,12 @@ actor WorkLoop {
     func run(work id: UUID, dir: URL) async -> WorkLoopState.State {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
-        try? await store.update(id) { w in if w.loop?.state == .running { w.loop?.stopReason = nil } }
+        // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
+        try? await store.update(id) { w in
+            guard w.loop?.state == .running else { return }
+            w.loop?.stopReason = nil
+            for i in w.tasks.indices where w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }
+        }
         // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
         let parallel = (try? await store.get(id))?.loop?.parallel ?? 1
         if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
@@ -352,10 +357,15 @@ actor WorkLoop {
         }
     }
 
+    /// F2 X3: the least of the budget a review needs (seconds): with less, the attempt ends for want of budget and the
+    /// mute reviewers are no refusal.
+    static let reviewMinTurn = 20
+    static let reviewBudgetNote = "[loop] orçamento de tempo sem folga para a revisão (menos de \(reviewMinTurn) s): tentativa não contada, nem como recusa"
+
     /// M2.2b: the events that carry a verdict's facts out of a long wait: a cancel during it replaces them.
     private static func judges(_ e: AttemptMachine.Event) -> Bool {
         switch e {
-        case .checkDone, .gateDone, .blocked: true
+        case .checkDone, .gateDone, .blocked, .reviewDone: true   // F2 X3: a cancelled review's mute reviewers are no refusal
         default: false
         }
     }
@@ -520,11 +530,14 @@ actor WorkLoop {
                 return .gateDone(status: nil, broken: "gate could not run: \(error.message)")
             }
         case .runReview:
+            // F2 X3: too little budget for a reviewer to answer: every persona would be mute, a refusal that is not one
+            let rest = await left(id, r.loop, since: r.started)
+            if rest < Self.reviewMinTurn { return .reviewBudgetOut }
             // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
             let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
             let tree = await reviewTree(dir)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
-                                   evidence: evidence, turn: Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started)), dir)
+                                   evidence: evidence, turn: Swift.min(r.loop.timeout, rest), dir)
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
             if tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true {
@@ -533,6 +546,8 @@ actor WorkLoop {
                 ran.line = "revisão: recusada (\(Self.reviewerTouched))"
                 ran.note = String(ran.note.prefix(Self.noteChars - 64)) + "\n" + Self.reviewerTouched
             }
+            // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
+            if Task.isCancelled { return .cancelled }
             let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
@@ -605,7 +620,7 @@ actor WorkLoop {
             await record(id, &r) { Self.markDone(&$0, task.id, n: n, at: at, evidence: found, job: name, head: head) }
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
-            let at = r.at
+            let at = r.at, refused = state.facts.review
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)
@@ -615,6 +630,9 @@ actor WorkLoop {
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
                     if last { x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(reason)" } else { x.tasks[i].state = .open }
+                    // F2 X3: "in a row" = review refusals on consecutive attempts with no attempt of another kind between:
+                    // a failure before the review (summon, commit, check, gate) or a deferral starts the count over
+                    if x.tasks[i].reviewRejects != nil, last || refused == nil { x.tasks[i].reviewRejects = 0 }
                 }
                 x.notes.append(WorkNote(at: at, text: text))
                 Self.endJob(&x, name, reason, at: at)

@@ -94,7 +94,7 @@ import CollieProtocol
         await r.host.setReviewAnswer("testes", Self.reject)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2 && w.tasks[0].reviewRejects == 2)
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2 && w.tasks[0].reviewRejects == 0)   // F2 X3: a deferral starts over
         #expect(w.tasks[0].reason?.contains(AttemptDecision.twiceRefused) == true)
         #expect(w.tasks[0].review?.hasPrefix("revisão: recusada (personas: correcao, testes; 1 achado)") == true)
     }
@@ -261,5 +261,71 @@ import CollieProtocol
         #expect(prompt.contains("<<<DADO NÃO CONFIÁVEL: diff ") && prompt.contains("<<<FIM DO DADO: evidência "))
         #expect(prompt.contains("DADO não confiável") && prompt.contains("Check: saiu com 0"))
         #expect(!prompt.contains("ASSUNTO-DO-AGENTE") && !prompt.contains("SAIDA-DO-CHECK"))
+    }
+
+    /// F2 X3: cancelled mid-review, the mute reviewers are no refusal: `cancelled`, no review, count or note written.
+    @Test func cancelMidReviewWritesNoRefusal() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await Self.works(r, 1)
+        await r.host.setReviewerAct("correcao", { _ in try await Task.sleep(for: .seconds(3600)) })
+        await r.host.setReviewerAct("testes", { _ in try await Task.sleep(for: .seconds(3600)) })
+        let run = Task { await r.run() }
+        await r.host.reviewerAsked.wait(for: 2)
+        run.cancel()
+        #expect(await run.value == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .cancelled)
+        #expect(w.tasks[0].state == .open && w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0)
+        #expect(!w.notes.contains { $0.text.contains("sem resposta") || $0.text.contains("revisão de") })
+    }
+
+    /// F2 X3: a reopened task starts its refusals in a row over: one refusal after it is a retry, not a deferral.
+    @Test func reopenStartsTheRefusalsOver() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.tasks[0].state = .deferred; $0.tasks[0].reviewRejects = 1; $0.tasks[0].tries = 2 }
+        let back = try await r.store.reopenTask(r.work, task: "a", keepTries: false, at: Date())
+        #expect(back?.task.state == .open && back?.task.reviewRejects == 0)
+        await Self.works(r, 1); await Self.works(r, 2)
+        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2)
+    }
+
+    /// F2 X3: a count left from another run is not "in a row": the new run starts it over.
+    @Test func newRunStartsTheRefusalsOver() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.tasks[0].reviewRejects = 1 }
+        await Self.works(r, 1); await Self.works(r, 2)
+        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].state == .done)
+    }
+
+    /// F2 X3: refusal, a failed check, refusal: not two in a row (an attempt of another kind came between).
+    @Test func checkFailureBetweenRefusalsIsNotInARow() async throws {
+        let r = try await Self.rig(tries: 4); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.tasks[0].check = "test ! -f Tests/a2.swift" }   // attempt 2 fails its check
+        for n in 1...4 { await Self.works(r, n) }
+        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
+        await r.host.setReviewAnswer("w-task-a-t3-testes", Self.reject)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 4 && w.tasks[0].reviewRejects == 0)
+        #expect(!w.notes.contains { $0.text.contains(AttemptDecision.twiceRefused) })
+    }
+
+    /// F2 X3: under `reviewMinTurn` of budget, no reviewer runs: the attempt ends for want of budget, no refusal counted.
+    @Test func spentBudgetIsNoRefusal() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.loop?.budget = WorkLoop.reviewMinTurn - 5 }
+        await Self.works(r, 1)
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .budgetSpent)
+        #expect(await r.host.reviewers.isEmpty)
+        #expect(w.tasks[0].state == .open && w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0)
+        #expect(w.notes.contains { $0.text == WorkLoop.reviewBudgetNote })
+        #expect(!w.notes.contains { $0.text.contains("sem resposta") })
     }
 }

@@ -64,10 +64,15 @@ actor LoopFakeHost: LoopHost {
     /// F2 Z2: what the loop's agent writes under the home (its grants, paddocks): none unless a test opens some.
     var opened: [String] = []
     func setOpened(_ o: [String]) { opened = o }
-    /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute).
-    var agentsAreOpen = false
+    /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute). F2 V2: only while the terminal lives, as the
+    /// router's (by id): read after the dismiss, it is false. `openAsked`: the names asked, in order.
+    var agentsAreOpen = false, openAsked: [String] = []
     func setAgentsOpen(_ o: Bool) { agentsAreOpen = o }
-    func agentsOpen(_ agent: String) async -> Bool { agentsAreOpen }
+    func startedOpen(_ agent: UUID) async -> Bool {
+        let n = names[agent] ?? "?"
+        openAsked.append(n)
+        return agentsAreOpen && !dismissed.contains(n)
+    }
     /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
     var home: URL?
     func setHome(_ h: URL) { home = h }

@@ -506,7 +506,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers') and again once the commit's copy is made (T1 f2fix8: nor is the copy's).
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, configSilenced: String? = nil, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -534,7 +534,7 @@ extension WorkLoop {
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
-        let planted = await host.agentsOpen(agent) ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
+        let planted = agentOpen ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
         let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
         let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }

@@ -75,9 +75,13 @@ protocol LoopHost: Sendable {
     /// F2 V3: marks `reviewRoot` trusted in `globalConfigHome`'s `.claude.json` (`WorkLoop.trustReviewRoot`): the note to
     /// leave, nil when nothing was done.
     func trustReviewers() async -> String?
-    /// F2 A4/A5: the judged agent runs in open mode (they write the whole home): `plantedConfig` would find the user's own
-    /// `~/.claude` and mute every reviewer, so it is not asked; the parecer never approves, a swayed reviewer only goes mute.
-    func agentsOpen(_ agent: String) async -> Bool
+    /// F2 A4/A5/V2 (f2fix9): the judged agent, by id, started open (or free of the sandbox): it writes the whole home, so
+    /// a `plantedConfig` above the reviewers is no sign of tampering and is not asked. Read at the attempt's `.dismiss`,
+    /// before the terminal goes (the review comes after it). The premise that `plantedConfig` would find the owner's own
+    /// `~/.claude` was contested (rev-f2i); what goes unchecked in open is a config the agent planted above `reviewRoot`
+    /// (CLAUDE.md, AGENTS.md, `.claude/`): it may sway a reviewer, and the parecer never approves alone (A1: advisory).
+    /// No terminal of that id: false (the check stays).
+    func startedOpen(_ agent: UUID) async -> Bool
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -115,7 +119,7 @@ extension LoopHost {
     func globalConfigHome() async -> URL { await strictWrites().home }
     /// The tests' fakes: never the user's `~/.claude.json`.
     func trustReviewers() async -> String? { nil }
-    func agentsOpen(_ agent: String) async -> Bool { false }
+    func startedOpen(_ agent: UUID) async -> Bool { false }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -392,6 +396,8 @@ actor WorkLoop {
         var patched: Bool?
         /// M5.4: the agent's counts, read at the dismiss: the `agentDismissed` event carries them.
         var tokens: TokenCount?
+        /// F2 V2 (f2fix9): the agent started open (`startedOpen`), read at the dismiss: what the review's `plantedConfig` goes by.
+        var agentOpen = false
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
         var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
@@ -544,6 +550,7 @@ actor WorkLoop {
             // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)
             if let agent = r.agent {
                 r.tokens = await host.tokens(agent)
+                r.agentOpen = await host.startedOpen(agent)   // F2 V2: by id, before the terminal goes
                 // F2 Z3b: with --review, nothing of the judged agent is left alive when the reviewers come
                 if r.loop.review == true { await host.dismissReaping(agent) } else { await host.dismiss(agent) }
             }
@@ -620,7 +627,7 @@ actor WorkLoop {
             let configSilenced = !risky.isEmpty && risky != r.globalConfig?.risky ? Self.reviewGlobalConfigRiskyNote
                 : r.globalConfig?.hash != globalLaunch ? Self.reviewGlobalConfigMoved : nil
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
-                                   evidence: evidence, configSilenced: configSilenced, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
+                                   evidence: evidence, configSilenced: configSilenced, agentOpen: r.agentOpen, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             if ran.budgetOut { return .reviewBudgetOut }
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)

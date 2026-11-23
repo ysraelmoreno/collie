@@ -507,6 +507,37 @@ extension WorkCommandTests {
         }
     }
 
+    /// F2 V2 (f2fix9) A5/A6: in an open workspace, the reviewer the loop's real `summonReviewer` makes is born strict:
+    /// the summon marks it before the launch and the launch reads the mark (without either, it is born open and
+    /// `summonReviewer` refuses it). A terminal born open is refused where a reviewer must be strict, and the value the
+    /// loop's dismiss reads is true for it, false for the strict reviewer and for no terminal.
+    @Test func reviewerIsBornStrictInAnOpenWorkspace() async throws {
+        let f = try FakeHome(git: true, socket: false)
+        defer { try? FileManager.default.removeItem(at: f.base) }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("v2-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon(configure: { $0.defaultSandboxMode = .open; $0.sandboxHome = f.home }) { d, p in
+            let s = try await spawnIn(d, p, "S", cwd: f.repo, shepherd: true)
+            let host = RouterLoopHost(router: d.router, starter: s.uuid, root: p.root, work: UUID(), paddock: UUID(), dir: f.repo,
+                                      sandbox: (f.home, "/bin/zsh"))
+            var loop = WorkLoopState(); loop.preset = "shell"
+            let id = try await host.summonReviewer(name: "w-a-t1-testes-rev", for: Work(title: "W", terminalId: s.uuid), loop: loop, cwd: scratch)
+            let rec = await d.router.ws.terminals.first { $0.id == id }
+            #expect(rec?.sandbox == .sandboxed && rec?.startMode == .strict, "\(String(describing: rec))")
+            // (b) the Shepherd was born open: a loop agent, never a reviewer
+            #expect(await d.router.ws.terminals.first { $0.id == s.uuid }?.startMode == .open)
+            #expect(await !d.router.loopAgentSandboxed(s.uuid, strict: true))
+            #expect(await d.router.loopAgentSandboxed(s.uuid))
+            #expect(await d.router.loopAgentSandboxed(id, strict: true))
+            // (c) what the dismiss reads, by id
+            #expect(await host.startedOpen(s.uuid))
+            #expect(await !host.startedOpen(id))
+            await d.router.loopDismiss(id)
+            #expect(await !host.startedOpen(id))
+        }
+    }
+
     @Test func runReviewFlagsAreValidatedAgainstTheCommittedPersonas() async throws {
         let repo = try await makeRepo()
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)

@@ -91,9 +91,10 @@ private struct Rig {
     let f: FakeHome, d: Daemon, work = UUID(), starter = UUID(), paddock: Paddock, a: Lane, b: Lane
     let host: RouterLoopHost
 
-    init(sandboxed: Bool = true) async throws {
+    init(sandboxed: Bool = true, open: Bool = false) async throws {
         f = try FakeHome(git: true, socket: false)
         var c = testConfig(Paths(root: f.collie)); if sandboxed { c.sandboxHome = f.home }
+        if open { c.defaultSandboxMode = .open }
         d = try Daemon(config: c)
         paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
         await d.router.laneTestsAdd(paddock)
@@ -280,6 +281,19 @@ private func expectLaneProfile(_ text: String, _ r: Rig, at: SourceLocation = #_
             await #expect(throws: ProtocolError.self, "\(path.path)") { _ = try await r.d.router.prepareLoopSandbox(r.work, paddock: r.paddock, lane: lane) }
         }
         #expect(!fm.fileExists(atPath: SandboxLaunch.profileFile(r.host.forLane(r.a).sandboxId, root: r.f.collie).path))
+    }
+
+    /// F2 V2 (f2fix9): in an open workspace a lane's agent is born strict (`launch`), so what the loop's dismiss reads
+    /// (`startedOpen`) is false for it: its review keeps the `plantedConfig` check.
+    @Test func laneAgentIsNotOpenInAnOpenWorkspace() async throws {
+        let r = try await Rig(open: true)
+        let rec = r.term("w-a-t1", r.a.path)
+        _ = try await r.d.router.launch(rec)
+        let t = await r.d.router.ws.terminals.first { $0.id == rec.id }
+        #expect(t?.sandbox == .sandboxed && t?.startMode == .strict, "\(String(describing: t))")
+        #expect(await r.d.router.sandboxMode == .open)
+        #expect(await !r.host.forLane(r.a).startedOpen(rec.id))
+        await r.d.router.loopDismiss(rec.id)
     }
 
     /// The real thing, where a sandbox can be applied: the check of lane A under its profile.

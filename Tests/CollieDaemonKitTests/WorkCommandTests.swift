@@ -483,6 +483,27 @@ extension WorkCommandTests {
         #expect(try await CommandRouter.loopReview(review: false, personas: nil, reviewerModel: nil, dir: repo) == (false, nil, nil))
     }
 
+    /// F2 V4: a loop reviewer's sandbox denial raises no card (counted only, as an open terminal's); an ordinary terminal's does.
+    @Test func reviewerDenialRaisesNoCard() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("v4-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true)
+            let r = Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let rev = try await d.router.loopSummon(r, as: s.uuid, scratch: scratch)
+            let other = try await spawnIn(d, p, "O", cwd: repo)
+            let path = repo.appendingPathComponent("x.txt").path
+            await d.router.raiseForTests(SandboxDenial(terminal: rev, op: "write", path: path))
+            await d.router.raiseForTests(SandboxDenial(terminal: other.uuid, op: "write", path: path))
+            let cards = await d.router.accessCards
+            #expect(cards.cards.keys.allSatisfy { $0.terminal != rev }, "the reviewer's denial made a card")
+            #expect(cards.silent[rev] == 1)
+            await d.router.loopDismiss(rev)
+        }
+    }
+
     /// F2 X4: a reviewer is marked inside its summon (before the launch), so it never stands unmarked in the paddock;
     /// a dismiss unmarks it.
     @Test func reviewerIsMarkedByItsSummon() async throws {

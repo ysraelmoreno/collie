@@ -345,6 +345,53 @@ extension WorkLoop {
         return sha(canon)
     }
 
+    /// F2 V3 (reviewTrust): the notes `trustReviewRoot` leaves.
+    static let reviewTrustWritten = "confiança da pasta dos revisores gravada em ~/.claude.json"
+    static let reviewTrustNotWritten = "confiança da pasta dos revisores não gravada em ~/.claude.json"
+
+    /// F2 V3: Claude Code asks "trust this folder" in every reviewer's fresh folder, and only the user answers it
+    /// (`81effa13`): `projects[reviewRoot].hasTrustDialogAccepted = true` in `home/.claude.json` covers the folders under
+    /// it. Read, merged and written atomically (a temp file beside it, `rename`; its mode kept; a symlink's target
+    /// written), touching nothing else. nil: no file (Claude Code never ran: not made) or already true (not rewritten).
+    /// Else the note: written, or why not (not a JSON object, `projects` or the entry not an object, a write error).
+    // ponytail: read-modify-write, no lock; a Claude Code exit rewriting the file in between drops the entry, the next run writes it again
+    /// F2 V3b: the temp file is born 0600 (`O_EXCL|O_NOFOLLOW`, written through its descriptor): a copy of the file (it may
+    /// hold `primaryApiKey`, `oauthAccount`) is never readable by others, then takes the original's mode before the `rename`.
+    /// `beforeRename` (tests): the temp file's path, written, before it takes that mode.
+    static func trustReviewRoot(home: URL, reviewRoot: URL, beforeRename: (String) -> Void = { _ in }) -> String? {
+        let file = SignedAppCheck.realPath(home.appendingPathComponent(".claude.json"))
+        guard let data = FileManager.default.contents(atPath: file) else { return nil }
+        guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
+        let key = SignedAppCheck.realPath(reviewRoot)
+        guard var projects = all["projects"] == nil ? [:] : all["projects"] as? [String: Any],
+              var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + ": projects não é um objeto" }
+        if (entry["hasTrustDialogAccepted"] as? Bool) == true { return nil }
+        entry["hasTrustDialogAccepted"] = true; projects[key] = entry; all["projects"] = projects
+        guard let out = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .withoutEscapingSlashes]) else {
+            return reviewTrustNotWritten + ": não serializa"
+        }
+        let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
+        let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return reviewTrustNotWritten + ": " + String(cString: strerror(errno)) }
+        let wrote = out.withUnsafeBytes { buf -> Bool in
+            var off = 0
+            while off < buf.count {
+                let n = write(fd, buf.baseAddress! + off, buf.count - off)
+                if n < 0 { if errno == EINTR { continue }; return false }
+                off += n
+            }
+            return true
+        }
+        func err() -> String { String(cString: strerror(errno)) }
+        var why: String? = wrote ? nil : err()
+        if why == nil { beforeRename(tmp); if fchmod(fd, mode_t(mode)) != 0 { why = err() } }
+        if close(fd) != 0, why == nil { why = err() }
+        if why == nil, rename(tmp, file) != 0 { why = err() }
+        if let why { unlink(tmp); return reviewTrustNotWritten + ": " + why }
+        return reviewTrustWritten
+    }
+
     /// F2 U1 (reviewLoopConfigBase): `~/.claude.json` as the loop takes its base, before any judged agent of the run.
     func reviewLoopConfigBase() async -> (hash: String, risky: String) {
         let home = await host.globalConfigHome()
@@ -475,7 +522,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers') and again once the commit's copy is made (T1 f2fix8: nor is the copy's).
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, configSilenced: String? = nil, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -503,7 +550,7 @@ extension WorkLoop {
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
-        let planted = await host.agentsOpen(agent) ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
+        let planted = agentOpen ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
         let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
         let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }

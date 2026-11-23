@@ -682,6 +682,11 @@ extension CommandRouter {
         return t.map { sandboxed($0) && (!strict || $0.startMode == .strict) } ?? false
     }
 
+    /// F2 V2 (f2fix9): the terminal `id` started open or free of the sandbox; none of that id: false.
+    func loopAgentStartedOpen(_ id: UUID) -> Bool {
+        ws.terminals.first { $0.id == id }.map { $0.sandbox != .sandboxed || $0.startMode == .open } ?? false
+    }
+
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
     func loopSpec(_ path: String, starter: UUID) async -> String? {
         guard let t = ws.terminals.first(where: { $0.id == starter }), let root = try? await projectRoot(of: t),
@@ -777,13 +782,10 @@ struct RouterLoopHost: LoopHost {
         return id
     }
     func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
-    /// F2 A5: by the judged agent's own start mode, not the workspace's now: a lane's agent is strict in an open workspace,
-    /// and the mode may change between its summon and its review. F2 A6: the attempt's agent is already dismissed when its
-    /// review runs, so no such terminal is the usual case: the workspace's mode now decides then (it is what A4 measured).
-    func agentsOpen(_ agent: String) async -> Bool {
-        if let t = await router.ws.terminals.first(where: { $0.name == agent }) { return t.sandbox != .sandboxed || t.startMode == .open }
-        return await router.sandboxMode == .open
-    }
+    func trustReviewers() async -> String? { WorkLoop.trustReviewRoot(home: await globalConfigHome(), reviewRoot: reviewRoot) }
+    /// F2 A5/V2: by the judged agent's own start mode, never the workspace's now (a lane's agent is strict in an open
+    /// workspace; the mode may change after its summon), by id (a name freed by the dismiss may be another's).
+    func startedOpen(_ agent: UUID) async -> Bool { await router.loopAgentStartedOpen(agent) }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output
     }

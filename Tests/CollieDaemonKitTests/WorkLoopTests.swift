@@ -14,6 +14,8 @@ struct LoopScript: Sendable {
     /// `.idle` ends: `working` stays true and nothing is committed until its `n`-th call, which runs `late`.
     var lateAfter: Int?
     var late: @Sendable (URL) async throws -> Void = { _ in }
+    /// F2 V1: seconds the fake clock moves on at each `working` call (a busy agent that runs the turn's time out).
+    var tick: TimeInterval = 0
     /// M2.1: runs when the agent is nudged, in the worktree (`act` runs only for the attempt's prompt).
     var nudged: @Sendable (URL) async throws -> Void = { _ in }
     /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
@@ -62,15 +64,22 @@ actor LoopFakeHost: LoopHost {
     /// F2 Z2: what the loop's agent writes under the home (its grants, paddocks): none unless a test opens some.
     var opened: [String] = []
     func setOpened(_ o: [String]) { opened = o }
-    /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute).
-    var agentsAreOpen = false
+    /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute). F2 V2: only while the terminal lives, as the
+    /// router's (by id): read after the dismiss, it is false. `openAsked`: the names asked, in order.
+    var agentsAreOpen = false, openAsked: [String] = []
     func setAgentsOpen(_ o: Bool) { agentsAreOpen = o }
-    func agentsOpen(_ agent: String) async -> Bool { agentsAreOpen }
+    func startedOpen(_ agent: UUID) async -> Bool {
+        let n = names[agent] ?? "?"
+        openAsked.append(n)
+        return agentsAreOpen && !dismissed.contains(n)
+    }
     /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
     var home: URL?
     func setHome(_ h: URL) { home = h }
     func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), opened) }
     func globalConfigHome() async -> URL { home ?? URL(fileURLWithPath: NSHomeDirectory()) }
+    /// F2 V3: only a fake home is ever written.
+    func trustReviewers() async -> String? { home.flatMap { WorkLoop.trustReviewRoot(home: $0, reviewRoot: reviewRoot) } }
     /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
     static func testRoot() -> URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -187,8 +196,14 @@ actor LoopFakeHost: LoopHost {
     var resubmits: Set<String> = []
     func setResubmitted(_ n: String) { resubmits.insert(n) }
     func resubmitted(_ terminal: UUID) async -> Bool { resubmits.contains(names[terminal] ?? "") }
+    /// F2 V1: every `working` call, and a probe run at each one (a test stops the loop here).
+    var workingCount = 0
+    var workingProbe: (@Sendable () async -> Void)?
+    func setWorkingProbe(_ p: @escaping @Sendable () async -> Void) { workingProbe = p }
     func working(_ terminal: UUID) async -> Bool {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
+        workingCount += 1; advance(s.tick)
+        await workingProbe?()
         guard let after = s.lateAfter else { return false }
         let n = (workingCalls[terminal] ?? 0) + 1; workingCalls[terminal] = n
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
@@ -1011,5 +1026,59 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(WorkLoop.verdict(checkStatus: 0, committed: true, dirty: false) == nil)
         #expect(WorkLoop.verdict(checkStatus: nil, committed: false, dirty: true) == "check timed out; no new commit; tracked files left dirty")
         #expect(WorkLoop.verdict(checkStatus: 2, committed: true, dirty: false) == "check failed (exit 2)")
+    }
+
+    // MARK: F2 V1: a hook end with the agent still working is waited for
+
+    /// (a) and (d): the agent works for some polls after the hook and commits: the attempt passes, no nudge, and the
+    /// journal says how long the turn was and that the agent was busy.
+    @Test func aHookEndWaitsWhileTheAgentWorks() async throws {
+        let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 4, late: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.notes.map(\.text))")
+        #expect(await r.host.nudges.isEmpty)
+        let d = try #require((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail)
+        #expect(d.wholeMatch(of: /hook \d+s ocupado/) != nil, "\(d)")
+        #expect(!w.notes.contains { $0.text.contains("ocupado") })
+    }
+
+    /// (b) and (d): an idle agent with no commit is nudged, as before.
+    @Test func aHookEndWithAnIdleAgentIsNudged() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(await r.host.nudges.count == 1)
+        #expect((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail?.wholeMatch(of: /hook \d+s ocioso/) != nil)
+        #expect(!w.notes.contains { $0.text.contains("ocupado") })
+    }
+
+    /// (c): an agent busy until the turn's time is over: the wait ends at the deadline and the check judges (no nudge:
+    /// no time left), with the loop's note on the short busy end.
+    @Test func aBusyAgentIsWaitedForOnlyUntilTheDeadline() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 10_000, tick: 5))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
+        #expect(await r.host.nudges.isEmpty)
+        #expect(await r.host.checks == 1)
+        let calls = await r.host.workingCount
+        #expect(calls >= 12 && calls < 20, "\(calls)")   // 60 s of turn at 5 s per poll
+        #expect(w.notes.contains { $0.text.contains("ainda ocupado e sem commit") }, "\(w.notes.map(\.text))")
+    }
+
+    /// (e): a stopping loop does not wait for a busy agent.
+    @Test func aStoppingLoopDoesNotWait() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 10_000))
+        let loop = r.loop, id = r.work
+        await r.host.setWorkingProbe { await loop.stop(work: id) }
+        let t0 = Date()
+        _ = await r.run()
+        #expect(Date().timeIntervalSince(t0) < 30)
+        #expect(await r.host.workingCount == 1, "only the look at the turn's end")
+        #expect(await r.host.nudges.isEmpty)
     }
 }

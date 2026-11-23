@@ -788,6 +788,8 @@ extension CommandRouter {
     /// F2 Z1: a loop reviewer, by either mark the router has: its id in `loopReviewers` (set in its summon) or a `cwd`
     /// inside `reviewRoot` (a reviewer a fallen daemon left, no longer marked). Either is enough: a terminal wrongly
     /// taken for one only loses its memory block. ponytail: the name tail (`AgentNaming.isReviewer`) is not required.
+    /// ponytail: hooks only. A reviewer that runs `collie memory search|context|checklist` itself still reads them (its
+    /// sandbox keeps the daemon's socket open); refuse those reads to a reviewer if a review shows one doing it.
     func reviewerHooksBare(_ t: TerminalRecord) -> Bool {
         if loopReviewers.contains(t.id) { return true }
         let root = SignedAppCheck.realPath(WorkLoop.reviewRoot(of: config.paths.root))

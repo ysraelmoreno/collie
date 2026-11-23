@@ -1073,6 +1073,9 @@ actor CommandRouter {
             e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.gitBranch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
+        // F2 Z3b: a loop reviewer loads no auto-memory (Claude Code's own switch, read in its 2.1.x build): a process the
+        // judged agent left alive could have planted a `MEMORY.md` under `~/.claude/projects/`, writable in strict
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1" }
         if sandboxed(rec), let home = config.sandboxHome {
             e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
         }

@@ -435,6 +435,50 @@ import CollieProtocol
                 "\(w.notes.map(\.text))")
     }
 
+    /// F2 Z3b: a file the reviewer makes inside an ignored `.claude/` that already exists (one line in the status, the
+    /// same before and after) is a touch (`reviewHashAgentConfig`), and it goes; what was there before stays.
+    @Test func newFileInAnIgnoredClaudeFolderFailsTheAttempt() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        try ".claude/\n".write(to: r.repo.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        let claude = r.repo.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
+        try "{}\n".write(to: claude.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        await r.host.setReviewerAct("correcao") { d in   // and it approves
+            try #"{"hooks":{}}"#.write(to: d.appendingPathComponent(".claude/settings.local.json"), atomically: true, encoding: .utf8)
+        }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(!FileManager.default.fileExists(atPath: claude.appendingPathComponent("settings.local.json").path))
+        #expect(try String(contentsOf: claude.appendingPathComponent("settings.json"), encoding: .utf8) == "{}\n")
+    }
+
+    /// F2 Z3b: a process the judged agent left alive in its process group is killed after its dismiss, before the
+    /// first reviewer is summoned.
+    @Test(.timeLimit(.minutes(1))) func leftoverProcessOfTheJudgedAgentIsKilledBeforeTheReviewers() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr); defer { posix_spawnattr_destroy(&attr) }
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP)); posix_spawnattr_setpgroup(&attr, 0)
+        var pid: pid_t = 0
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("600"), nil]
+        defer { argv.forEach { free($0) } }
+        #expect(posix_spawn(&pid, "/bin/sleep", nil, &attr, argv, environ) == 0)
+        await r.host.setAgentGroup("w-task-a-t1", pid)
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        // blocks until it dies: it never would on its own (600 s, past the time limit)
+        var status: Int32 = 0
+        #expect(waitpid(pid, &status, 0) == pid)
+        #expect(status & 0x7f == SIGKILL)
+        let ev = await r.host.events
+        let reap = try #require(ev.firstIndex(of: "reap w-task-a-t1"))
+        let first = try #require(ev.firstIndex { $0.hasPrefix("reviewer ") })
+        #expect(reap < first, "\(ev)")
+    }
+
     /// F2 Z3a: the budget is above `reviewMinTurn` when the review starts, but the line counts eat it: no reviewer is
     /// summoned to go mute, the attempt ends for want of budget and no refusal is counted.
     @Test func turnEatenByTheLineCountsIsNoRefusal() async throws {

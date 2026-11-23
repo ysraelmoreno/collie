@@ -630,6 +630,14 @@ extension CommandRouter {
         loopReviewers.remove(id)
     }
 
+    /// F2 Z3b: `loopDismiss`, then what is left of the terminal's process group killed. Its PTY's process leads its own
+    /// session (`setsid`), so its pid is the group's id, read before the dismiss forgets it.
+    func loopDismissReaping(_ id: UUID) async {
+        let pgid = await registry.process(id)?.pid
+        await loopDismiss(id)
+        if let pgid { WorkLoop.reapGroup(pgid) }
+    }
+
     /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never
     /// wider than a strict terminal of the paddock), under the work's id. Removed when the loop ends.
     /// `lane` (M3.3): that lane's own profile, under `laneSandboxId`: the same strict profile with the lane as the
@@ -789,6 +797,7 @@ struct RouterLoopHost: LoopHost {
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
+    func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.

@@ -16,6 +16,8 @@ protocol LoopHost: Sendable {
     /// the dialog's text, short. nil: not in it. Read only, never typed into.
     func usageLimit(_ terminal: UUID) async -> String?
     func dismiss(_ terminal: UUID) async
+    /// F2 Z3b: `dismiss`, then every process still in the terminal's process group killed (`WorkLoop.reapGroup`).
+    func dismissReaping(_ terminal: UUID) async
     /// M5.4: what `terminal`'s agent used, from its own transcript, read just before it is dismissed: counts only. nil:
     /// no number (no transcript, refused, gone, too big); never an error, never holds the loop.
     func tokens(_ terminal: UUID) async -> TokenCount?
@@ -75,6 +77,8 @@ extension LoopHost {
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func usageLimit(_ terminal: UUID) async -> String? { nil }
     func tokens(_ terminal: UUID) async -> TokenCount? { nil }
+    /// A host with no processes (the tests' fakes).
+    func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
@@ -480,7 +484,11 @@ actor WorkLoop {
             return .commitSeen(await out(["rev-parse", "--short", "HEAD"], dir))
         case .dismiss:
             // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)
-            if let agent = r.agent { r.tokens = await host.tokens(agent); await host.dismiss(agent) }
+            if let agent = r.agent {
+                r.tokens = await host.tokens(agent)
+                // F2 Z3b: with --review, nothing of the judged agent is left alive when the reviewers come
+                if r.loop.review == true { await host.dismissReaping(agent) } else { await host.dismiss(agent) }
+            }
         case .measureFacts:
             // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
             if Task.isCancelled { return .cancelled }
@@ -545,14 +553,20 @@ actor WorkLoop {
             // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
             let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
             let tree = await reviewTree(dir)
+            let configs = Self.reviewHashAgentConfig(dir, status: tree)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             if ran.budgetOut { return .reviewBudgetOut }
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
-            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true
+            // F2 Z3b: and the agent configs by their metadata (a file inside an ignored folder the status shows as one line)
+            let configsAfter = Self.reviewHashAgentConfig(dir, status: tree)
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || configsAfter != configs
             if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
+                // F2 Z3b: a config made inside such a folder goes too (an edited one cannot be put back: the touch says it)
+                let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
+                for p in made { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) }
                 // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
                 // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
                 var said = ""

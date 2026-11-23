@@ -45,6 +45,42 @@ extension WorkLoop {
         return (drop.sorted(), fresh.subtracting(drop).sorted())
     }
 
+    /// F2 Z3b: what `reviewTree`'s status cannot see: `--ignored=matching` shows an ignored or untracked folder that
+    /// already exists as one line, so a file made or edited inside it (`.claude/settings.local.json` in an ignored
+    /// `.claude/`) leaves the status as it was. Path → lstat's type, size, inode, mtime and ctime (a ctime no `touch`
+    /// sets back) of the worktree's agent configs: `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` at the root, everything
+    /// under the root's `.claude/` and `.cursor/` and under each `.claude/` or `.cursor/` folder `status` shows as one
+    /// line. Never follows a symlink. Taken before and after the review: any difference is a touch.
+    /// ponytail: walks the whole of those folders (metadata only, no read); a `.claude/worktrees/` of checkouts makes it slow, cap it then
+    static func reviewHashAgentConfig(_ dir: URL, status: String?) -> [String: String] {
+        let folded = (status ?? "").split(separator: "\0").map { String($0.dropFirst(3)) }
+            .filter { $0.hasSuffix("/") && [".claude", ".cursor"].contains(($0.dropLast() as NSString).lastPathComponent) }
+        var seen: [String: String] = [:]
+        func note(_ rel: String) {
+            var st = stat()
+            guard lstat(dir.path + "/" + rel, &st) == 0 else { return }
+            seen[rel] = "\(st.st_mode) \(st.st_size) \(st.st_ino) \(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec) \(st.st_ctimespec.tv_sec).\(st.st_ctimespec.tv_nsec)"
+        }
+        for top in Set(["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", ".claude", ".cursor"] + folded.map { String($0.dropLast()) }) {
+            note(top)
+            var st = stat()
+            guard lstat(dir.path + "/" + top, &st) == 0, st.st_mode & S_IFMT == S_IFDIR,
+                  let walk = FileManager.default.enumerator(atPath: dir.path + "/" + top) else { continue }
+            // the enumerator lists a symlink without going into it
+            while let rel = walk.nextObject() as? String { note(top + "/" + rel) }
+        }
+        return seen
+    }
+
+    /// F2 Z3b: the judged agent's terminal is dismissed and every process left in its process group (one it started in
+    /// the background and that survived the dismiss's SIGHUP) killed, before any reviewer is summoned: none is left to
+    /// read a reviewer's folder (`ps`, `lsof`) and plant a `MEMORY.md` under `~/.claude/projects/` for it to load.
+    /// The limit: a process that left the group (`setsid`) is not reached.
+    // ponytail: SIGKILL without a wait: a killed process runs nothing more, its zombie is harmless
+    static func reapGroup(_ pgid: pid_t) {
+        if pgid > 1 { kill(-pgid, SIGKILL) }
+    }
+
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
     /// in the home, or the home's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json`. The first one that exists and
     /// the loop's agent may write (`strictWritable`); nil: none. One found: every reviewer is mute (fail closed).

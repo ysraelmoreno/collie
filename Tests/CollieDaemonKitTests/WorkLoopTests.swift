@@ -104,6 +104,7 @@ actor LoopFakeHost: LoopHost {
     func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
+        events.append("reviewer \(name)")
         reviewerModels[name] = loop.model ?? "-"
         reviewerCwds[name] = cwd
         reviewerSaw[name] = (try? FileManager.default.contentsOfDirectory(atPath: cwd.path)) ?? ["<no folder>"]
@@ -187,6 +188,15 @@ actor LoopFakeHost: LoopHost {
     func dismiss(_ terminal: UUID) async {
         dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")")
         liveReviewers.removeAll { $0 == terminal }
+    }
+    /// F2 Z3b: the process group each agent (by name) left behind; `dismissReaping` kills it for real (`reapGroup`).
+    var agentGroups: [String: pid_t] = [:]
+    func setAgentGroup(_ n: String, _ g: pid_t) { agentGroups[n] = g }
+    func dismissReaping(_ terminal: UUID) async {
+        await dismiss(terminal)
+        let n = names[terminal] ?? "?"
+        if let g = agentGroups[n] { WorkLoop.reapGroup(g) }
+        events.append("reap \(n)")
     }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?

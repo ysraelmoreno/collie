@@ -40,7 +40,7 @@ enum CollieOrientation {
     /// F2 Z1 (`reviewerHooksBare`): a loop reviewer's whole session text. Fixed, with nothing another agent can write
     /// (no peers, lot goal, panels nor shared folder): only its own name, quoted as every name is.
     static func reviewer(_ terminal: String) -> String {
-        "You are \(quote(terminal)), a reviewer in a Collie loop. Judge only from the review prompt and the evidence it names. "
+        "You are \(quote(terminal)), a reviewer in a Collie loop. Judge only from the review prompt and the evidence it names. Your verdict is an opinion (parecer): it can veto with a confirmed finding, never approve a task. "
             + "You may not edit files, run collie commands nor talk to other terminals; Collie gives you no memory, board or documents."
     }
 

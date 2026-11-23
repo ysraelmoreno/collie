@@ -116,6 +116,17 @@ import CollieProtocol
         }
     }
 
+    /// A2 (reviewAdvisoryDoc): the reviewer's text says its verdict is an opinion (parecer); no orientation calls it an
+    /// approval, and the normal and short forms still fit the cap (the Shepherd's has no --review line: no room).
+    @Test func reviewIsAnOpinionNotAnApproval() {
+        let r = CollieOrientation.reviewer("Rev")
+        #expect(r.contains("parecer") && r.contains("never approve") && r.count <= 1500, "\(r)")
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        for t in [text(), text(shepherd: true), text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: ps)] {
+            #expect(t.count <= 1500 && !t.contains("aprovado pelo revisor"), "\(t.count)")
+        }
+    }
+
     @Test func orientationIsBounded() {
         let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
         let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: ps)

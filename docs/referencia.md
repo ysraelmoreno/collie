@@ -884,6 +884,15 @@ dono aprovou a lista de tarefas e os checks.
   sandbox também.
 - `collie work stop` encerra depois do veredito da tentativa atual; parar o daemon não gasta a tentativa em curso. `collie work status` mostra `em laço: <tarefa>
   (tentativa 2/3)`. Reiniciar o daemon para o laço; `collie work run` de novo continua da próxima tarefa aberta.
+<!-- reviewAdvisoryDoc -->
+- **Parecer por personas (`collie work run --review`):** opcional; cada tentativa recebe um **parecer** das personas
+  (`docs/fabrica/personas`), não uma aprovação. O revisor **veta** com achado `blocker` ou `major` confirmado (arquivo e
+  linha); nada que ele diga (aprovar, ficar mudo, responder inválido) libera uma tarefa que o check e o portão não
+  liberariam. Sem parecer (revisor mudo ou inválido) equivale a sem `--review`; a linha do relatório diz
+  `parecer: sem veto (...)` ou `sem parecer: ...`. Exige agentes em modo strict. **Limite conhecido:** a config global
+  `~/.claude.json` é compartilhada e gravável por todo agente strict, e um órfão do agente julgado pode mexer no
+  contexto do revisor; por isso o parecer **não é prova de independência**. Relatórios das revisões independentes:
+  `docs/superpowers/roadmap/2026-11-22-fabrica/` (`rev-f2*.md`).
 - **Tarefas em paralelo (`collie work run --parallel <n>`):** o padrão é 1 (uma tarefa por vez, o laço de sempre, sem
   faixa nenhuma) e o máximo 4. Acima de 1, cada tarefa pronta roda numa **faixa**: um worktree temporário do laço
   (`<repo>/.collie/paddocks/lane-…`, branch `collie/lane/…`), cortado do HEAD do cercado naquela hora. Não é um cercado:

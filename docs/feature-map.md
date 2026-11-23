@@ -179,6 +179,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
   usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
   aviso "Laço iniciado" dizem "portão (collie-work.json)".
+- **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
+  não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
+  conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.
+  Relatórios: `docs/superpowers/roadmap/2026-11-22-fabrica/`. Arquivos: `Sources/CollieDaemonKit/Work/ReviewVerdict.swift`,
+  `Sources/CollieDaemonKit/Work/AttemptMachine.swift`.
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

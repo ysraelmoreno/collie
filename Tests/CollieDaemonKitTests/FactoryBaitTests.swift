@@ -229,7 +229,7 @@ private func cfgReview() throws -> ProjectWorkConfig {
             try put(proj, FactoryBait.resultsPath, sample.render())
             let list = try await call("factory.bait.list")
             guard case .object(let l)? = list.result, case .string(let lo)? = l["output"] else { Issue.record("\(list)"); return }
-            #expect(lo.contains("spec-editado") && lo.split(separator: "\n").count == 5)
+            #expect(lo.contains("spec-editado") && lo.split(separator: "\n").count == 6)
             let rep = try await call("factory.bait.report")
             guard case .object(let ro)? = rep.result, case .string(let out)? = ro["output"], case .object(let j)? = ro["report"] else { Issue.record("\(rep)"); return }
             #expect(out.contains("review: 2/3") && j["runs"] == .number(4) && j["costSeconds"] == .number(1020))

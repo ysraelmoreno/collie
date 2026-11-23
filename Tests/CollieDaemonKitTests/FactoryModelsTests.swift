@@ -166,7 +166,7 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
             #expect(r.status != 0 && r.out.contains("troca o pytest") && !r.out.contains("stub "), "\(files): \(r.out)")
         }
         let sw = try runGate("swift", ["Package.swift": "// passWithNoTests\n"])
-        #expect(sw.status == 0 && sw.out.contains("stub swift test"), sw.out)
+        #expect(sw.status == 0 && sw.out.contains("stub swift test"), "\(sw.out)")
         #expect(!(try text(modelos.appendingPathComponent("swift/scripts/gate.sh"))).contains("grep"))
     }
 }

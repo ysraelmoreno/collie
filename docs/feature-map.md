@@ -179,6 +179,13 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
   usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
   aviso "Laço iniciado" dizem "portão (collie-work.json)".
+- **Doutor da fábrica (U3):** `collie factory doctor [--json] [--min 0-3] [--terminal]` (só CLI) dá nota 0 a 3 por
+  camada (`static`, `judge`, `verification`, `review`, `prose`, `guardrails`; FRACO 0-1, OK 2, FORTE 3) com evidência
+  e próxima ação, lendo `collie-work.json` (com `factory`, U1), os scripts que os comandos citam e os `check-*.sh` (até
+  20, 64 KB cada), caminhos até profundidade 4, CI (`.github/workflows/*.yml`, `Makefile`) e `.gitignore`. Núcleo puro
+  `FactoryDoctor` em CollieCore; leitor `FactoryDoctorReader` em `FactoryCommands.swift` com as regras de
+  `WorkConfigFile` (sem link simbólico, arquivo regular, limite). Sai 1 se alguma camada < `--min` (padrão 1); `--json`
+  imprime o `Report`. Só leitura: nunca executa nada.
 - **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
   não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
   conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.

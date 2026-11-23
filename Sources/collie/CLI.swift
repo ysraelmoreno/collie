@@ -100,6 +100,10 @@ enum CLI {
             let result = try await Client.call(cmd.command, cmd.args)
             if cmd.command == "android.install" && !json { return await followInstall(result) }   // prints the job lines itself
             if cmd.command == "design.engine.install" && !json { return await followInstall(result, status: "design.engine.status") }
+            if cmd.command == "factory.doctor", case .object(let o) = result {   // U3: --json is the report; a layer below --min exits 1
+                print(json ? jsonString(o["report"] ?? .null) + "\n" : render(cmd.command, result, json: false), terminator: "")
+                return o["passed"] == .bool(false) ? 1 : 0
+            }
             print(render(cmd.command, result, json: json), terminator: "")
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
             // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"

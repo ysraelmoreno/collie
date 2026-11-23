@@ -295,7 +295,7 @@ import CollieProtocol
             let at = cwd.resolvingSymlinksInPath().standardizedFileURL.path
             #expect(at != tree && !at.hasPrefix(tree + "/") && !tree.hasPrefix(at + "/"), "\(name): \(at)")
             // F2 Y1: under the daemon's root, never the temp dir every terminal writes
-            #expect(!at.hasPrefix(temp + "/") && cwd.deletingLastPathComponent() == r.host.reviewRoot, "\(name): \(at)")
+            #expect(!at.hasPrefix(temp + "/") && cwd.deletingLastPathComponent().path == r.host.reviewRoot.path, "\(name): \(at)")
             #expect(saw[name] == [], "\(name) saw \(saw[name] ?? [])")
             #expect(!FileManager.default.fileExists(atPath: cwd.path), "\(name)'s folder left behind")
         }
@@ -525,7 +525,7 @@ import CollieProtocol
         try? fm.removeItem(at: base.appendingPathComponent("a"))
         try fm.createDirectory(at: daemon, withIntermediateDirectories: true)
         let made = try #require(WorkLoop.reviewScratch("w-rev", in: review))
-        #expect(made.deletingLastPathComponent().standardizedFileURL.path == review.standardizedFileURL.path)
+        #expect(made.deletingLastPathComponent().path == review.path)
         #expect(made.lastPathComponent.hasPrefix("w-rev-") && made.lastPathComponent.count == "w-rev-".count + 8)
         let mode = try fm.attributesOfItem(atPath: made.path)[.posixPermissions] as? Int
         #expect(mode == 0o700)

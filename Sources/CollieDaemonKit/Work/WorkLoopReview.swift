@@ -41,7 +41,8 @@ extension WorkLoop {
     /// user's, it holds an agent's config, or the folder could not be made. Removed once its reviewer is dismissed
     /// (`dropScratch`); what a fallen daemon left goes at the next start (`stopLoopsLeftRunning`).
     static func reviewScratch(_ name: String, in reviewRoot: URL) -> URL? {
-        let root = reviewRoot.standardizedFileURL.path
+        // never `standardizedFileURL`: it turns an existing `/private/tmp/…` into the symlink `/tmp/…`
+        let root = reviewRoot.path
         func plainDir(_ p: String, owned: Bool) -> Bool {
             var st = stat()
             guard lstat(p, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return false }   // a symlink is S_IFLNK

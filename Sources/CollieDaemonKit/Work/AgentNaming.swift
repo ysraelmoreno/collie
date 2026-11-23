@@ -23,7 +23,7 @@ enum AgentNaming {
     static func isReviewer(name: String, cwd: String, reviewRoot: URL) -> Bool {
         let root = SignedAppCheck.realPath(reviewRoot)
         return name.range(of: reviewerTail + #"(-[a-z0-9]{1,8})?$"#, options: .regularExpression) != nil
-            && URL(fileURLWithPath: cwd).deletingLastPathComponent().standardizedFileURL.path == root
+            && URL(fileURLWithPath: cwd).deletingLastPathComponent().path == root   // `cwd`: a real path (`summon`)
     }
 
     static func name(work: String, task: String, taskId: String, attempt: Int, lane: Int?) -> String {

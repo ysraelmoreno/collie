@@ -191,10 +191,15 @@ public struct FactoryProfile: Sendable, Equatable {
 
     private static func baseline(_ v: Any, _ path: String) throws -> String {
         guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: "texto") }
-        guard !s.isEmpty, s.count <= maxBaseline, !s.hasPrefix("/"), !hasControl(s),
-              !s.split(separator: "/", omittingEmptySubsequences: false).contains("..")
-        else { throw ProfileError.badBaseline(path: path) }
+        guard confinedPath(s) else { throw ProfileError.badBaseline(path: path) }
         return s
+    }
+
+    /// A repository-relative path: not empty, at most `maxBaseline` characters, no leading '/', no '..', no control.
+    /// U4's bait catalog uses the same rule.
+    public static func confinedPath(_ s: String) -> Bool {
+        !s.isEmpty && s.count <= maxBaseline && !s.hasPrefix("/") && !hasControl(s)
+            && !s.split(separator: "/", omittingEmptySubsequences: false).contains("..")
     }
 
     private static func choice<T: RawRepresentable & CaseIterable>(_ v: Any, _ path: String) throws -> T where T.RawValue == String {

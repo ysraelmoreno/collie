@@ -193,6 +193,14 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `# <data>: <chave> <antes> -> <depois>: <razão>` no arquivo. Núcleo puro `Ratchet` em CollieCore (também modo lista,
   `compareList`, para o `ci-skip`); `FactoryRatchet` em `FactoryCommands.swift`: baseline confinado ao projeto (sem `..`,
   sem link simbólico) e gravado atomicamente (temporário + `rename`). `lint.sh`/`ci-skip.txt` ainda não migrados.
+- **Tarefa-isca da fábrica (U4):** `collie factory bait <list|report> [--json] [--terminal]` (só CLI, só leitura):
+  `list` mostra o catálogo `docs/fabrica/iscas/catalogo.json` do projeto (5 iscas: `logica`, `teste-fraco`,
+  `segredo-no-diff`, `corrida`, `spec-editado`; patches em `docs/fabrica/iscas/patches/`, base do check em
+  `docs/fabrica/iscas/base/`); `report` dá a taxa de captura por camada e por persona, as iscas que passaram e o custo,
+  de `.collie/factory/bait-results.json`. O doctor lê o mesmo arquivo: cada isca que passou tira 1 da camada dela.
+  Núcleo puro `FactoryBait`/`BaitResults` em `Sources/CollieCore/FactoryBait.swift` (estrito, `version` 1, caminhos
+  com a regra da U1). A execução é a skill `docs/fabrica/skill/factory-bait/SKILL.md` (cópia `git clone --local` fora
+  do repositório, ciclo normal com `--review`, nunca push).
 - **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
   não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
   conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.

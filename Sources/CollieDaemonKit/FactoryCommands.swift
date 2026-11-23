@@ -27,7 +27,38 @@ enum FactoryDoctorReader {
         for p in paths where isCI(p) && s.ci.count < maxScripts {
             if let t = text(root, p) { s.ci[p] = t }
         }
+        switch baitResults(root: root) {   // U4: escaped baits lower their layer
+        case .failure(let e): return .failure(e)
+        case .success(let r): s.baits = r?.doctorInput
+        }
         return .success(s)
+    }
+
+    static let maxBaitBytes = 1 << 20
+
+    /// U4: `rel` as a regular file inside the root (no link, no `..`, at most 1 MB); nil when absent.
+    static func data(_ root: URL, _ rel: String) -> Result<Data?, ProtocolError> {
+        let path = root.appendingPathComponent(rel).path
+        guard !FactoryDoctor.outsideRepo(rel), ProjectRoot.contains(path, root: root) else { return .failure(ProtocolError(code: .invalidArgs, message: "\(rel) fora do projeto")) }
+        switch WorkConfigFile.regular(path, name: rel, max: maxBaitBytes, tooLarge: { "\(rel) passa de \($0) bytes" }) {
+        case .absent: return .success(nil)
+        case .loaded(let d): return .success(d)
+        case .refused(let m): return .failure(ProtocolError(code: .invalidArgs, message: m))
+        }
+    }
+
+    /// U4: `.collie/factory/bait-results.json`, strict; nil when absent.
+    static func baitResults(root: URL) -> Result<BaitResults?, ProtocolError> {
+        let rel = FactoryBait.resultsPath
+        switch data(root, rel) {
+        case .failure(let e): return .failure(e)
+        case .success(nil): return .success(nil)
+        case .success(let d?):
+            switch BaitResults.parse(d) {
+            case .failure(let e): return .failure(ProtocolError(code: .invalidArgs, message: "\(rel): \(e.message)"))
+            case .success(let r): return .success(r)
+            }
+        }
     }
 
     static func isCI(_ p: String) -> Bool {
@@ -76,6 +107,37 @@ extension CommandRouter {
         let report = (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(r))) ?? .null
         return .object(["output": .string(FactoryDoctor.text(r, min: min)), "report": report,
                         "passed": .bool(r.passes(min: min)), "min": .number(Double(min))])
+    }
+}
+
+extension CommandRouter {
+    /// `factory.bait.list` / `factory.bait.report` (U4): the project's catalog and its results file, read only; nothing run.
+    func factoryBait(_ t: TerminalRecord, report: Bool) throws(ProtocolError) -> JSONValue {
+        let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
+        func lines(_ x: String) -> String { x.split(separator: "\n").map { RerailText.clean(String($0), max: 400) + "\n" }.joined() }   // repository text
+        func value<T: Encodable>(_ v: T) -> JSONValue { (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(v))) ?? .null }
+        if report {
+            let r: BaitResults
+            switch FactoryDoctorReader.baitResults(root: root) {
+            case .failure(let e): throw e
+            case .success(let x): r = x ?? BaitResults()
+            }
+            let rep: [String: JSONValue] = ["byLayer": value(r.captureRateByLayer()), "byPersona": value(r.captureRateByPersona()),
+                                            "escaped": value(r.runs.filter { !$0.caught }), "costSeconds": .number(Double(r.runs.reduce(0) { $0 + $1.costSeconds })),
+                                            "runs": .number(Double(r.runs.count))]
+            return .object(["output": .string(lines(r.report())), "report": .object(rep)])
+        }
+        let rel = FactoryBait.catalogPath
+        let d: Data
+        switch FactoryDoctorReader.data(root, rel) {
+        case .failure(let e): throw e
+        case .success(nil): throw ProtocolError(code: .notFound, message: "sem catálogo de iscas: \(rel) não existe no projeto")
+        case .success(let x?): d = x
+        }
+        switch FactoryBait.parseCatalog(d) {
+        case .failure(let e): throw ProtocolError(code: .invalidArgs, message: "\(rel): \(e.message)")
+        case .success(let c): return .object(["output": .string(lines(FactoryBait.text(c))), "catalog": value(c)])
+        }
     }
 }
 

@@ -292,6 +292,7 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
+        if loop.review == true { run.globalConfig = Self.reviewGlobalConfigHash(home: await host.strictWrites().home, reviewRoot: host.reviewRoot) }
         // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
                                                         precheck: loop.precheck != nil, reviewer: loop.review == true,
@@ -348,6 +349,8 @@ actor WorkLoop {
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
         /// F2 X2: the check's and the gate's exit status, the only part of their run the reviewers read.
         var checkStatus: Int32?, gateStatus: Int32?
+        /// F2 V2: `reviewGlobalConfigHash` at the attempt's start, before its agent (`--review` only)
+        var globalConfig: String?
         /// When the verdict was reached.
         var at: Date
         var end = AttemptEnd.go
@@ -554,8 +557,11 @@ actor WorkLoop {
             let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
             let tree = await reviewTree(dir)
             let configs = Self.reviewHashAgentConfig(dir, status: tree)
+            // F2 V2: the home's `~/.claude.json` as the reviewers are launched: changed since the start, all mute
+            let home = await host.strictWrites().home
+            let globalLaunch = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
-                                   evidence: evidence, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
+                                   evidence: evidence, configMoved: r.globalConfig != globalLaunch, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             if ran.budgetOut { return .reviewBudgetOut }
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
@@ -564,8 +570,10 @@ actor WorkLoop {
             // F2 W3: another terminal reaching this worktree (the Shepherd's Claude Code, the user) may have written that
             // config itself during the review: then the change is no touch, and what is new is moved, never deleted
             let configChanged = configsAfter != configs
+            // F2 V2: changed during the review: nothing the reviewers said counts
+            let globalTouched = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot) != globalLaunch
             let reviewConfigOthers = configChanged ? await host.othersWorking() : nil
-            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil)
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil) || globalTouched
             let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
             var movedSaid = ""
             if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
@@ -583,11 +591,11 @@ actor WorkLoop {
                 if reviewConfigOthers == nil { for p in made { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) } }
                 // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
                 // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
-                var said = ""
+                var said = globalTouched ? "\n" + Self.reviewGlobalConfigTouched : ""
                 if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
                     let (drop, keep) = Self.reviewerLeftovers(fresh)
                     if !drop.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + drop, in: dir) }
-                    said = String(((drop.isEmpty ? "" : "\napagados (config de agente): " + drop.joined(separator: ", "))
+                    said += String(((drop.isEmpty ? "" : "\napagados (config de agente): " + drop.joined(separator: ", "))
                         + (keep.isEmpty ? "" : "\nmantidos (ignorados novos, de quem não se sabe): " + keep.joined(separator: ", "))).prefix(400))
                 }
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])

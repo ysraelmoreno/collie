@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import CollieCore
 import CollieProtocol
 
@@ -198,6 +199,47 @@ extension WorkLoop {
         return paths.first { var st = stat(); return lstat($0, &st) == 0 && strictWritable($0, home: home, opened: opened) }
     }
 
+    /// F2 V2: why every reviewer is mute when the home's `~/.claude.json` changed between the attempt's start and the
+    /// reviewers' launch, and the note when it changed during the review (verdicts dropped, `reviewerTouched`).
+    static let reviewGlobalConfigMoved = "configuração global mudou durante a tentativa"
+    static let reviewGlobalConfigTouched = "configuração global (~/.claude.json) mudou durante a revisão"
+
+    /// F2 V2 (reviewGlobalConfigHash): `~/.claude.json` is writable by every strict terminal (`EssentialPaths`, R13) and
+    /// Claude Code reads more than `mcpServers` from it (`env`: `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, the auto-memory
+    /// switch; `autoConnectIde`). The SHA-256 of what matters there: the keys `env`, `mcpServers`, `autoConnectIde`
+    /// and `projects`, the last only for the paths a reviewer is born in (`reviewRoot`, its ancestors, under it) and
+    /// without Claude Code's own counters (`last*`, `example*`, `hasUnseen*`, `logged*`) or default values (empty, false,
+    /// null): Claude Code rewrites the file on every start and exit. No file: "". Not a JSON object: the bytes' hash
+    /// (any change counts, fail closed). Taken at the attempt's start, at the reviewers' launch and after the review.
+    // ponytail: by key list; a new Claude Code key that loads config outside these is not seen, add it here then
+    static func reviewGlobalConfigHash(home: URL, reviewRoot: URL) -> String {
+        guard let data = FileManager.default.contents(atPath: home.appendingPathComponent(".claude.json").path) else { return "" }
+        func sha(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
+        guard let all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return "raw:" + sha(data) }
+        func isDefault(_ v: Any) -> Bool {
+            if v is NSNull { return true }
+            if let n = v as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() { return !n.boolValue }
+            if let a = v as? [Any] { return a.isEmpty }
+            if let o = v as? [String: Any] { return o.isEmpty }
+            return false
+        }
+        let root = reviewRoot.path
+        func reviewerPath(_ p: String) -> Bool { p == root || p == "/" || root.hasPrefix(p + "/") || p.hasPrefix(root + "/") }
+        var kept: [String: Any] = [:]
+        for k in ["env", "mcpServers", "autoConnectIde"] { if let v = all[k] { kept[k] = v } }
+        if let projects = all["projects"] as? [String: Any] {
+            var mine: [String: Any] = [:]
+            for (path, entry) in projects where reviewerPath(path) {
+                guard let e = entry as? [String: Any] else { mine[path] = entry; continue }
+                let f = e.filter { k, v in !["last", "example", "hasUnseen", "logged"].contains(where: k.hasPrefix) && !isDefault(v) }
+                if !f.isEmpty { mine[path] = f }
+            }
+            if !mine.isEmpty { kept["projects"] = mine }
+        } else if let p = all["projects"] { kept["projects"] = p }
+        guard let canon = try? JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys, .fragmentsAllowed]) else { return "raw:" + sha(data) }
+        return sha(canon)
+    }
+
     /// F2 Z2: whether a strict loop agent may write `path` (resolved: a symlink counts where it points), fail closed: the
     /// user may write it or its folder, and it is outside the home (temp dirs, other volumes) or under `opened` (the
     /// write grants, the paddocks). Inside the home a strict profile writes only the project, the caches and the grants.
@@ -315,7 +357,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers').
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configMoved: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -345,7 +387,9 @@ extension WorkLoop {
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
         let planted = Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
-        let scratch = personas.map { planted == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) : nil }
+        // F2 V2: `~/.claude.json` changed since the attempt began (the judged agent may have written it): every reviewer mute
+        let silenced = configMoved ? Self.reviewGlobalConfigMoved : planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
+        let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }
         // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree
         var snapshots: [URL?] = [], snapshotWhy: [String?] = []
         for s in scratch {
@@ -368,7 +412,7 @@ extension WorkLoop {
                 g.addTask {
                     var id: UUID?
                     var verdict = Self.mute(p.name)
-                    if let planted { verdict.invalid = "revisor \(p.name) mudo: \(planted) existe e o agente do laço pode gravá-lo" }
+                    if let silenced { verdict.invalid = "revisor \(p.name) mudo: \(silenced)" }
                     if let why = snapshotFailed { verdict.invalid = "revisor \(p.name) mudo: \(why)" }
                     do {
                         guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute

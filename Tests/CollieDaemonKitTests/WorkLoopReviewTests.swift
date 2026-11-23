@@ -372,6 +372,63 @@ import CollieProtocol
         #expect(w.notes.contains { $0.text.contains("tentativa 2/4") && $0.text.contains(WorkLoop.reviewerTouched) })
     }
 
+    /// F2 V2: a fake home whose `.claude.json` holds `env` and a worktree's counters, for the rig's loop.
+    private static func fakeHome(_ r: LoopRig) async throws -> URL {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("collie-v2-home-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Self.claudeJson(home, env: "0", startups: 1)
+        await r.host.setHome(home)
+        return home
+    }
+    private static func claudeJson(_ home: URL, env: String, startups: Int) throws {
+        let text = #"{"numStartups":\#(startups),"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"\#(env)"},"projects":{"/x":{"lastCost":\#(startups)}}}"#
+        try text.write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+    }
+
+    /// F2 V2: the judged agent changes `~/.claude.json`'s `env` during its turn: every reviewer is mute, none summoned.
+    @Test func globalConfigChangedBeforeTheLaunchSilencesTheReviewers() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try Self.claudeJson(home, env: "1", startups: 1)
+            try await commit("x.txt", "x\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigMoved) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(await r.host.reviewers.isEmpty)
+    }
+
+    /// F2 V2: changed during the review: the verdicts are dropped, the attempt fails as touched (no refusal counted).
+    @Test func globalConfigChangedDuringTheReviewDropsTheVerdicts() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        await Self.works(r, 1)
+        await r.host.setReviewerAct("correcao") { _ in try Self.claudeJson(home, env: "1", startups: 1) }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].reviewRejects ?? 0 == 0)
+        #expect(w.notes.contains { $0.text.contains(WorkLoop.reviewGlobalConfigTouched) })
+    }
+
+    /// F2 V2: Claude Code's own counters change (top level, a project's `last*`): the review goes on as normal.
+    @Test func globalConfigCountersDoNotCount() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try Self.claudeJson(home, env: "0", startups: 2)
+            try await commit("x.txt", "x\n", in: d)
+        }))
+        await r.host.setReviewerAct("correcao") { _ in try Self.claudeJson(home, env: "0", startups: 3) }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(WorkLoop.reviewGlobalConfigHash(home: home.appendingPathComponent("none"), reviewRoot: r.host.reviewRoot) == "")
+    }
+
     /// F2 Y2b: more than `reviewMaxLinePaths` changed files: the line check is skipped, the finding's line stays, no note.
     @Test func tooManyPathsSkipsTheLineCheck() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }

@@ -1076,6 +1076,9 @@ actor CommandRouter {
         // F2 Z3b: a loop reviewer loads no auto-memory (Claude Code's own switch, read in its 2.1.x build): a process the
         // judged agent left alive could have planted a `MEMORY.md` under `~/.claude/projects/`, writable in strict
         if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1" }
+        // F2 V2: nor connects to an IDE (`autoConnectIde` of `~/.claude.json`, writable in strict): Claude Code checks
+        // `CLAUDE_CODE_AUTO_CONNECT_IDE === false` first (read in the installed 2.1.x build)
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_AUTO_CONNECT_IDE"] = "false" }
         if sandboxed(rec), let home = config.sandboxHome {
             e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
         }

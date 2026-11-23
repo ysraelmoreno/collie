@@ -88,7 +88,7 @@ private let full = """
         for bad in ["../x", "a/../b", "/etc/x", "", "a\\u0000b", String(repeating: "a", count: 201),
                     // F1: dangerous places and odd components, the same rule as `FactoryRatchet.target`
                     ".git", "dir/.git", "x.git/y", "sub/.GIT", ".collie/b", "a/.Collie/b", "collie-work.json", "sub/collie-work.json",
-                    "a//b", "a/", "./a", "a/./b"] {
+                    "a//b", "a/", "./a", "a/./b", "~x", "$x", "~/x"] {
             #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "a", "measure": "m", "baseline": "\#(bad)"}]}}"#) == .badBaseline(path: "factory.static.ratchets[0].baseline"), "\(bad)")
         }
         #expect(error(#"{"version": 1, "static": {"ratchets": [{"name": "a", "measure": "m", "baseline": "a..b/c.txt"}]}}"#) == nil)

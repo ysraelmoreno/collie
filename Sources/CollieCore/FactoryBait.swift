@@ -203,6 +203,18 @@ public struct BaitResults: Codable, Sendable, Equatable {
         return out.isEmpty ? FactoryDoctor.Layer.allCases : FactoryDoctor.Layer.allCases.filter(out.contains)
     }
 
+    /// N4 (round 2): the runs of an invalid file that parse alone (the same isolated parse as `failingLayers`); none when the
+    /// root itself is bad.
+    public static func validRuns(_ data: Data) -> BaitResults {
+        guard var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let runs = root["runs"] as? [Any] else { return BaitResults() }
+        var out = BaitResults()
+        for run in runs {
+            root["runs"] = [run]
+            if let d = try? JSONSerialization.data(withJSONObject: root), case .success(let r) = parse(d) { out.runs += r.runs }
+        }
+        return out
+    }
+
     /// Every run's cost, saturating at `Int.max`: never traps, even on runs built in code past `maxCost`.
     public var totalCost: Int {
         runs.reduce(0) { s, r in let (v, o) = s.addingReportingOverflow(r.costSeconds); return o ? Int.max : v }
@@ -228,7 +240,7 @@ public struct BaitResults: Codable, Sendable, Equatable {
     public func captureRateByPersona() -> [String: Rate] {
         var out: [String: Rate] = [:]
         let total = runs.filter { $0.layer == .review }.count
-        for r in runs where r.caught { if let p = r.persona { out[p, default: Rate(caught: 0, total: total)].caught += 1 } }
+        for r in runs where r.caught && r.layer == .review { if let p = r.persona { out[p, default: Rate(caught: 0, total: total)].caught += 1 } }
         return out
     }
 

@@ -38,6 +38,12 @@ private let sample = BaitResults(runs: [
     .init(bait: "spec-editado", date: "2026-11-24", caught: false, layer: .judge, costSeconds: 100),
 ])
 
+/// A profile whose review layer scores above 0, so an escape there shows.
+private func cfgReview() throws -> ProjectWorkConfig {
+    let j = #"{"gate": "swift test", "factory": {"version": 1, "review": {"personas": ["correcao"], "callOwner": true}}}"#
+    switch ProjectWorkConfig.parse(Data(j.utf8)) { case .success(let ok): return ok.config; case .failure(let e): throw e }
+}
+
 @Suite struct FactoryBaitTests {
     // MARK: catalog
 
@@ -101,6 +107,10 @@ private let sample = BaitResults(runs: [
         #expect(sample.captureRateByPersona() == ["correcao": .init(caught: 1, total: 3), "seguranca": .init(caught: 1, total: 3)])
         #expect(sample.escaped() == ["review": 1, "judge": 1])
         #expect(BaitResults().escaped().isEmpty && BaitResults().captureRateByLayer().isEmpty)
+        // F5a (N3): a judge run carrying a persona is not that persona's catch (the numerator counts only the review layer)
+        let judged = BaitResults(runs: sample.runs + [.init(bait: "j", date: "d", caught: true, layer: .judge, persona: "correcao", costSeconds: 1)])
+        #expect(judged.captureRateByPersona() == ["correcao": .init(caught: 1, total: 3), "seguranca": .init(caught: 1, total: 3)])
+        #expect(BaitResults(runs: [.init(bait: "j", date: "d", caught: true, layer: .judge, persona: "p", costSeconds: 1)]).captureRateByPersona().isEmpty)
         let r = sample.report()
         #expect(r.contains("review: 2/3 (66%)") && r.contains("correcao: 1/3 (33%)") && r.contains("custo: 1020 s"))
         #expect(r.contains("corrida (2026-11-23, camada review)") && r.contains("spec-editado"))
@@ -165,6 +175,16 @@ private let sample = BaitResults(runs: [
         let marked = FactoryDoctor.score(FactoryDoctor.Snapshot(config: c, baits: one.baits))
         #expect(s(marked, .judge) == max(0, s(clean, .judge) - 1) && s(marked, .static) == s(clean, .static))
         #expect(marked.layers.first { $0.layer == .judge }!.evidence.last?.hasPrefix("erro: .collie/factory/bait-results.json: 'runs[1].costSeconds'") == true)
+        // F5a (N4): the error does not hide the valid escapes of the other layers
+        let gone = #"{"bait": "c", "date": "d", "caught": false, "layer": "review", "costSeconds": 1}"#
+        try put(proj, FactoryBait.resultsPath, #"{"version": 1, "runs": [\#(gone), {"bait": "b", "date": "d", "caught": true, "layer": "judge", "costSeconds": -1}]}"#)
+        guard case .success(let mixed) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("mixed"); return }
+        #expect(mixed.baits == FactoryDoctor.BaitResults(escapedBaits: ["review": 1], errors: ["judge": mixed.baits?.errors["judge"] ?? "?"]))
+        #expect(mixed.baits?.errors.keys.sorted() == ["judge"])
+        let full = try cfgReview()
+        let both = FactoryDoctor.score(FactoryDoctor.Snapshot(config: full, paths: ["docs/fabrica/personas/correcao.md"], baits: mixed.baits))
+        let base = FactoryDoctor.score(FactoryDoctor.Snapshot(config: full, paths: ["docs/fabrica/personas/correcao.md"]))
+        #expect(s(both, .review) == s(base, .review) - 1 && s(both, .judge) == max(0, s(base, .judge) - 1))
         let file = proj.appendingPathComponent(FactoryBait.resultsPath)
         try FileManager.default.removeItem(at: file)
         let outside = try dir("isca-out")

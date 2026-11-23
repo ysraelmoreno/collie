@@ -16,9 +16,11 @@ private func project(_ body: (URL) throws -> Void) throws {
     try body(dir)
 }
 private func file(_ dir: URL, _ rel: String) -> String? { try? String(contentsOf: dir.appendingPathComponent(rel), encoding: .utf8) }
-private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, reason: String? = nil, rel: String = "scripts/ci/base.txt") throws -> FactoryRatchet.Outcome {
+private let realHome = URL(fileURLWithPath: NSHomeDirectory())
+private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, reason: String? = nil, rel: String = "scripts/ci/base.txt",
+                   home: URL = realHome) throws -> FactoryRatchet.Outcome {
     try FactoryRatchet.apply(a, name: "lint", root: dir, baselinePath: rel, measured: measured, reason: reason,
-                             now: Date(timeIntervalSince1970: 1_795_000_000))
+                             now: Date(timeIntervalSince1970: 1_795_000_000), home: home, collie: home.appendingPathComponent("Library/Application Support/Collie"))
 }
 
 @Suite struct RatchetTests {
@@ -168,7 +170,6 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
         }
     }
 
-    /// F1 (minor 6): an empty measurement over a non-empty baseline is refused by update and flagged by check.
     @Test func raiseLogKeepsItsLast100Lines() throws {   // nit: the log never grows past what `read` takes
         try project { dir in
             let old = (1...150).map { "# 2026-01-01: k \($0) -> \($0 + 1): r\($0)\n" }.joined() + "k 1\n"
@@ -181,6 +182,7 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
         }
     }
 
+    /// F1 (minor 6): an empty measurement over a non-empty baseline is refused by update and flagged by check.
     @Test func emptyMeasurementRefused() throws {
         try project { dir in
             try Data("r a 2\n".utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))
@@ -217,6 +219,83 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
         #expect(calls.list.count == 1 && calls.list[0].0 == SandboxLaunch.profileFile(id, root: collie) && calls.list[0].1["HOME"] == home.path)
         _ = try await run(sandboxHome: nil, sandboxed: false)
         #expect(calls.list.count == 2 && calls.list[1].0 == nil && calls.list[1].1["HOME"] == "/Users/real")
+    }
+
+    /// F5a (N1, round 2 blocker): the daemon writes unsandboxed, so a root at the home or above it, or a baseline where the
+    /// strict profile denies writes, is refused and nothing is written; a common root inside the home still works.
+    @Test func homeRootAndDeniedPlacesRefused() throws {
+        try project { base in
+            let home = base.appendingPathComponent("Users/eu")
+            for d in [".ssh", "Library/LaunchAgents", ".config/git", "code/proj"] {
+                try FileManager.default.createDirectory(at: home.appendingPathComponent(d), withIntermediateDirectories: true)
+            }
+            let rels = [".zshenv", ".ssh/authorized_keys", "Library/LaunchAgents/x"]
+            for root in [home, base.appendingPathComponent("Users"), base] {   // the home and its ancestors
+                for rel in rels {
+                    #expect(throws: ProtocolError.self, "\(root.path) \(rel)") { try apply(.raise, root, measured: "a 1\n", reason: "r", rel: rel, home: home) }
+                }
+            }
+            // a root under a denied place: everything below it is denied too
+            for (root, rel) in [(".ssh", "authorized_keys"), ("Library/LaunchAgents", "x.plist"), (".config/git", "config")] {
+                #expect(throws: ProtocolError.self, "\(root)/\(rel)") { try apply(.raise, home.appendingPathComponent(root), measured: "a 1\n", reason: "r", rel: rel, home: home) }
+            }
+            for rel in rels { #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(rel).path), "\(rel)") }
+            #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".config/git/config").path))
+            // a common project root inside the home keeps working, even with a dotfile name
+            let proj = home.appendingPathComponent("code/proj")
+            #expect(try apply(.raise, proj, measured: "a 1\n", reason: "r", rel: ".zshenv", home: home).wrote)
+            #expect(file(proj, ".zshenv") == "# 2026-11-18: a 0 -> 1: r\na 1\n")
+        }
+    }
+
+    /// F5a (N6): the rewritten baseline keeps the old file's mode; a first one is 0644.
+    @Test func rewriteKeepsTheMode() throws {
+        try project { dir in
+            func mode(_ rel: String) throws -> Int { (try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(rel).path)[.posixPermissions] as? Int) ?? -1 }
+            #expect(try apply(.raise, dir, measured: "a 1\n", reason: "r", rel: "scripts/ci/new.txt").wrote)
+            #expect(try mode("scripts/ci/new.txt") == 0o644)
+            try Data("a 2\n".utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))
+            try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: dir.appendingPathComponent("scripts/ci/base.txt").path)
+            #expect(try apply(.update, dir, measured: "a 1\n").wrote)
+            #expect(try mode("scripts/ci/base.txt") == 0o640)
+        }
+    }
+
+    /// F5a (N6): the parser and `target` refuse the same paths (one function): `~x` and `$x` too.
+    @Test func parserAndTargetAgree() throws {
+        try project { dir in
+            for rel in ["~x", "$x", "~/x", "$HOME/x", "/x", "a/../b", "scripts/ci/base.txt", "a..b/c.txt"] {
+                let parser = FactoryProfile.confinedPath(rel)
+                let target = (try? FactoryRatchet.target(root: dir, rel: rel)) != nil
+                #expect(parser == target, "\(rel)")
+            }
+            #expect(!FactoryProfile.confinedPath("~x") && !FactoryProfile.confinedPath("$x"))
+        }
+    }
+
+    /// F5a (N2): the router's wiring: with `sandboxHome` set, a free terminal's `factory ratchet` answers `.unavailable` and
+    /// runs nothing (no baseline, no marker). No real `sandbox-exec`.
+    @Test func routerRefusesAFreeTerminalWhenSandboxed() async throws {
+        let home = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory)).appendingPathComponent("ratchet-home-\(UUID().uuidString.prefix(8))")
+        let proj = home.appendingPathComponent("code/proj")
+        try FileManager.default.createDirectory(at: proj.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let marker = proj.appendingPathComponent("ran").path
+        let work = #"{"factory": {"version": 1, "static": {"ratchets": [{"name": "lint", "measure": "touch \#(marker); echo a 1", "baseline": "base.txt"}]}}}"#
+        try Data(work.utf8).write(to: proj.appendingPathComponent("collie-work.json"))
+        try await withDaemon(configure: { $0.sandboxHome = home }) { d, p in
+            let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn",
+                                              args: ["name": .string("F"), "preset": .string("shell"), "cwd": .string(proj.path), "sandbox": .string("free")]))
+            guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { Issue.record("\(r)"); return }
+            let token = try await tokenOf(d, id)
+            for a in ["check", "raise"] {
+                let res = try await send(p, Request(id: "c", terminalId: id, token: token, command: "factory.ratchet.\(a)",
+                                                    args: ["name": .string("lint"), "reason": .string("r")]))
+                #expect(res.error?.code == .unavailable, "\(a): \(res)")
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: marker))
+        #expect(!FileManager.default.fileExists(atPath: proj.appendingPathComponent("base.txt").path))
     }
 
     @Test func commandIsRegistered() throws {

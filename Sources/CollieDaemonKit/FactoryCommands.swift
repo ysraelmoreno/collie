@@ -37,7 +37,9 @@ enum FactoryDoctorReader {
             case .success(let r): s.baits = r.doctorInput
             case .failure(let e):
                 let m = "\(FactoryBait.resultsPath): \(e.message)"
-                s.baits = FactoryDoctor.BaitResults(errors: Dictionary(uniqueKeysWithValues: BaitResults.failingLayers(d).map { ($0.rawValue, m) }))
+                // N4 (round 2): the runs that parse alone still count their escapes; the layers of the invalid ones lose 1 by error
+                s.baits = FactoryDoctor.BaitResults(escapedBaits: BaitResults.validRuns(d).escaped(),
+                                                    errors: Dictionary(uniqueKeysWithValues: BaitResults.failingLayers(d).map { ($0.rawValue, m) }))
             }
         }
         return .success(s)
@@ -158,12 +160,26 @@ enum FactoryRatchet {
     static let maxBaselineBytes = 1 << 20, maxLogLines = 100
     static let measureTimeout: Duration = .seconds(600)
 
-    /// The baseline's path checked by `FactoryProfile.confinedPath` (the parser's rule, one function): relative, no `..`,
-    /// `.`, empty part, `.git`/`*.git`, `.collie` nor `collie-work.json`. Its folder is opened by `openDir`.
+    /// The baseline's path checked by `FactoryProfile.confinedPath` alone (the parser's rule, one function, N6): relative, no
+    /// `..`, `.`, empty part, `~`/`$` start, `.git`/`*.git`, `.collie` nor `collie-work.json`. Its folder is opened by `openDir`.
     static func target(root: URL, rel: String) throws(ProtocolError) -> URL {
-        guard FactoryProfile.confinedPath(rel), !FactoryDoctor.outsideRepo(rel)
+        guard FactoryProfile.confinedPath(rel)
         else { throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' fora do projeto ou em lugar proibido (.git, .collie, collie-work.json)") }
         return root.appendingPathComponent(rel)
+    }
+
+    /// N1 (round 2 blocker): the daemon writes the baseline unsandboxed, so never with the project root at the home or above
+    /// it, nor where the strict profile denies a terminal's write (`SandboxGrantStore.mayWrite`, the same lists:
+    /// `EssentialPaths.neverWritable`, secrets, agent config, Collie's data, git dirs).
+    static func place(root: URL, rel: String, home: URL, collie: URL) throws(ProtocolError) {
+        let r = URL(fileURLWithPath: SignedAppCheck.realPath(root))
+        guard !URL(fileURLWithPath: SignedAppCheck.realPath(home)).pathComponents.starts(with: r.pathComponents) else {
+            throw ProtocolError(code: .invalidArgs, message: "a raiz do projeto é a pasta pessoal ou fica acima dela: a catraca não grava baseline aí")
+        }
+        let path = r.appendingPathComponent(rel).path
+        guard SandboxGrantStore.mayWrite(path, root: r.path, grants: [], home: home, collie: collie, app: nil, closed: []) else {
+            throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' cai num caminho que o sandbox nunca deixa gravar (rc do shell, segredos, launchd, config)")
+        }
     }
 
     /// The baseline's folder as a fd, opened component by component from the root with `openat(O_DIRECTORY|O_NOFOLLOW)`:
@@ -196,17 +212,21 @@ enum FactoryRatchet {
         var st = stat()
         guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular") }
         guard st.st_size <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
-        let d = (try? h.read(upToCount: maxBaselineBytes + 1)) ?? Data()
+        let d: Data
+        do { d = try h.read(upToCount: maxBaselineBytes + 1) ?? Data() }   // N5: an I/O error is not an empty baseline
+        catch { throw ProtocolError(code: .internal, message: "não consegui ler \(rel): \(error.localizedDescription)") }
         guard d.count <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
         return String(decoding: d, as: UTF8.self)
     }
 
     /// Temporary file made with `openat(O_CREAT|O_EXCL|O_NOFOLLOW, 0600)` in `dir`, then `renameat` in the same fd: a reader
-    /// sees the old file or the new one, never half, and nothing lands outside the folder `openDir` opened.
+    /// sees the old file or the new one, never half, and nothing lands outside the folder `openDir` opened. N6: it gets the
+    /// old file's mode (0644 for a first baseline) and is `fsync`ed before the rename.
     static func write(_ text: String, dir: Int32, _ name: String, rel: String) throws(ProtocolError) {
-        var st = stat()
-        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT != S_IFREG {
-            throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular")
+        var st = stat(), mode: mode_t = 0o644
+        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
+            guard st.st_mode & S_IFMT == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular") }
+            mode = st.st_mode & 0o777
         }
         let tmp = ".\(name).\(UUID().uuidString).tmp"
         let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -218,8 +238,9 @@ enum FactoryRatchet {
             if n < 0 { if errno == EINTR { continue }; break }
             off += n
         }
+        let synced = off == bytes.count && fchmod(fd, mode) == 0 && fsync(fd) == 0
         close(fd)
-        guard off == bytes.count else {
+        guard synced else {
             unlinkat(dir, tmp, 0)
             throw ProtocolError(code: .internal, message: "não consegui gravar o temporário de \(rel)")
         }
@@ -247,7 +268,7 @@ enum FactoryRatchet {
     /// The decision on one measurement. `check`: 0 only when equal (improved exits 1 too, like scripts/ci/lint.sh: the lowered
     /// baseline must be committed); `update`: writes only an improvement; `raise`: writes with the reason logged in the file.
     static func apply(_ action: Action, name: String, root: URL, baselinePath rel: String, measured: String,
-                      reason: String?, now: Date) throws(ProtocolError) -> Outcome {
+                      reason: String?, now: Date, home: URL, collie: URL) throws(ProtocolError) -> Outcome {
         func bad(_ e: Ratchet.Refusal, _ what: String) -> ProtocolError {
             switch e {
             case .badLine(let n, let l): return ProtocolError(code: .invalidArgs, message: "\(what), linha \(n): '\(l)' não é '<chave> <n>'")
@@ -256,6 +277,7 @@ enum FactoryRatchet {
             }
         }
         let file = try target(root: root, rel: rel).lastPathComponent
+        try place(root: root, rel: rel, home: home, collie: collie)
         let dir = try openDir(root: root, rel: rel)
         defer { close(dir) }
         let old = try read(dir: dir, file, rel: rel)
@@ -318,6 +340,8 @@ extension CommandRouter {
             do { _ = try Ratchet.raise(baseline: .init(), to: .init(), reason: reason ?? "", date: Date()) }
             catch { throw ProtocolError(code: .invalidArgs, message: "--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle") }
         }
+        _ = try FactoryRatchet.target(root: root, rel: rel)   // refused before anything runs (N1)
+        try FactoryRatchet.place(root: root, rel: rel, home: sandboxHomeDir, collie: config.paths.root)
         let res = try await FactoryRatchet.measure(r.measure, in: root, sandboxHome: config.sandboxHome, terminal: t.id, sandboxed: sandboxed(t),
                                                    collieRoot: config.paths.root, shell: config.shell, user: await loopUserEnv()) {
             (c, d, p, e) async throws(ProtocolError) in try await RouterLoopHost.runCheck(c, in: d, profile: p, env: e, timeout: FactoryRatchet.measureTimeout)
@@ -325,7 +349,8 @@ extension CommandRouter {
         guard res.status == 0, !res.truncated else {
             throw ProtocolError(code: .invalidArgs, message: "measure de '\(name)' falhou (código \(res.status)\(res.truncated ? ", saída cortada" : "")): \(RerailText.clean(String(res.stderr.suffix(300)), max: 300))")
         }
-        let o = try FactoryRatchet.apply(action, name: name, root: root, baselinePath: rel, measured: res.stdout, reason: reason, now: Date())
+        let o = try FactoryRatchet.apply(action, name: name, root: root, baselinePath: rel, measured: res.stdout, reason: reason, now: Date(),
+                                        home: sandboxHomeDir, collie: config.paths.root)
         return .object(["output": .string(o.output), "passed": .bool(o.passed), "wrote": .bool(o.wrote)])
     }
 }

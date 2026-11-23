@@ -195,12 +195,12 @@ public struct FactoryProfile: Sendable, Equatable {
         return s
     }
 
-    /// A repository-relative path: not empty, at most `maxBaseline` characters, no leading '/', no control, and no component
+    /// A repository-relative path: not empty, at most `maxBaseline` characters, no leading '/', '~' or '$', no control, and no component
     /// that is empty, `.`, `..`, `.git` or ends in `.git` (a nested repo's config runs `core.fsmonitor` outside the sandbox),
     /// `.collie` or `collie-work.json` (the daemon writes there unsandboxed). Case-insensitive: the default macOS volume is.
     /// U4's bait catalog and `FactoryRatchet.target` use the same rule.
     public static func confinedPath(_ s: String) -> Bool {
-        guard !s.isEmpty, s.count <= maxBaseline, !s.hasPrefix("/"), !hasControl(s) else { return false }
+        guard !s.isEmpty, s.count <= maxBaseline, !s.hasPrefix("/"), !s.hasPrefix("~"), !s.hasPrefix("$"), !hasControl(s) else { return false }
         return s.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { c in
             let l = c.lowercased()
             return !l.isEmpty && l != "." && l != ".." && !l.hasSuffix(".git") && l != ".collie" && l != "collie-work.json"

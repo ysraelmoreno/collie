@@ -92,10 +92,24 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
         #expect(ghost.score == 1 && ghost.evidence == ["aviso: gate cita scripts/ci.sh, que não existe no repositório"])
         // a bare gate cites no versioned file: at most 2 (the runner's config is unguarded)
         let bare = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "npm test", "precheck": "npm run build"}"#))), .judge)
-        #expect(bare.score == 2 && bare.evidence.first?.contains("não citam nenhum arquivo versionado") == true && !bare.nextAction.isEmpty)
+        #expect(bare.score == 2 && bare.evidence.first?.contains("o gate não cita nenhum arquivo versionado") == true && !bare.nextAction.isEmpty)
         // naming the file that controls the runner counts
         let named = D.Snapshot(config: try cfg(#"{"gate": "npm test --prefix . && cat package.json"}"#), paths: ["package.json"])
         #expect(layer(D.score(named), .judge).score == 3 && layer(D.score(named), .judge).evidence == ["gate cita package.json, versionado: lido do commit base"])
+        // F5a (N3): only the gate's citations lift the judge to 3; a cited precheck or smoke does not
+        let pre = D.Snapshot(config: try cfg(#"{"gate": "npm test", "precheck": "scripts/pre.sh", "smoke": "scripts/smoke.sh"}"#),
+                             scripts: ["scripts/pre.sh": "swift build\n", "scripts/smoke.sh": "true\n"])
+        let p = layer(D.score(pre), .judge)
+        #expect(p.score == 2 && p.evidence.contains("precheck cita scripts/pre.sh, versionado: lido do commit base"), "\(p.evidence)")
+        // F5a (N4): a gate script whose runner is the package.json's test script stays at 2, unless the gate cites package.json
+        for runner in ["npm test", "npm run test", "yarn test:ci", "pnpm run test"] {
+            let via = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh"}"#), scripts: ["scripts/gate.sh": "set -e\n\(runner)\n"])), .judge)
+            #expect(via.score == 2 && via.evidence.last?.contains("script test do package.json") == true, "\(runner): \(via.evidence)")
+        }
+        let direct = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh"}"#), scripts: ["scripts/gate.sh": "npx --no-install jest\n"])), .judge)
+        #expect(direct.score == 3)
+        let guarded = D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh # package.json"}"#), scripts: ["scripts/gate.sh": "npm test\n"], paths: ["package.json"])
+        #expect(layer(D.score(guarded), .judge).score == 3)
     }
 
     @Test func smallRules() {

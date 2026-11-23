@@ -128,7 +128,7 @@ public enum FactoryDoctor {
             return LayerScore(layer: .judge, score: 1, evidence: ["sem collie-work.json: o juiz só tem o --check de cada tarefa"],
                               nextAction: ["crie collie-work.json com gate versionado no repositório"])
         }
-        var warn: [String] = [], ev: [String] = []
+        var warn: [String] = [], ev: [String] = [], gateCited: Set<String> = []
         let cmds = [("gate", c.gate), ("precheck", c.precheck), ("smoke", c.smoke)].compactMap { k, v in v.map { (k, $0) } }
         // what the reader saw: listed paths, or a script it read (deeper than the listing goes)
         func present(_ p: String) -> Bool { s.paths.contains(p) || s.scripts[p] != nil }
@@ -138,11 +138,11 @@ public enum FactoryDoctor {
                 if outsideRepo(p) { warn.append("\(k) cita script fora do repositório: \(p)") }
                 else if ignored(p, s.gitignore) { warn.append("\(k) cita script ignorado pelo git (.gitignore): \(p)") }
                 else if !present(p) { warn.append("\(k) cita \(p), que não existe no repositório") }
-                else { ev.append("\(k) cita \(p), versionado: lido do commit base") }
+                else { ev.append("\(k) cita \(p), versionado: lido do commit base"); if k == "gate" { gateCited.insert(p) } }
             }
             // a file the command names that the reader saw (`package.json`, `Package.swift`): it controls the runner
             for w in simpleCommands(cmd).flatMap({ $0 }) where !cited.contains(w) && present(w) && !ignored(w, s.gitignore) {
-                ev.append("\(k) cita \(w), versionado: lido do commit base")
+                ev.append("\(k) cita \(w), versionado: lido do commit base"); if k == "gate" { gateCited.insert(w) }
             }
         }
         for p in s.scripts.keys.sorted() where isTaskCheck(p) && onlyLooksForFiles(s.scripts[p]!) {
@@ -156,12 +156,24 @@ public enum FactoryDoctor {
             return LayerScore(layer: .judge, score: 2, evidence: ["sem gate, precheck nem smoke: o juiz é só o --check de cada tarefa"],
                               nextAction: ["defina 'gate' em collie-work.json"])
         }
-        if ev.isEmpty {   // a bare gate (`npm test`): an agent can neutralize the runner through its config, which nothing guards
+        // N3 (round 2): only the gate's citations guard the judge (precheck and smoke do not judge the task)
+        if gateCited.isEmpty {   // a bare gate (`npm test`): an agent can neutralize the runner through its config, which nothing guards
             return LayerScore(layer: .judge, score: 2,
-                              evidence: ["gate, precheck e smoke não citam nenhum arquivo versionado: um agente pode neutralizar o runner pela config (ex.: o script test do package.json)"],
+                              evidence: ev + ["o gate não cita nenhum arquivo versionado: um agente pode neutralizar o runner pela config (ex.: o script test do package.json)"],
                               nextAction: ["faça o gate chamar um script versionado (ex.: scripts/gate.sh) ou citar os arquivos que controlam o runner"])
         }
+        // N4 (round 2): a gate script that hands over to `npm test` runs the package.json's script, which an agent can edit;
+        // unless the gate's text cites package.json (then the judge guards it too, as rev-2 N1 suggests for the configs)
+        if let src = c.gate.flatMap({ testRunnerSource($0, s.scripts) }), viaPackageScript(src), !gateCited.contains("package.json") {
+            return LayerScore(layer: .judge, score: 2, evidence: ev + ["o runner do gate passa pelo script test do package.json: \(src)"],
+                              nextAction: ["chame o runner direto no gate (ex.: npx --no-install jest), não npm/yarn/pnpm test"])
+        }
         return LayerScore(layer: .judge, score: 3, evidence: ev, nextAction: [])
+    }
+
+    /// `npm test`, `yarn run test`, `pnpm test:ci`...: the runner is whatever the package.json's script says.
+    public static func viaPackageScript(_ line: String) -> Bool {
+        line.range(of: #"\b(npm|yarn|pnpm)\s+(run\s+)?test\b"#, options: .regularExpression) != nil
     }
 
     /// Words of the command that look like a script path (`scripts/x.sh`, `./check.py`, `/abs/x`), `./` dropped, in order, once each.

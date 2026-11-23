@@ -99,6 +99,10 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         let j = FactoryDoctor.judge(s)
         #expect(j.score == 3 && j.evidence.contains("gate cita scripts/gate.sh, versionado: lido do commit base"), "\(stack): \(j.evidence)")
         let gate = try #require(s.scripts["scripts/gate.sh"])
+        // F5a (N4): the model's runner is called directly; were it `npm test`, the judge would drop to 2
+        #expect(!FactoryDoctor.viaPackageScript(FactoryDoctor.testRunnerSource(s.config!.gate!, s.scripts) ?? ""), "\(stack)")
+        var viaNpm = s; viaNpm.scripts["scripts/gate.sh"] = "set -e\nnpm test\n"
+        #expect(FactoryDoctor.judge(viaNpm).score == 2, "\(stack)")
         let governs: [String: [String]] = ["swift": ["Package.swift"],
                                            "node": ["package.json", "jest.config.*", "vitest.config.*", "vite.config.*", "vitest.workspace.*"],
                                            "python": ["conftest.py", "pyproject.toml"]]

@@ -1176,7 +1176,8 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         #expect(await r.host.openAsked == ["w-task-a-t1"])
         #expect(await r.host.dismissed.first == "w-task-a-t1")
-        #expect(await r.host.startedOpen(try #require(await r.host.agentIds.first)) == false)   // gone: the fake now says strict
+        let id = try #require(await r.host.agentIds.first)
+        #expect(await !r.host.startedOpen(id))   // gone: the fake now says strict
     }
 
     /// F2 Y1: a parent holding an agent's config refuses: no reviewer folder is made under it.

@@ -499,11 +499,11 @@ extension WorkCommandTests {
             await d.router.raiseForTests(SandboxDenial(terminal: other.uuid, op: "write", path: path))
             // F4 2: a lane (strict, no reviewer) keeps today's way: its denial is a card too
             let pad = Paddock(id: UUID(), name: "p", repoRoot: repo.path, path: repo.path, branch: "collie/p", baseBranch: "main")
-            await d.router.laneTestsAdd(pad)
+            await d.router.f4AddPaddock(pad)
             let lanePath = scratch.appendingPathComponent("paddocks/lane-v4-a").path
             let lane = TerminalRecord(id: UUID(), name: "w-a-t1", preset: .shell, command: nil, cwd: lanePath, isShepherd: false,
                                       paddockId: pad.id, projectRoot: lanePath)
-            await d.router.y2cAdd([lane])
+            await d.router.f4AddTerminal(lane)
             #expect(await d.router.lanePaddock(of: lane) != nil)
             await d.router.raiseForTests(SandboxDenial(terminal: lane.id, op: "write", path: lanePath + "/y.txt"))
             let cards = await d.router.accessCards
@@ -607,3 +607,5 @@ extension WorkCommandTests {
         }
     }
 }
+
+private extension CommandRouter { func f4AddPaddock(_ p: Paddock) { ws.paddocks.append(p) } func f4AddTerminal(_ t: TerminalRecord) { ws.terminals.append(t) } }

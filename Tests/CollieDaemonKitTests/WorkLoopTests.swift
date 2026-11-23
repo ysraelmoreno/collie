@@ -1032,7 +1032,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.notes.map(\.text))")
         #expect(await r.host.nudges.isEmpty)
-        let d = try #require(w.loop?.events.first { $0.kind == .turnEnded }?.detail)
+        let d = try #require((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail)
         #expect(d.wholeMatch(of: /hook \d+s ocupado/) != nil, "\(d)")
         #expect(!w.notes.contains { $0.text.contains("ocupado") })
     }
@@ -1043,7 +1043,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(await r.host.nudges.count == 1)
-        #expect(w.loop?.events.first { $0.kind == .turnEnded }?.detail?.wholeMatch(of: /hook \d+s ocioso/) != nil)
+        #expect((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail?.wholeMatch(of: /hook \d+s ocioso/) != nil)
         #expect(!w.notes.contains { $0.text.contains("ocupado") })
     }
 
@@ -1055,7 +1055,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
-        #expect(await r.host.nudges.isEmpty && r.host.checks == 1)
+        #expect(await r.host.nudges.isEmpty)
+        #expect(await r.host.checks == 1)
         let calls = await r.host.workingCount
         #expect(calls >= 12 && calls < 20, "\(calls)")   // 60 s of turn at 5 s per poll
         #expect(w.notes.contains { $0.text.contains("ainda ocupado e sem commit") }, "\(w.notes.map(\.text))")

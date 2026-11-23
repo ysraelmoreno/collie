@@ -72,6 +72,9 @@ protocol LoopHost: Sendable {
     func strictWrites() async -> (home: URL, paths: [String])
     /// F2 V2: the home whose `.claude.json` the reviewers read (`reviewGlobalConfigHash`): `strictWrites`'s.
     func globalConfigHome() async -> URL
+    /// F2 V3: marks `reviewRoot` trusted in `globalConfigHome`'s `.claude.json` (`WorkLoop.trustReviewRoot`): the note to
+    /// leave, nil when nothing was done.
+    func trustReviewers() async -> String?
     /// F2 A4/A5: the judged agent runs in open mode (they write the whole home): `plantedConfig` would find the user's own
     /// `~/.claude` and mute every reviewer, so it is not asked; the parecer never approves, a swayed reviewer only goes mute.
     func agentsOpen(_ agent: String) async -> Bool
@@ -110,6 +113,8 @@ extension LoopHost {
     /// The tests' fakes: the user's home, no grants.
     func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), []) }
     func globalConfigHome() async -> URL { await strictWrites().home }
+    /// The tests' fakes: never the user's `~/.claude.json`.
+    func trustReviewers() async -> String? { nil }
     func agentsOpen(_ agent: String) async -> Bool { false }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
@@ -208,7 +213,10 @@ actor WorkLoop {
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
         // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
         // F2 U1: reviewLoopConfigBase, `~/.claude.json` before the run's first judged agent: one base for every attempt
-        let base = (try? await store.get(id))?.loop?.review == true ? await reviewLoopConfigBase() : nil
+        // F2 V3: the reviewers' folder trusted first, so the write never counts as "changed during the attempt"
+        let review = (try? await store.get(id))?.loop?.review == true
+        if review, let text = await host.trustReviewers() { await note(id, text) }
+        let base = review ? await reviewLoopConfigBase() : nil
         try? await store.update(id) { w in
             guard w.loop?.state == .running else { return }
             w.loop?.stopReason = nil

@@ -345,6 +345,37 @@ extension WorkLoop {
         return sha(canon)
     }
 
+    /// F2 V3 (reviewTrust): the notes `trustReviewRoot` leaves.
+    static let reviewTrustWritten = "confiança da pasta dos revisores gravada em ~/.claude.json"
+    static let reviewTrustNotWritten = "confiança da pasta dos revisores não gravada em ~/.claude.json"
+
+    /// F2 V3: Claude Code asks "trust this folder" in every reviewer's fresh folder, and only the user answers it
+    /// (`81effa13`): `projects[reviewRoot].hasTrustDialogAccepted = true` in `home/.claude.json` covers the folders under
+    /// it. Read, merged and written atomically (a temp file beside it, `rename`; its mode kept; a symlink's target
+    /// written), touching nothing else. nil: no file (Claude Code never ran: not made) or already true (not rewritten).
+    /// Else the note: written, or why not (not a JSON object, `projects` or the entry not an object, a write error).
+    // ponytail: read-modify-write, no lock; a Claude Code exit rewriting the file in between drops the entry, the next run writes it again
+    static func trustReviewRoot(home: URL, reviewRoot: URL) -> String? {
+        let file = SignedAppCheck.realPath(home.appendingPathComponent(".claude.json"))
+        guard let data = FileManager.default.contents(atPath: file) else { return nil }
+        guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
+        let key = SignedAppCheck.realPath(reviewRoot)
+        guard var projects = all["projects"] == nil ? [:] : all["projects"] as? [String: Any],
+              var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + ": projects não é um objeto" }
+        if (entry["hasTrustDialogAccepted"] as? Bool) == true { return nil }
+        entry["hasTrustDialogAccepted"] = true; projects[key] = entry; all["projects"] = projects
+        guard let out = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .withoutEscapingSlashes]) else {
+            return reviewTrustNotWritten + ": não serializa"
+        }
+        let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
+        let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
+        guard FileManager.default.createFile(atPath: tmp, contents: out), chmod(tmp, mode_t(mode)) == 0, rename(tmp, file) == 0 else {
+            let why = String(cString: strerror(errno)); unlink(tmp)
+            return reviewTrustNotWritten + ": " + why
+        }
+        return reviewTrustWritten
+    }
+
     /// F2 U1 (reviewLoopConfigBase): `~/.claude.json` as the loop takes its base, before any judged agent of the run.
     func reviewLoopConfigBase() async -> (hash: String, risky: String) {
         let home = await host.globalConfigHome()

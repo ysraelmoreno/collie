@@ -73,6 +73,8 @@ actor LoopFakeHost: LoopHost {
     func setHome(_ h: URL) { home = h }
     func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), opened) }
     func globalConfigHome() async -> URL { home ?? URL(fileURLWithPath: NSHomeDirectory()) }
+    /// F2 V3: only a fake home is ever written.
+    func trustReviewers() async -> String? { home.flatMap { WorkLoop.trustReviewRoot(home: $0, reviewRoot: reviewRoot) } }
     /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
     static func testRoot() -> URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

@@ -777,6 +777,7 @@ struct RouterLoopHost: LoopHost {
         return id
     }
     func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
+    func trustReviewers() async -> String? { WorkLoop.trustReviewRoot(home: await globalConfigHome(), reviewRoot: reviewRoot) }
     /// F2 A5: by the judged agent's own start mode, not the workspace's now: a lane's agent is strict in an open workspace,
     /// and the mode may change between its summon and its review. F2 A6: the attempt's agent is already dismissed when its
     /// review runs, so no such terminal is the usual case: the workspace's mode now decides then (it is what A4 measured).

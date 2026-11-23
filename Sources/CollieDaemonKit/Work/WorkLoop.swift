@@ -569,7 +569,7 @@ actor WorkLoop {
             let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
             var movedSaid = ""
             if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
-                let folder = host.patchDir(r.work).appendingPathComponent("\(task.id)-\(n)-config")
+                let folder = host.patchDir(id).appendingPathComponent("\(task.id)-\(n)-config")
                 let moved = tops.filter { p in
                     let to = folder.appendingPathComponent(p)
                     try? FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)

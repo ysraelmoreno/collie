@@ -503,7 +503,7 @@ extension WorkLoop {
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
-        let planted = await host.agentsOpen() ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
+        let planted = await host.agentsOpen(agent) ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
         let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
         let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }

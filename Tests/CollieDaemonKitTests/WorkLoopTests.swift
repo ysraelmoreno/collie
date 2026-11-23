@@ -65,7 +65,7 @@ actor LoopFakeHost: LoopHost {
     /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute).
     var agentsAreOpen = false
     func setAgentsOpen(_ o: Bool) { agentsAreOpen = o }
-    func agentsOpen() async -> Bool { agentsAreOpen }
+    func agentsOpen(_ agent: String) async -> Bool { agentsAreOpen }
     /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
     var home: URL?
     func setHome(_ h: URL) { home = h }

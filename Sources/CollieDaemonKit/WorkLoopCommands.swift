@@ -671,14 +671,15 @@ extension CommandRouter {
 
     /// With a terminal sandbox in force, an attempt's agent must run in one too (a free one is dismissed, the attempt fails).
     /// A lane's agent (M3.3) also when no terminal is sandboxed (then never): sandboxed, strict, the lane its project.
-    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil) -> Bool {
+    /// F2 A5 (`strict`: a reviewer): it must have started strict (the launch forces it), whatever the workspace's mode.
+    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil, strict: Bool = false) -> Bool {
         let t = ws.terminals.first { $0.id == id }
         if let lane {
             guard let t, sandboxed(t), t.startMode == .strict, lanePaddock(of: t) != nil else { return false }
             return t.projectRoot == SignedAppCheck.realPath(lane)
         }
         guard config.sandboxHome != nil else { return true }
-        return t.map { sandboxed($0) } ?? false
+        return t.map { sandboxed($0) && (!strict || $0.startMode == .strict) } ?? false
     }
 
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
@@ -769,14 +770,18 @@ struct RouterLoopHost: LoopHost {
     // F2 X4: a daemon that falls mid-review leaves the reviewer terminals; the start sweep removes them (`loopAgents`)
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = try await router.loopSummon(summonRequest(name, loop), as: starter, scratch: cwd)
-        guard await router.loopAgentSandboxed(id) else {
+        guard await router.loopAgentSandboxed(id, strict: true) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }
         return id
     }
     func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
-    func agentsOpen() async -> Bool { await router.sandboxMode == .open }
+    /// F2 A5: by the judged agent's own start mode, not the workspace's now: a lane's agent is strict in an open workspace,
+    /// and the mode may change between its summon and its review. No such terminal: false (the check stays).
+    func agentsOpen(_ agent: String) async -> Bool {
+        await router.ws.terminals.first { $0.name == agent }.map { $0.sandbox != .sandboxed || $0.startMode == .open } ?? false
+    }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output
     }

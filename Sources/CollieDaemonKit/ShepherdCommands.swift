@@ -162,9 +162,17 @@ extension CommandRouter {
         // unmarked again if the summon fails
         var born = false
         if scratch != nil { loopReviewers.insert(rec.id) }
-        defer { if !born { loopReviewers.remove(rec.id) } }
-        var result = try await launch(rec)
-        try await ensurePaddock(of: rec)
+        defer { if scratch != nil, !born { loopReviewers.remove(rec.id) } }
+        var result: [String: JSONValue]
+        do {
+            result = try await launch(rec)
+            try await ensurePaddock(of: rec)
+        } catch {
+            // F2 Y2a: a reviewer that fails after its launch (`persist`, its paddock gone) goes BEFORE it is unmarked:
+            // else, alive and unmarked, it is "another agent working" until the daemon starts again
+            if scratch != nil { try? await remove(rec) }
+            throw error
+        }
         do {
             try await leash(me, rec)
             try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch

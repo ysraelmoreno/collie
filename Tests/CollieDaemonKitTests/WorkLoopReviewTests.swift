@@ -193,6 +193,35 @@ import CollieProtocol
         }
     }
 
+    /// F2 Y2a: a reviewer whose summon fails after its launch (here its paddock is being deleted) is neither left
+    /// alive nor left marked: no terminal of its name, its id out of `loopReviewers`.
+    @Test(.timeLimit(.minutes(2))) func reviewerSummonFailingAfterTheLaunchLeavesNothing() async throws {
+        let repo = try await makeRepo()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let scratchRoot = LoopFakeHost.testRoot()
+        try FileManager.default.createDirectory(at: scratchRoot, withIntermediateDirectories: true)
+        let scratch = try #require(WorkLoop.reviewScratch("y2a-fail-rev", in: WorkLoop.reviewRoot(of: scratchRoot)))
+        defer { try? FileManager.default.removeItem(at: scratchRoot) }
+        try await withDaemon { d, p in
+            func spawn(_ args: [String: JSONValue]) async throws -> String {
+                let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
+                guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+                return id
+            }
+            let m = try await spawn(["name": "M", "preset": "shell", "cwd": .string(repo.path), "shepherd": true])
+            let made = try await send(p, Request(id: "p", terminalId: m, token: try await tokenOf(d, m), command: "paddock.create", args: ["name": "feat"]), timeoutSeconds: 60)
+            #expect(made.ok, "\(made)")
+            let s = try terminalUUID(try await spawn(["name": "S", "preset": "shell", "paddock": "feat", "shepherd": true]))
+            let pad = try #require(await d.router.ws.paddocks.first { $0.name == "feat" })
+            await d.router.y2aMarkDeleting(pad.id)
+            let before = await d.router.loopReviewers
+            let r = Request(id: "loop", terminalId: s.uuidString, command: "summon", args: ["name": "w-a-t1-correcao-rev", "preset": "shell"])
+            await #expect(throws: ProtocolError.self) { _ = try await d.router.loopSummon(r, as: s, scratch: scratch) }
+            #expect(await d.router.loopReviewers == before)
+            #expect(await !d.router.ws.terminals.contains { $0.name == "w-a-t1-correcao-rev" })
+        }
+    }
+
     /// F2 X5: a reviewer whose turn runs past its time is mute (a refusal) and dismissed like any other.
     @Test func reviewerPastItsTimeIsMute() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
@@ -606,4 +635,9 @@ import CollieProtocol
         #expect(!FileManager.default.fileExists(atPath: h.paddock.appendingPathComponent("planted").path))
         #expect(!FileManager.default.fileExists(atPath: review.appendingPathComponent("CLAUDE.md").path))
     }
+}
+
+extension CommandRouter {
+    /// F2 Y2a test seam: the paddock as if mid-delete, so `ensurePaddock` fails right after a launch.
+    func y2aMarkDeleting(_ id: UUID) { paddockDeleting.insert(id) }
 }

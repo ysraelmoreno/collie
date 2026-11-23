@@ -104,8 +104,13 @@ enum CLI {
                 print(json ? jsonString(o["report"] ?? .null) + "\n" : render(cmd.command, result, json: false), terminator: "")
                 return o["passed"] == .bool(false) ? 1 : 0
             }
-            if cmd.command.hasPrefix("factory.ratchet."), case .object(let o) = result {   // U5: worse (or improved, on check) exits 1
-                print(render(cmd.command, result, json: json), terminator: "")
+            if cmd.command.hasPrefix("factory.ratchet."), case .object(var o) = result {   // U5: worse (or improved, on check) exits 1
+                // F6a: the daemon only measures; the baseline is written here, in the agent's process, under its own sandbox
+                if case .string(let text)? = o["newBaseline"], case .string(let path)? = o["path"] {
+                    do { try BaselineWriter.write(text, to: path) } catch { err("baseline não gravado em \(path): \(error.message)"); return 1 }
+                    o["wrote"] = .bool(true)
+                }
+                print(render(cmd.command, .object(o), json: json), terminator: "")
                 return o["passed"] == .bool(false) ? 1 : 0
             }
             print(render(cmd.command, result, json: json), terminator: "")

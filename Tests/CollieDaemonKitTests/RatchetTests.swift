@@ -17,11 +17,21 @@ private func project(_ body: (URL) throws -> Void) throws {
 }
 private func file(_ dir: URL, _ rel: String) -> String? { try? String(contentsOf: dir.appendingPathComponent(rel), encoding: .utf8) }
 private let realHome = URL(fileURLWithPath: NSHomeDirectory())
-private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, reason: String? = nil, rel: String = "scripts/ci/base.txt",
-                   home: URL = realHome) throws -> FactoryRatchet.Outcome {
+/// The daemon's half alone (F6a: it never writes).
+private func daemon(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, reason: String? = nil, rel: String = "scripts/ci/base.txt",
+                    home: URL = realHome) throws -> FactoryRatchet.Outcome {
     try FactoryRatchet.apply(a, name: "lint", root: dir, baselinePath: rel, measured: measured, reason: reason,
                              now: Date(timeIntervalSince1970: 1_795_000_000), home: home, collie: home.appendingPathComponent("Library/Application Support/Collie"))
 }
+private struct Run: Equatable { var output: String, passed: Bool, wrote: Bool }
+/// The daemon's answer, then what the CLI does with it: `BaselineWriter` writes `newBaseline` at `path`.
+private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, reason: String? = nil, rel: String = "scripts/ci/base.txt",
+                   home: URL = realHome) throws -> Run {
+    let o = try daemon(a, dir, measured: measured, reason: reason, rel: rel, home: home)
+    if let t = o.newBaseline { try BaselineWriter.write(t, to: o.path) }
+    return Run(output: o.output, passed: o.passed, wrote: o.newBaseline != nil)
+}
+private func mtime(_ path: String) -> Date? { (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date }
 
 @Suite struct RatchetTests {
     @Test func parseRenderRoundTrips() throws {
@@ -155,18 +165,18 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
             }
             #expect(try FileManager.default.contentsOfDirectory(atPath: out.path).isEmpty)
             #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("scripts/ci").path).isEmpty)
-            // the fd path: read and write go through the opened folder
+            // the fd path: the read goes through the opened folder
             let fd = try FactoryRatchet.openDir(root: dir, rel: "scripts/ci/base.txt")
             defer { close(fd) }
             #expect(try FactoryRatchet.read(dir: fd, "base.txt", rel: "scripts/ci/base.txt") == "")
-            try FactoryRatchet.write("a 1\n", dir: fd, "base.txt", rel: "scripts/ci/base.txt")
+            try Data("a 1\n".utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))
             #expect(try FactoryRatchet.read(dir: fd, "base.txt", rel: "scripts/ci/base.txt") == "a 1\n")
-            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("scripts/ci").path) == ["base.txt"])
-            // a link as the file itself: read and write refuse it
+            // a link as the file itself: the read refuses it
             try FileManager.default.createSymbolicLink(at: dir.appendingPathComponent("scripts/ci/l.txt"), withDestinationURL: out.appendingPathComponent("x"))
             #expect(throws: ProtocolError.self) { try FactoryRatchet.read(dir: fd, "l.txt", rel: "l.txt") }
-            #expect(throws: ProtocolError.self) { try FactoryRatchet.write("a 1\n", dir: fd, "l.txt", rel: "l.txt") }
             #expect(!FileManager.default.fileExists(atPath: out.appendingPathComponent("x").path))
+            // A (round 3): the root itself as a link is refused too
+            #expect(throws: ProtocolError.self) { try FactoryRatchet.openDir(root: dir.appendingPathComponent("dentro"), rel: "base.txt") }
         }
     }
 
@@ -296,6 +306,74 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
         }
         #expect(!FileManager.default.fileExists(atPath: marker))
         #expect(!FileManager.default.fileExists(atPath: proj.appendingPathComponent("base.txt").path))
+    }
+
+    /// F6a: the daemon never creates nor changes the baseline file: `update`/`raise` hand back the whole text and the
+    /// resolved path, `check` hands back no text.
+    @Test func daemonNeverWrites() throws {
+        try project { dir in
+            let base = dir.appendingPathComponent("scripts/ci/base.txt")
+            try Data("# 2026-01-01: velho\nr a 2\n".utf8).write(to: base)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)], ofItemAtPath: base.path)
+            let before = mtime(base.path)
+            let up = try daemon(.update, dir, measured: "r a 1\n")
+            #expect(up.passed && up.newBaseline == "# 2026-01-01: velho\nr a 1\n" && up.path == base.path)
+            let raised = try daemon(.raise, dir, measured: "r a 5\n", reason: "novo módulo")
+            #expect(raised.newBaseline == "# 2026-01-01: velho\n# 2026-11-18: r a 2 -> 5: novo módulo\nr a 5\n" && raised.path == base.path)
+            #expect(try daemon(.check, dir, measured: "r a 1\n").newBaseline == nil)
+            #expect(try daemon(.check, dir, measured: "r a 2\n").newBaseline == nil)
+            #expect(try daemon(.update, dir, measured: "r a 2\n").newBaseline == nil)   // nothing to write
+            #expect(try daemon(.update, dir, measured: "r a 3\n").newBaseline == nil)   // worse: refused
+            #expect(file(dir, "scripts/ci/base.txt") == "# 2026-01-01: velho\nr a 2\n" && mtime(base.path) == before)
+            // a first baseline: the daemon hands it over, the file is still absent
+            let first = try daemon(.raise, dir, measured: "x 1\n", reason: "início", rel: "scripts/ci/new.txt")
+            #expect(first.newBaseline == "# 2026-11-18: x 0 -> 1: início\nx 1\n" && first.path == dir.appendingPathComponent("scripts/ci/new.txt").path)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("scripts/ci").path) == ["base.txt"])
+        }
+    }
+
+    /// F6a: the CLI's writer: atomic (no temporary left), 0644 for a new file or the old mode, refuses a link, a folder or a
+    /// FIFO as destination and leaves their target untouched.
+    @Test func writerIsAtomicAndRefusesLinks() throws {
+        try project { dir in
+            let ci = dir.appendingPathComponent("scripts/ci")
+            func mode(_ p: String) -> Int { ((try? FileManager.default.attributesOfItem(atPath: p))?[.posixPermissions] as? Int) ?? -1 }
+            let new = ci.appendingPathComponent("new.txt").path
+            try BaselineWriter.write("a 1\n", to: new)
+            #expect(file(ci, "new.txt") == "a 1\n" && mode(new) == 0o644)
+            try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: new)
+            try BaselineWriter.write("a 0\n", to: new)
+            #expect(file(ci, "new.txt") == "a 0\n" && mode(new) == 0o640)
+            let outside = dir.deletingLastPathComponent().appendingPathComponent("ratchet-w-\(UUID().uuidString.prefix(6)).txt")
+            try Data("intocado\n".utf8).write(to: outside)
+            defer { try? FileManager.default.removeItem(at: outside) }
+            try FileManager.default.createSymbolicLink(at: ci.appendingPathComponent("l.txt"), withDestinationURL: outside)
+            try FileManager.default.createDirectory(at: ci.appendingPathComponent("pasta"), withIntermediateDirectories: false)
+            #expect(mkfifo(ci.appendingPathComponent("fifo").path, 0o644) == 0)
+            for n in ["l.txt", "pasta", "fifo"] {
+                #expect(throws: BaselineWriter.Failure.self, "\(n)") { try BaselineWriter.write("a 1\n", to: ci.appendingPathComponent(n).path) }
+            }
+            #expect(throws: BaselineWriter.Failure.self) { try BaselineWriter.write("a 1\n", to: "relativo.txt") }
+            #expect(throws: BaselineWriter.Failure.self) { try BaselineWriter.write("a 1\n", to: ci.appendingPathComponent("nao/existe.txt").path) }
+            #expect(try String(contentsOf: outside, encoding: .utf8) == "intocado\n")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: ci.path).sorted() == ["fifo", "l.txt", "new.txt", "pasta"])
+        }
+    }
+
+    /// B (round 3): `mayWrite` and `place` compare without case: `~/.config/FISH/...` is `~/.config/fish/...` on macOS.
+    @Test func mayWriteIgnoresCase() throws {
+        try project { base in
+            let home = base.appendingPathComponent("Users/eu"), collie = home.appendingPathComponent("Library/Application Support/Collie")
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(".config/fish/conf.d"), withIntermediateDirectories: true)
+            let root = home.appendingPathComponent(".config")
+            for rel in ["fish/conf.d/x.fish", "FISH/conf.d/x.fish", "Fish/CONF.D/x.fish"] {
+                #expect(!SandboxGrantStore.mayWrite(root.appendingPathComponent(rel).path, root: root.path, grants: [], home: home, collie: collie, app: nil, closed: []), "\(rel)")
+                #expect(throws: ProtocolError.self, "\(rel)") { try daemon(.raise, root, measured: "a 1\n", reason: "r", rel: rel, home: home) }
+            }
+            #expect(!SandboxGrantStore.mayWrite(home.appendingPathComponent(".ZSHENV").path, root: home.path, grants: [], home: home, collie: collie, app: nil, closed: []))
+            #expect(SandboxGrantStore.mayWrite(root.appendingPathComponent("outro/x").path, root: root.path, grants: [], home: home, collie: collie, app: nil, closed: []))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(".config/fish/conf.d").path).isEmpty)
+        }
     }
 
     @Test func commandIsRegistered() throws {

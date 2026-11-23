@@ -77,7 +77,9 @@ collie factory ratchet raise <nome> --reason "baseline inicial (factory init)"  
 collie factory ratchet check <nome>                                              # tem que passar logo em seguida
 ```
 
-`update` não cria o primeiro baseline (só grava melhorias, quando o número cai). O arquivo de baseline (o caminho em
+`update` não cria o primeiro baseline (só grava melhorias, quando o número cai). O daemon só roda o `measure` (no sandbox do
+terminal) e compara; quem grava o arquivo é o próprio CLI, no processo do agente e sob o sandbox dele: se o sandbox negar o
+caminho, o `raise` falha e nada é gravado. O arquivo de baseline (o caminho em
 `baseline`) entra no repositório: commite-o junto com o `collie-work.json`, com o dono de acordo. Se o `measure` falhar porque a
 pasta medida não existe, troque a pasta pela do projeto. Subir o número depois só com `raise <nome> --reason "..."`.
 

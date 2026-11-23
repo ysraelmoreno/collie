@@ -48,15 +48,17 @@ struct SandboxGrantStore {
     /// paddock worktrees (M3). A refused card shows only Negar.
     /// Why `path` (resolved) is never read, nil: it is readable (2Q: reads are open but for `readClosed` and Collie's data).
     static func readRefusal(_ path: String, home: URL, collie: URL) -> String? {
-        let p = URL(fileURLWithPath: path).pathComponents
-        guard p.starts(with: URL(fileURLWithPath: SignedAppCheck.realPath(collie)).pathComponents)
+        let p = URL(fileURLWithPath: path).pathComponents.map { $0.lowercased() }
+        guard p.starts(with: URL(fileURLWithPath: SignedAppCheck.realPath(collie)).pathComponents.map { $0.lowercased() })
                 || EssentialPaths.readClosed.contains(where: { closes(p, $0, home: home) }) else { return nil }
         return refusal(path, op: "read", home: home, collie: collie) ?? "Nunca lido no sandbox."
     }
 
     /// `p` (components) lies in the home-relative entry `e`; a `x*` entry: any name starting with x at that depth (and below).
+    /// B (round 3): without case, as the macOS volume compares (`~/.config/FISH` is `~/.config/fish`).
     static func closes(_ p: [String], _ e: String, home: URL) -> Bool {
-        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents }
+        let p = p.map { $0.lowercased() }
+        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents.map { $0.lowercased() } }
         guard e.hasSuffix("*") else { return p.starts(with: comps(home.appendingPathComponent(e))) }
         let c = comps(home.appendingPathComponent(String(e.dropLast()))), n = c.count
         return p.count >= n && p.prefix(n - 1).elementsEqual(c.prefix(n - 1)) && p[n - 1].hasPrefix(c[n - 1])
@@ -66,7 +68,8 @@ struct SandboxGrantStore {
     /// `root` (its resolved cwd) or under one of its write `grants`; never what the profile closes after both (`refusal`'s
     /// write rules: Collie's data, secrets, the app, any git dir (R17, R27), `neverWritable`, a pasture's paddocks); the
     /// global agent config (R34) only under a write grant.
-    /// ponytail: stricter than the profile where it re-opens (agents' state, `.build/` checkouts): no deck goes there
+    /// ponytail: stricter than the profile where it re-opens (agents' state, `.build/` checkouts): no deck goes there.
+    /// The denials compare without case (B, round 3); the caller passes `path` resolved (`SignedAppCheck.realPath`).
     static func mayWrite(_ path: String, root: String, grants: [SandboxGrant], home: URL, collie: URL, app: URL?, closed: [URL]) -> Bool {
         let p = URL(fileURLWithPath: path).pathComponents
         func under(_ r: String) -> Bool { p.starts(with: URL(fileURLWithPath: r).pathComponents) }
@@ -77,8 +80,9 @@ struct SandboxGrantStore {
 
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
-        let p = URL(fileURLWithPath: path).pathComponents
-        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents }
+        // B (round 3): every refusal compares without case, as the macOS volume does
+        let p = URL(fileURLWithPath: path).pathComponents.map { $0.lowercased() }
+        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents.map { $0.lowercased() } }
         if comps(home).starts(with: p) || EssentialPaths.tooWide.contains(where: { comps(home.appendingPathComponent($0)) == p }) {
             return "Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas."
         }

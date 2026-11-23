@@ -1,7 +1,7 @@
 import Foundation
 
 /// U5: the generic ratchet, "the number may only go down" (spec 2026-11-23-fabrica-para-usuarios-design.md, fabrica/u5-catraca.md).
-/// Pure: no file, no clock, no process. `collie factory ratchet` (CollieDaemonKit/FactoryCommands.swift) measures and writes.
+/// Pure: no file, no clock, no process. The daemon (CollieDaemonKit/FactoryCommands.swift) measures; the CLI writes (`BaselineWriter`).
 public enum Ratchet {
     public static let maxReason = 200
 
@@ -93,5 +93,52 @@ public enum Ratchet {
     public static func compareList(baseline: [String], current: [String]) -> Verdict {
         func counts(_ l: [String]) -> Baseline { Baseline(l.reduce(into: [:]) { $0[$1, default: 0] += 1 }) }
         return compare(baseline: counts(baseline), current: counts(current))
+    }
+}
+
+/// F6a: the baseline file written by the CLI, in the agent's process (so under the agent's own sandbox, which decides what
+/// may be written: `.zshenv`, a nested `.git` and the rest are denied by it, no list copied here). The daemon only measures
+/// and hands over `path` and the text. Temporary file in the same folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0600), `fchmod` to
+/// 0644 (or the old file's mode), `fsync`, `renameat`, `fsync` of the folder; a link or a non-regular file as destination is
+/// refused. No temporary is left behind on failure.
+public enum BaselineWriter {
+    public struct Failure: Error, Sendable, Equatable { public var message: String }
+
+    public static func write(_ text: String, to path: String) throws(Failure) {
+        let url = URL(fileURLWithPath: path)
+        let name = url.lastPathComponent
+        guard path.hasPrefix("/"), !name.isEmpty, name != "/", name != ".", name != ".." else { throw Failure(message: "caminho do baseline inválido: \(path)") }
+        let dir = open(url.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard dir >= 0 else { throw Failure(message: "não consegui abrir a pasta de \(path): \(String(cString: strerror(errno)))") }
+        defer { close(dir) }
+        var st = stat(), mode: mode_t = 0o644
+        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
+            guard st.st_mode & S_IFMT == S_IFREG else { throw Failure(message: "\(path) não é um arquivo regular (link simbólico?)") }
+            mode = st.st_mode & 0o777
+        } else if errno != ENOENT {
+            throw Failure(message: "não consegui ler \(path): \(String(cString: strerror(errno)))")
+        }
+        let tmp = ".\(name).\(UUID().uuidString).tmp"
+        let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw Failure(message: "não consegui gravar o temporário de \(path): \(String(cString: strerror(errno)))") }
+        let bytes = Array(text.utf8)
+        var off = 0
+        while off < bytes.count {
+            let n = bytes[off...].withUnsafeBytes { Foundation.write(fd, $0.baseAddress, $0.count) }
+            if n < 0 { if errno == EINTR { continue }; break }
+            off += n
+        }
+        let synced = off == bytes.count && fchmod(fd, mode) == 0 && fsync(fd) == 0
+        close(fd)
+        guard synced else { unlinkat(dir, tmp, 0); throw Failure(message: "não consegui gravar o temporário de \(path)") }
+        // the destination is checked again right before: a link put there meanwhile is refused, not replaced
+        if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT != S_IFREG {
+            unlinkat(dir, tmp, 0); throw Failure(message: "\(path) não é um arquivo regular (link simbólico?)")
+        }
+        guard renameat(dir, tmp, dir, name) == 0 else {
+            let e = errno; unlinkat(dir, tmp, 0)
+            throw Failure(message: "rename do baseline falhou: \(String(cString: strerror(e)))")
+        }
+        fsync(dir)   // nit F (round 3): the rename itself reaches the disk
     }
 }

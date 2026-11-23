@@ -91,12 +91,18 @@ public enum FactoryDoctor {
 
     /// Where the gate runs tests: the gate itself, or `<script>: <line>` of a script it cites. nil: nowhere.
     public static func testRunnerSource(_ command: String, _ scripts: [String: String]) -> String? {
-        if runsTests(command) { return "\"\(command)\"" }
+        testRunnerSources(command, scripts).first
+    }
+
+    /// Every place the gate runs tests, in order (minor C, round 3: `viaPackageScript` looks at all of them, not the first).
+    public static func testRunnerSources(_ command: String, _ scripts: [String: String]) -> [String] {
+        func tests(_ l: String) -> Bool { runsTests(l) || viaPackageScript(l) }
+        var out: [String] = tests(command) ? ["\"\(command)\""] : []
         for p in citedPaths(command) {
             guard let text = scripts[p] else { continue }
-            if let l = text.split(separator: "\n").first(where: { runsTests(String($0)) }) { return "\(p): \(l.trimmingCharacters(in: .whitespaces))" }
+            out += text.split(separator: "\n").filter { tests(String($0)) }.map { "\(p): \($0.trimmingCharacters(in: .whitespaces))" }
         }
-        return nil
+        return out
     }
 
     static let runners: Set<String> = ["pytest", "jest", "vitest", "rspec", "mocha", "unittest", "phpunit", "ctest"]
@@ -164,16 +170,17 @@ public enum FactoryDoctor {
         }
         // N4 (round 2): a gate script that hands over to `npm test` runs the package.json's script, which an agent can edit;
         // unless the gate's text cites package.json (then the judge guards it too, as rev-2 N1 suggests for the configs)
-        if let src = c.gate.flatMap({ testRunnerSource($0, s.scripts) }), viaPackageScript(src), !gateCited.contains("package.json") {
+        if let src = c.gate.flatMap({ testRunnerSources($0, s.scripts).first(where: viaPackageScript) }), !gateCited.contains("package.json") {
             return LayerScore(layer: .judge, score: 2, evidence: ev + ["o runner do gate passa pelo script test do package.json: \(src)"],
                               nextAction: ["chame o runner direto no gate (ex.: npx --no-install jest), não npm/yarn/pnpm test"])
         }
         return LayerScore(layer: .judge, score: 3, evidence: ev, nextAction: [])
     }
 
-    /// `npm test`, `yarn run test`, `pnpm test:ci`...: the runner is whatever the package.json's script says.
+    /// `npm test`, `npm t`, `yarn run test`, `pnpm test:ci`, `bun run test`, `npm run-script test`...: the runner is whatever
+    /// the package.json's script says.
     public static func viaPackageScript(_ line: String) -> Bool {
-        line.range(of: #"\b(npm|yarn|pnpm)\s+(run\s+)?test\b"#, options: .regularExpression) != nil
+        line.range(of: #"\b(npm|yarn|pnpm|bun)\s+(run(-script)?\s+)?(test|t)\b"#, options: .regularExpression) != nil
     }
 
     /// Words of the command that look like a script path (`scripts/x.sh`, `./check.py`, `/abs/x`), `./` dropped, in order, once each.

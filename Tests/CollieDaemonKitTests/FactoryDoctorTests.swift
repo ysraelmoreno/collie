@@ -243,3 +243,22 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
         }
     }
 }
+
+/// Minor C (round 3): `viaPackageScript` takes bun, `npm t` and `run-script`, and looks at every line that runs tests.
+@Suite struct FactoryDoctorPackageScriptTests {
+    @Test func everyPackageManagerSpelling() {
+        for l in ["npm test", "npm t", "npm run test", "npm run-script test", "yarn test:unit", "pnpm run test", "bun run test", "bun test"] {
+            #expect(FactoryDoctor.viaPackageScript(l), "\(l)")
+        }
+        for l in ["npx --no-install jest", "npm run build", "npm run tsc", "pytest -q", "bun run lint"] {
+            #expect(!FactoryDoctor.viaPackageScript(l), "\(l)")
+        }
+    }
+
+    @Test func secondTestLineCounts() {
+        let scripts = ["scripts/gate.sh": "npx --no-install jest\nnpm t\n"]
+        let all = FactoryDoctor.testRunnerSources("bash scripts/gate.sh", scripts)
+        #expect(all == ["scripts/gate.sh: npx --no-install jest", "scripts/gate.sh: npm t"])
+        #expect(all.contains(where: FactoryDoctor.viaPackageScript))
+    }
+}

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "gate": "bash scripts/gate.sh # package.json jest.config.js vitest.config.ts",
+  "gate": "bash scripts/gate.sh # jest.config.js vitest.config.ts vite.config.ts",
   "precheck": "npm run lint --if-present",
   "smoke": "npm run build --if-present",
   "areas": {

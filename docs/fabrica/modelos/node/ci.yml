@@ -18,4 +18,4 @@ jobs:
           elif [ -f package-lock.json ]; then npm ci
           else npm install; fi
       - run: npm run lint --if-present
-      - run: bash scripts/gate.sh # package.json jest.config.js vitest.config.ts
+      - run: bash scripts/gate.sh # jest.config.js vitest.config.ts vite.config.ts

@@ -5,4 +5,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || { echo "uso: scripts/check-feature.sh <teste>" >&2; exit 2; }
-python3 -P -m pytest -q "$@"
+# -P (Python 3.11+) keeps the root off sys.path; older Python has no -P (scripts/gate.sh refuses a pytest.py/pytest/ at the root)
+if python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then exec python3 -P -m pytest -q "$@"; fi
+exec python3 -m pytest -q "$@"

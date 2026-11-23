@@ -110,6 +110,15 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
         #expect(direct.score == 3)
         let guarded = D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh # package.json"}"#), scripts: ["scripts/gate.sh": "npm test\n"], paths: ["package.json"])
         #expect(layer(D.score(guarded), .judge).score == 3)
+        // F6b (n2): a cited pure runner config that does not exist warns, pytest.ini like jest.config.js; a manifest is not one
+        for name in ["pytest.ini", "tox.ini", "jest.config.js", "vite.config.ts"] {
+            let gs = ["scripts/gate.sh": "npx --no-install jest\n"]
+            let ghost = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh # \#(name)"}"#), scripts: gs)), .judge)
+            #expect(ghost.score == 1 && ghost.evidence.contains("aviso: gate cita \(name), que não existe no repositório"), "\(name): \(ghost.evidence)")
+            let there = D.Snapshot(config: try cfg(#"{"gate": "bash scripts/gate.sh # \#(name)"}"#), scripts: gs, paths: [name])
+            #expect(layer(D.score(there), .judge).score == 3, "\(name)")
+        }
+        #expect(!D.isRunnerConfig("package.json") && !D.isRunnerConfig("pyproject.toml") && !D.isRunnerConfig("Package.swift"))
     }
 
     @Test func smallRules() {

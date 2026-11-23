@@ -21,21 +21,31 @@ private func put(_ dir: URL, _ rel: String, _ body: String) throws {
 }
 
 /// Runs `bash scripts/gate.sh` of the model `stack` in a project made of `files`, with the runners (`swift`, `npx`, `python3`)
-/// swapped for a stub that prints its arguments and exits 0; `links` are symlinks (path: target). Returns the exit code and stdout + stderr.
-private func runGate(_ stack: String, _ files: [String: String], links: [String: String] = [:]) throws -> (status: Int32, out: String) {
+/// swapped for a stub that prints its arguments and exits 0 (`stubs` overrides one by name); `links` are symlinks (path: target).
+/// F6b: the folder is a git repository with everything not ignored added, since the gate looks only at what git sees.
+/// Returns the exit code and stdout + stderr.
+private func runGate(_ stack: String, _ files: [String: String], links: [String: String] = [:],
+                     stubs: [String: String] = [:]) throws -> (status: Int32, out: String) {
     let d = try tempDir(); defer { try? FileManager.default.removeItem(at: d) }
     try put(d, "scripts/gate.sh", try text(modelos.appendingPathComponent("\(stack)/scripts/gate.sh")))
     for (rel, body) in files { try put(d, rel, body) }
     for (rel, target) in links { try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent(rel).path, withDestinationPath: target) }
     for runner in ["swift", "npx", "python3"] {
-        try put(d, "stub/\(runner)", "#!/bin/bash\necho \"stub \(runner) $*\"\n")
+        try put(d, "stub/\(runner)", stubs[runner] ?? "#!/bin/bash\necho \"stub \(runner) $*\"\n")
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: d.appendingPathComponent("stub/\(runner)").path)
     }
+    let env = ["PATH": d.appendingPathComponent("stub").path + ":/usr/bin:/bin", "HOME": d.path]
+    let g = Process()
+    g.executableURL = URL(fileURLWithPath: "/bin/bash")
+    g.arguments = ["-c", "git init -q && git add -A"]
+    g.currentDirectoryURL = d; g.environment = env
+    try g.run(); g.waitUntilExit()
+    #expect(g.terminationStatus == 0, "git init/add")
     let p = Process(), pipe = Pipe()
     p.executableURL = URL(fileURLWithPath: "/bin/bash")
     p.arguments = ["scripts/gate.sh"]
     p.currentDirectoryURL = d
-    p.environment = ["PATH": d.appendingPathComponent("stub").path + ":/usr/bin:/bin"]
+    p.environment = env
     p.standardOutput = pipe; p.standardError = pipe
     try p.run()
     let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -98,9 +108,17 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         }
         #expect(FactoryDoctor.ciCiting(s.config!.gate!, s.ci) != nil, "\(stack): ci.yml não roda o gate")
         // F3: the gate cites a versioned script (scripts/gate.sh), so the judge guards it: 3, not the 2 of a bare gate.
-        // F5b (N1): its text also cites the configs that govern the runner (the judge guards by substring), at least the main one
-        let main = ["swift": "Package.swift", "node": "package.json", "python": "pyproject.toml"][stack]!
-        #expect(s.config!.gate!.hasPrefix("bash scripts/gate.sh # ") && s.config!.gate!.split(separator: " ").contains { $0 == main }, "\(stack): \(s.config!.gate!)")
+        // F6b (M2): its text cites only pure runner configs (the judge guards by substring), at least one where the stack has
+        // one; never a manifest, so a task that adds a dependency, a script, a fixture or a target stays possible
+        let words = s.config!.gate!.split(separator: " ").map(String.init)
+        let manifests = ["package.json", "pyproject.toml", "Package.swift", "setup.cfg", "conftest.py"]
+        #expect(!words.contains { manifests.contains($0) }, "\(stack): \(s.config!.gate!)")
+        if stack == "swift" { #expect(s.config!.gate! == "bash scripts/gate.sh") }
+        else {
+            #expect(s.config!.gate!.hasPrefix("bash scripts/gate.sh # "), "\(stack): \(s.config!.gate!)")
+            let after = words.drop { $0 != "#" }.dropFirst()
+            #expect(!after.isEmpty && after.allSatisfy(FactoryDoctor.isRunnerConfig), "\(stack): \(s.config!.gate!)")
+        }
         let j = FactoryDoctor.judge(s)
         #expect(j.score == 3 && j.evidence.contains("gate cita scripts/gate.sh, versionado: lido do commit base"), "\(stack): \(j.evidence)")
         let gate = try #require(s.scripts["scripts/gate.sh"])
@@ -144,6 +162,15 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         ("python", ["pytest.ini": "[pytest]\naddopts = --co\n"], ["pytest.ini": "[pytest]\naddopts = --cov=src\n"], "stub python3"),
         ("python", ["tox.ini": "[pytest]\naddopts = --collect-only\n"], ["tox.ini": "[tox]\n"], "stub python3"),
         ("python", ["conftest.py": "import os\nos._exit(0)\n"], ["setup.cfg": "[metadata]\n"], "stub python3"),
+        // F6b (n1, m5): only an assignment forces success; a comparison or another exit code does not
+        ("node", ["jest.config.js": "module.exports = { testFailureExitCode: 0 }\n"],
+         ["package.json": #"{"jest": {"testFailureExitCode": 1}}"#], "stub npx"),
+        ("python", ["conftest.py": "def pytest_sessionfinish(session):\n    session.exitstatus = False\n"],
+         ["conftest.py": "def pytest_sessionfinish(session):\n    if session.exitstatus == pytest.ExitCode.OK:\n        pass\n"], "stub python3"),
+        ("python", ["conftest.py": "session.exitstatus = (0)\n"], ["conftest.py": "x = (0)\n"], "stub python3"),
+        // F6b (n1): `//` is no comment in a .py, `#` is no comment in a .js
+        ("python", ["conftest.py": "// session.exitstatus = 0\n"], ["conftest.py": "# session.exitstatus = 0\n"], "stub python3"),
+        ("node", ["jest.config.js": "# passWithNoTests: true\n"], ["jest.config.js": "// passWithNoTests: true\n"], "stub npx"),
     ])
     func gateRefusesAForcedSuccessConfig(_ stack: String, _ forced: [String: String], _ clean: [String: String], _ ran: String) throws {
         let bad = try runGate(stack, forced)
@@ -159,10 +186,17 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
     @Test func gateRefusesLinksAndAShadowPytest() throws {
         for (stack, name) in [("node", "jest.config.js"), ("python", "pytest.ini")] {
             let r = try runGate(stack, ["cfg/real": "x\n"], links: [name: "cfg/real"])
-            #expect(r.status != 0 && r.out.contains("link simbólico") && !r.out.contains("stub "), "\(stack): \(r.out)")
+            #expect(r.status != 0 && r.out.contains("link simbólico em arquivo de config do runner: \(name)") && !r.out.contains("stub "), "\(stack): \(r.out)")
             // a linked folder (its config sits in an ignored, pruned folder) fails as well
             let dir = try runGate(stack, ["node_modules/x/\(name)": "x\n"], links: ["tests2": "node_modules/x"])
-            #expect(dir.status != 0 && dir.out.contains("tests2: link simbólico") && !dir.out.contains("stub "), "\(stack): \(dir.out)")
+            #expect(dir.status != 0 && dir.out.contains("link simbólico para pasta: tests2") && !dir.out.contains("stub "), "\(stack): \(dir.out)")
+            // F6b (M1): only what git sees counts: an ignored venv (its links, its site-packages conftest.py) and a versioned
+            // link that is no runner config (CLAUDE.md -> AGENTS.md) leave the gate green
+            let ok = try runGate(stack, [".gitignore": "venv/\n", "AGENTS.md": "x\n", "venv/bin/real": "x\n",
+                                         "venv/lib/site-packages/conftest.py": "session.exitstatus = 0\n",
+                                         "venv/lib/site-packages/jest.config.js": "module.exports = { passWithNoTests: true }\n"],
+                                 links: ["CLAUDE.md": "AGENTS.md", "venv/bin/python": "real"])
+            #expect(ok.status == 0 && ok.out.contains("stub ") && !ok.out.contains("gate:"), "\(stack): \(ok.out)")
         }
         // a folder named like grep's "path:line:#" prefix cannot pass a forced line off as a comment
         for (stack, rel, body) in [("python", "a:1:#x/conftest.py", "session.exitstatus = 0\n"),
@@ -174,6 +208,11 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
             let r = try runGate("python", files)
             #expect(r.status != 0 && r.out.contains("troca o pytest") && !r.out.contains("stub "), "\(files): \(r.out)")
         }
+        // F6b (m4): Python below 3.11 has no -P, so gate and check run plain `python3 -m pytest`
+        let old = try runGate("python", [:], stubs: ["python3": "#!/bin/bash\n[ \"$1\" = -I ] && exit 1\necho \"stub python3 $*\"\n"])
+        #expect(old.status == 0 && old.out.contains("stub python3 -m pytest -q") && !old.out.contains("-P"), "\(old.out)")
+        let new = try runGate("python", [:])
+        #expect(new.status == 0 && new.out.contains("stub python3 -P -m pytest -q"), "\(new.out)")
         let sw = try runGate("swift", ["Package.swift": "// passWithNoTests\n"])
         #expect(sw.status == 0 && sw.out.contains("stub swift test"), "\(sw.out)")
         #expect(!(try text(modelos.appendingPathComponent("swift/scripts/gate.sh"))).contains("grep"))

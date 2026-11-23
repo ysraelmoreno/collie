@@ -147,8 +147,12 @@ public enum FactoryDoctor {
                 else { ev.append("\(k) cita \(p), versionado: lido do commit base"); if k == "gate" { gateCited.insert(p) } }
             }
             // a file the command names that the reader saw (`package.json`, `Package.swift`): it controls the runner
-            for w in simpleCommands(cmd).flatMap({ $0 }) where !cited.contains(w) && present(w) && !ignored(w, s.gitignore) {
-                ev.append("\(k) cita \(w), versionado: lido do commit base"); if k == "gate" { gateCited.insert(w) }
+            for w in simpleCommands(cmd).flatMap({ $0 }) where !cited.contains(w) {
+                if present(w) && !ignored(w, s.gitignore) {
+                    ev.append("\(k) cita \(w), versionado: lido do commit base"); if k == "gate" { gateCited.insert(w) }
+                } else if isRunnerConfig(w) && !present(w) {   // F6b (n2): pytest.ini absent warns like jest.config.js absent
+                    warn.append("\(k) cita \(w), que não existe no repositório")
+                }
             }
         }
         for p in s.scripts.keys.sorted() where isTaskCheck(p) && onlyLooksForFiles(s.scripts[p]!) {
@@ -175,6 +179,12 @@ public enum FactoryDoctor {
                               nextAction: ["chame o runner direto no gate (ex.: npx --no-install jest), não npm/yarn/pnpm test"])
         }
         return LayerScore(layer: .judge, score: 3, evidence: ev, nextAction: [])
+    }
+
+    /// F6b (n2): a pure config of a test runner (`jest.config.js`, `vitest.config.ts`, `vite.config.ts`, `vitest.workspace.ts`,
+    /// `pytest.ini`, `tox.ini`), never a manifest (`package.json`, `pyproject.toml`, `Package.swift`).
+    public static func isRunnerConfig(_ w: String) -> Bool {
+        w.range(of: #"^((jest|vitest|vite)\.config|vitest\.workspace)\.[cm]?[jt]s$|^(pytest|tox)\.ini$"#, options: .regularExpression) != nil
     }
 
     /// `npm test`, `npm t`, `yarn run test`, `pnpm test:ci`, `bun run test`, `npm run-script test`...: the runner is whatever

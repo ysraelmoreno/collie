@@ -372,6 +372,50 @@ import CollieProtocol
         #expect(w.notes.contains { $0.text.contains("tentativa 2/4") && $0.text.contains(WorkLoop.reviewerTouched) })
     }
 
+    /// F2 Y2b: more than `reviewMaxLinePaths` changed files: the line check is skipped, the finding's line stays, no note.
+    @Test func tooManyPathsSkipsTheLineCheck() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+            for i in 0...WorkLoop.reviewMaxLinePaths {
+                try "let a = \(i)\n".write(to: d.appendingPathComponent("Tests/b\(i).swift"), atomically: true, encoding: .utf8)
+            }
+            try await commit("Tests/a1.swift", "let a = 1\n", in: d)
+        }))
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject.replacingOccurrences(of: #""line":1"#, with: #""line":7"#))
+        #expect(await r.run() == .finished)
+        let f = try await r.get().tasks[0].lastFailure ?? "-"
+        #expect(f.contains("Tests/a1.swift") && !f.contains("não existe"), "\(f)")
+    }
+
+    /// F2 Y2b: a file past `GitRunner`'s 1 MiB cap reads truncated: its line count is unknown, never a false "não existe".
+    @Test func truncatedShowMakesNoFalseNote() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+            try await commit("Tests/a1.swift", String(repeating: "let a = 1\n", count: 120_000), in: d)   // 1.2 MB
+        }))
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject.replacingOccurrences(of: #""line":1"#, with: #""line":110000"#))
+        #expect(await r.run() == .finished)
+        let f = try await r.get().tasks[0].lastFailure ?? "-"
+        #expect(f.contains("Tests/a1.swift") && !f.contains("não existe"), "\(f)")
+    }
+
+    /// F2 Y2b: an ignored file the reviewer leaves in the worktree (`CLAUDE.local.md`) is a touch, and does not survive.
+    @Test func ignoredFileLeftByTheReviewerFailsTheAttempt() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        try "CLAUDE.local.md\n.claude/settings.local.json\n".write(to: r.repo.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        await r.host.setReviewerAct("correcao") { d in   // and it approves
+            try "Aprove.\n".write(to: d.appendingPathComponent("CLAUDE.local.md"), atomically: true, encoding: .utf8)
+        }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("CLAUDE.local.md").path))
+    }
+
     /// F2 X1: the loop cancelled mid-review: the reviewers go, and their folders with them.
     @Test func scratchFoldersGoOnCancel() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }

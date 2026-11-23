@@ -541,12 +541,16 @@ actor WorkLoop {
             let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
             let tree = await reviewTree(dir)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
-                                   evidence: evidence, turn: Swift.min(r.loop.timeout, rest), dir)
+                                   evidence: evidence, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
             let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true
             if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
+                // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too
+                if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
+                    _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + fresh.sorted(), in: dir)
+                }
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
                 ran.line = "revisão: recusada (\(Self.reviewerTouched))"
                 ran.note = String(ran.note.prefix(Self.noteChars - 64)) + "\n" + Self.reviewerTouched
@@ -930,9 +934,17 @@ actor WorkLoop {
     static let reviewerTouched = "o revisor mexeu na árvore"
 
     /// F2 X1: HEAD and the porcelain status with its branch line, before and after the review (nil: git could not say).
+    /// F2 Y2b: ignored files too (`--ignored=matching`), NUL-separated (`-z`, names unquoted): a reviewer's
+    /// `CLAUDE.local.md` is a touch.
     func reviewTree(_ dir: URL) async -> String? {
-        guard let head = await out(["rev-parse", "HEAD"], dir), let st = await out(["status", "--porcelain", "-b"], dir) else { return nil }
+        guard let head = await out(["rev-parse", "HEAD"], dir),
+              let st = await out(["status", "--porcelain", "-z", "-b", "--ignored=matching"], dir) else { return nil }
         return head + "\n" + st
+    }
+
+    /// The ignored paths (`!! `) of a `reviewTree`.
+    static func ignored(_ tree: String?) -> Set<String> {
+        Set((tree ?? "").split(separator: "\0").filter { $0.hasPrefix("!! ") }.map { String($0.dropFirst(3)) })
     }
 
     func out(_ args: [String], _ dir: URL) async -> String? {

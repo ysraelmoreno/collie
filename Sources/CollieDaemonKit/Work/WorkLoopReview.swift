@@ -106,10 +106,32 @@ extension WorkLoop {
         return parts.joined(separator: "\n")
     }
 
+    /// F2 Y2b: the line check reads at most this many changed files, `reviewMaxLineFileBytes` each (`GitRunner`'s cap:
+    /// a truncated `git show` is one past it) and `reviewMaxLineBytes` in all; past any of them it is skipped (no line
+    /// counts: every finding's line stays as it came, never a false "não existe").
+    static let reviewMaxLinePaths = 200
+    static let reviewMaxLineFileBytes = 1 << 20
+    static let reviewMaxLineBytes = 8 << 20
+
+    /// F2 X5/Y2b: path → lines of each changed file as judged (deleted ones have none to point at); empty past the caps.
+    func reviewLineCounts(_ paths: [String], judged: String, _ dir: URL) async -> [String: Int] {
+        guard paths.count <= Self.reviewMaxLinePaths else { return [:] }
+        var counted: [String: Int] = [:], read = 0
+        for p in paths {
+            guard let r = try? await host.git(["show", "\(judged):\(p)"], in: dir), r.status == 0 else { continue }
+            let size = r.stdout.utf8.count
+            read += size
+            guard !r.truncated, size <= Self.reviewMaxLineFileBytes, read <= Self.reviewMaxLineBytes else { return [:] }
+            counted[p] = ReviewVerdict.lineCount(r.stdout)
+        }
+        return counted
+    }
+
     /// The review of one attempt: pick the personas, run one reviewer per persona (at once), read each answer, dismiss
-    /// them all. `turn`: seconds each reviewer has (the turn's).
+    /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
+    /// the reviewers').
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, turn: Int, _ dir: URL) async -> Reviewed {
+                evidence: String, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -126,13 +148,10 @@ extension WorkLoop {
             return Reviewed(outcome: .init(approved: false, reason: why, notes: []), line: "revisão: recusada (sem personas)",
                             note: LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): \(why)"))
         }
-        // F2 X5: the lines of each changed file as judged (deleted ones have none to point at): a finding's line is checked there
-        var counted: [String: Int] = [:]
-        for p in paths {
-            if let r = try? await host.git(["show", "\(judged):\(p)"], in: dir), r.status == 0 { counted[p] = ReviewVerdict.lineCount(r.stdout) }
-        }
-        let lineCounts = counted
+        // F2 X5: a finding's line is checked in the file as judged
+        let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
         let spec = await specText(task.spec, at: before, dir)
+        let turn = await turn()
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
         let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) }

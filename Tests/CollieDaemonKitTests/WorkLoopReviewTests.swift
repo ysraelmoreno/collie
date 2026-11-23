@@ -935,3 +935,71 @@ private extension CommandRouter {
     /// F2 Y2c: terminal records a fallen daemon left (no process behind them).
     func y2cAdd(_ t: [TerminalRecord]) { ws.terminals += t }
 }
+
+private extension CommandRouter {
+    func v1Add(_ p: Paddock) { ws.paddocks.append(p) }
+}
+
+/// Every git the daemon's own runner ran (`laneGit`), with the profile it ran under.
+private actor V1GitLog {
+    var calls: [(args: [String], profile: URL?)] = []
+    func add(_ args: [String], _ profile: URL?) { calls.append((args, profile)) }
+}
+
+extension WorkLoopReviewTests {
+    /// F2 V1 (reviewSnapshotOutside): the reviewer's copy is made under the daemon's real host and the loop's real
+    /// profile. That profile denies Collie's root, where the reviewer's folder and the tar are (derived from the
+    /// profile's own rules, not written by hand): the export runs through the daemon's own git, no profile, and works.
+    /// `sandbox-exec` does not nest inside the loop's check, so the profile is read (`ProfileRules`), not applied.
+    @Test func reviewSnapshotOutsideTheLoopProfile() async throws {
+        let f = try FakeHome(git: true, socket: false)
+        var c = testConfig(Paths(root: f.collie)); c.sandboxHome = f.home
+        let d = try Daemon(config: c)
+        let paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
+        await d.router.v1Add(paddock)
+        let work = UUID(), log = V1GitLog()
+        let recorded: LaneGit = { (args, dir, profile) async throws(ProtocolError) in
+            await log.add(args, profile)
+            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile)
+        }
+        let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock,
+                                  sandbox: (f.home, "/bin/zsh"), laneRunner: recorded)
+        let rules = ProfileRules(try String(contentsOf: try await d.router.prepareLoopSandbox(work, paddock: paddock), encoding: .utf8))
+        let loop = WorkLoop(store: WorkStore(dir: f.collie.appendingPathComponent("v1-store")), host: host)
+        func head() async throws -> String {
+            try await GitRunner.run(["rev-parse", "HEAD"], in: f.paddock).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let scratch = try #require(WorkLoop.reviewScratch("v1", in: host.reviewRoot)); defer { WorkLoop.dropScratch(scratch) }
+        // the old path: `git archive -o` under the loop's profile neither writes nor reads the tar
+        let tar = scratch.appendingPathComponent("reviewSnapshot.tar")
+        #expect(!rules.writes(tar) && !rules.reads(tar), "the loop's profile opens \(tar.path)")
+        let snap: URL
+        switch await loop.reviewSnapshot(try await head(), f.paddock, into: scratch) {
+        case .success(let u): snap = u
+        case .failure(let e): Issue.record("snapshot failed: \(e.why)"); return
+        }
+        let tracked = try await GitRunner.run(["ls-files"], in: f.paddock).stdout.split(separator: "\n").map(String.init)
+        for p in tracked where !WorkLoop.agentConfigs.contains(where: { p.split(separator: "/").map(String.init).contains($0) }) {
+            #expect(FileManager.default.fileExists(atPath: snap.appendingPathComponent(p).path), "\(p) missing")
+        }
+        let calls = await log.calls
+        #expect(calls.contains { $0.args.first == "archive" }, "\(calls.map(\.args))")
+        #expect(calls.allSatisfy { $0.profile == nil })
+        // the archive's argument is the resolved hash, never a name
+        let archive = try #require(calls.first { $0.args.first == "archive" })
+        #expect(archive.args.last == (try await head()))
+
+        // F2 V1: an `export-ignore` that hides a file of the commit: that reviewer is mute, the reason said
+        try "hidden.txt export-ignore\n".write(to: f.paddock.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+        try "segredo\n".write(to: f.paddock.appendingPathComponent("hidden.txt"), atomically: true, encoding: .utf8)
+        _ = try await GitRunner.run(["add", ".gitattributes", "hidden.txt"], in: f.paddock)
+        let ci = try await GitRunner.run(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ignore"], in: f.paddock)
+        #expect(ci.status == 0, "\(ci.stderr)")
+        let s2 = try #require(WorkLoop.reviewScratch("v1b", in: host.reviewRoot)); defer { WorkLoop.dropScratch(s2) }
+        switch await loop.reviewSnapshot(try await head(), f.paddock, into: s2) {
+        case .success: Issue.record("a commit with an export-ignore made a copy")
+        case .failure(let e): #expect(e.why.contains("export-ignore") && e.why.contains("hidden.txt"), "\(e.why)")
+        }
+    }
+}

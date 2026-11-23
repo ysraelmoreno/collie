@@ -115,40 +115,75 @@ extension WorkLoop {
     /// F2 W2: the folder, inside the reviewer's own (`reviewScratch`), where the judged commit is exported.
     static let reviewSnapshotDir = "reviewSnapshot"
 
+    /// F2 V1: why a reviewer's copy could not be made (that reviewer is mute, with this reason).
+    struct SnapshotFailure: Error { let why: String }
+
     /// F2 W2: the judged commit (`git archive`, never the live worktree, where a process the judged agent left may
     /// swap a file between the commit and the review) exported to `<scratch>/reviewSnapshot`, read-only. Its agent
     /// configs (`agentConfigs`, `CLAUDE.local.md`, at any depth) and its symlinks (one may point into the worktree)
-    /// are left out: the diff shows them. nil (that reviewer is mute, fail closed): the export failed.
+    /// are left out: the diff shows them. A failure: that reviewer is mute (fail closed), the reason said.
+    /// F2 V1 (reviewSnapshotOutside): the export runs through the daemon's own git (`laneGit`), outside the loop's
+    /// profile, which denies reading and writing Collie's root, where the reviewer's folder is: under it the archive
+    /// failed in every real loop. Fixed arguments, the commit resolved to its hash first; every path of the tar is
+    /// checked before it is extracted (`--no-same-owner`, never `-P`), and the copy is then compared with the commit's
+    /// own file list (`ls-tree`): an `export-ignore` of the commit's `.gitattributes` that hides a file is a failure.
     /// Removed with the reviewer's folder (`dropScratch`).
     // ponytail: one archive per reviewer and attempt; a big repo makes it slow, share one export across reviewers then
-    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> URL? {
+    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> Result<URL, SnapshotFailure> {
+        func fail(_ why: String) -> Result<URL, SnapshotFailure> { .failure(SnapshotFailure(why: "cópia do commit: " + why)) }
         let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
         let tar = scratch.appendingPathComponent("reviewSnapshot.tar")
         defer { try? FileManager.default.removeItem(at: tar) }
-        guard mkdir(snap.path, 0o700) == 0,
-              let a = try? await host.git(["archive", "--format=tar", "-o", tar.path, judged], in: dir), a.status == 0 else { return nil }
-        let x = Process()
-        x.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        x.arguments = ["-x", "-f", tar.path, "-C", snap.path]
-        x.standardOutput = FileHandle.nullDevice; x.standardError = FileHandle.nullDevice
-        guard (try? x.run()) != nil else { return nil }
-        x.waitUntilExit()
-        guard x.terminationStatus == 0 else { return nil }
+        guard let r = try? await host.laneGit(["rev-parse", "--verify", "--end-of-options", judged + "^{commit}"], in: dir), r.status == 0 else {
+            return fail("o commit não resolveu")
+        }
+        let hash = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else { return fail("hash inválido") }
+        guard mkdir(snap.path, 0o700) == 0 else { return fail("pasta não criada") }
+        guard let a = try? await host.laneGit(["archive", "--format=tar", "-o", tar.path, hash], in: dir), a.status == 0 else {
+            return fail("git archive falhou")
+        }
+        func tarRun(_ args: [String]) async -> ProcessResult? {
+            try? await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/tar"), args: args, in: scratch, env: [:],
+                                          timeout: .seconds(120), cap: 16 << 20)
+        }
+        // every name checked before anything is written: no absolute path, no `..` (a name with a newline splits into more lines, each checked)
+        guard let list = await tarRun(["-t", "-f", tar.path]), list.status == 0, !list.truncated else { return fail("tar não listou") }
+        for name in list.stdout.split(separator: "\n") where name.hasPrefix("/") || name.split(separator: "/").contains("..") {
+            return fail("caminho recusado no tar: \(name)")
+        }
+        guard let x = await tarRun(["-x", "--no-same-owner", "-f", tar.path, "-C", snap.path]), x.status == 0 else { return fail("tar não extraiu") }
         let names = Set(Self.agentConfigs + ["CLAUDE.local.md"]), fm = FileManager.default
-        var dirs: [String] = []
-        guard let walk = fm.enumerator(atPath: snap.path) else { return nil }
+        var dirs: [String] = [], files: Set<String> = []
+        guard let walk = fm.enumerator(atPath: snap.path) else { return fail("cópia ilegível") }
         while let rel = walk.nextObject() as? String {
             let p = snap.path + "/" + rel
             var st = stat()
             guard lstat(p, &st) == 0 else { continue }
             if st.st_mode & S_IFMT == S_IFLNK || names.contains((rel as NSString).lastPathComponent) {
                 if st.st_mode & S_IFMT == S_IFDIR { walk.skipDescendants() }
-                guard (try? fm.removeItem(atPath: p)) != nil else { return nil }
-            } else if st.st_mode & S_IFMT == S_IFDIR { dirs.append(p) } else { chmod(p, 0o444) }
+                guard (try? fm.removeItem(atPath: p)) != nil else { return fail("\(rel) não saiu") }
+            } else if st.st_mode & S_IFMT == S_IFDIR { dirs.append(p) }
+            else if st.st_mode & S_IFMT == S_IFREG { chmod(p, 0o444); files.insert(rel) }
+            else { return fail("\(rel) não é arquivo comum") }
         }
-        // the folders last, deepest first: read-only, none can take a new file
+        // folders read-only before the comparison too: a failure below leaves nothing writable (`dropScratch` reopens them)
         for d in dirs.reversed() + [snap.path] { chmod(d, 0o555) }
-        return snap
+        // what the commit holds as plain files (blobs, not symlinks nor submodules), less the agent configs left out
+        guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "--full-tree", hash], in: dir), ls.status == 0, !ls.truncated else {
+            return fail("git ls-tree falhou")
+        }
+        var expected: Set<String> = []
+        for entry in ls.stdout.split(separator: "\0") {
+            guard let tab = entry.firstIndex(of: "\t") else { continue }
+            let mode = entry.prefix(6), path = String(entry[entry.index(after: tab)...])
+            guard mode == "100644" || mode == "100755", !path.split(separator: "/").contains(where: { names.contains(String($0)) }) else { continue }
+            expected.insert(path)
+        }
+        let missing = expected.subtracting(files).sorted(), extra = files.subtracting(expected).sorted()
+        if let m = missing.first { return fail("\(missing.count) arquivo(s) do commit fora da cópia (export-ignore?), como \(m)") }
+        if let e = extra.first { return fail("\(extra.count) arquivo(s) na cópia que o commit não tem, como \(e)") }
+        return .success(snap)
     }
 
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
@@ -312,15 +347,21 @@ extension WorkLoop {
         let planted = Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         let scratch = personas.map { planted == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) : nil }
         // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree
-        var snapshots: [URL?] = []
-        for s in scratch { snapshots.append(s == nil ? nil : await reviewSnapshot(judged, dir, into: s!)) }
+        var snapshots: [URL?] = [], snapshotWhy: [String?] = []
+        for s in scratch {
+            guard let s else { snapshots.append(nil); snapshotWhy.append(nil); continue }
+            switch await reviewSnapshot(judged, dir, into: s) {
+            case .success(let u): snapshots.append(u); snapshotWhy.append(nil)
+            case .failure(let f): snapshots.append(nil); snapshotWhy.append(f.why)
+            }
+        }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
                 let as_ = { var l = loop; l.model = model; return l }()
                 // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
                 let nonce = ReviewPrompt.newNonce()
-                let snapshot = snapshots[i]
+                let snapshot = snapshots[i], snapshotFailed = snapshotWhy[i]
                 let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce,
                                                 snapshot: snapshot?.path)
                 let name = Self.reviewerName(agent, persona: p.name), cwd = snapshot == nil ? nil : scratch[i]
@@ -328,6 +369,7 @@ extension WorkLoop {
                     var id: UUID?
                     var verdict = Self.mute(p.name)
                     if let planted { verdict.invalid = "revisor \(p.name) mudo: \(planted) existe e o agente do laço pode gravá-lo" }
+                    if let why = snapshotFailed { verdict.invalid = "revisor \(p.name) mudo: \(why)" }
                     do {
                         guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
                         // F2 X5: no time left to answer in: mute, and no terminal summoned for nothing

@@ -1082,7 +1082,7 @@ actor CommandRouter {
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
                                           resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil,
-                                          pluginDirs: pluginDirs)
+                                          pluginDirs: pluginDirs, reviewerNoMcp: reviewerHooksBare(rec))
     }
 
     /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable

@@ -176,7 +176,8 @@ extension CommandRouter {
         do {
             try await leash(me, rec)
             try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch
-            if let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
+            // F2 W1: a reviewer joins no lot (no lot_board of the judged agent's group, reviewerNoMcp)
+            if scratch == nil, let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
         } catch { try? await remove(rec); throw error }
         if let p = str(r, "prompt"), !p.isEmpty {
             // the summon exists either way: report, don't fail (a retry would hit "already exists")

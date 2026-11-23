@@ -326,6 +326,23 @@ import CollieProtocol
         }
     }
 
+    /// F2 Y2a: refusal, a reviewer that touched the tree, refusal: the touch judged nothing, so it is no refusal
+    /// (reviewRejects untouched by it) and the second refusal does not defer as "two in a row".
+    @Test func reviewerTouchedIsNoRefusal() async throws {
+        let r = try await Self.rig(tries: 4); defer { r.cleanup() }
+        for n in 1...4 { await Self.works(r, n) }
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
+        await r.host.setReviewerAct("w-task-a-t2-correcao-rev") { d in
+            try "SUJO\n".write(to: d.appendingPathComponent("spec.md"), atomically: true, encoding: .utf8)
+        }
+        await r.host.setReviewAnswer("w-task-a-t3-testes-rev", Self.reject)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 4, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
+        #expect(!w.notes.contains { $0.text.contains(AttemptDecision.twiceRefused) })
+        #expect(w.notes.contains { $0.text.contains("tentativa 2/4") && $0.text.contains(WorkLoop.reviewerTouched) })
+    }
+
     /// F2 X1: the loop cancelled mid-review: the reviewers go, and their folders with them.
     @Test func scratchFoldersGoOnCancel() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }

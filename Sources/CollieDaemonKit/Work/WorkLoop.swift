@@ -544,7 +544,8 @@ actor WorkLoop {
                                    evidence: evidence, turn: Swift.min(r.loop.timeout, rest), dir)
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
-            if tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true {
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true
+            if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
                 ran.line = "revisão: recusada (\(Self.reviewerTouched))"
@@ -556,11 +557,12 @@ actor WorkLoop {
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                     x.tasks[i].review = line
-                    x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1
+                    // F2 Y2a: a touched tree was not judged: no refusal to count
+                    if !touched { x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1 }
                 }
                 x.notes.append(WorkNote(at: at, text: note))
             }
-            return .reviewDone(ran.outcome)
+            return touched ? .reviewerTouched : .reviewDone(ran.outcome)
         case .decide:
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:

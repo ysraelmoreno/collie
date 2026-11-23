@@ -46,6 +46,8 @@ enum AttemptMachine {
         case reviewDone(ReviewOutcome)
         /// F2 X3: less than `WorkLoop.reviewMinTurn` of the budget is left for the reviewers: no review, no verdict.
         case reviewBudgetOut
+        /// F2 Y2a: a reviewer touched the tree: the attempt fails, but nobody judged it, so it is no refusal.
+        case reviewerTouched
     }
 
     enum Effect: Sendable, Equatable {
@@ -237,6 +239,10 @@ enum AttemptMachine {
             if outcome.approved { s.facts.reviewNotes = outcome.notes } else { s.facts.review = outcome.reason ?? "revisor recusou" }
             return verdict(&s)
         // F2 X3: the budget ran out, not the attempt: like a cancel it is not counted (nor as a refusal), the loop stops
+        // F2 Y2a: the attempt fails on it (a move, not `review`): it is not counted in reviewRejects nor "in a row"
+        case (.reviewing, .reviewerTouched):
+            s.facts.moves.append(WorkLoop.reviewerTouched)
+            return verdict(&s)
         case (.reviewing, .reviewBudgetOut):
             return leave(&s, [.uncount, .note(WorkLoop.reviewBudgetNote), .stopLoop(.init(.budgetSpent))])
 

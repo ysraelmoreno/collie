@@ -354,43 +354,58 @@ extension WorkLoop {
     /// it. Read, merged and written atomically (a temp file beside it, `rename`; its mode kept; a symlink's target
     /// written), touching nothing else. nil: no file (Claude Code never ran: not made) or already true (not rewritten).
     /// Else the note: written, or why not (not a JSON object, `projects` or the entry not an object, a write error).
-    // ponytail: read-modify-write, no lock; a Claude Code exit rewriting the file in between drops the entry, the next run writes it again
+    /// F4 3: the temp file is flushed (`F_FULLFSYNC`, else `fsync`) before the `rename`; and the file's `stat` (inode, size,
+    /// mtime) at the read is compared with the one just before the `rename`: changed (Claude Code wrote it meanwhile), it is
+    /// read and merged again, once; changed again, nothing is written (the user's file wins) and the note says so.
+    // ponytail: stat check, no lock; a write between the last stat and the rename still loses, the window is microseconds
     /// F2 V3b: the temp file is born 0600 (`O_EXCL|O_NOFOLLOW`, written through its descriptor): a copy of the file (it may
     /// hold `primaryApiKey`, `oauthAccount`) is never readable by others, then takes the original's mode before the `rename`.
-    /// `beforeRename` (tests): the temp file's path, written, before it takes that mode.
+    /// `beforeRename` (tests): the temp file's path, written, before it takes that mode (once per try).
     static func trustReviewRoot(home: URL, reviewRoot: URL, beforeRename: (String) -> Void = { _ in }) -> String? {
         let file = SignedAppCheck.realPath(home.appendingPathComponent(".claude.json"))
-        guard let data = FileManager.default.contents(atPath: file) else { return nil }
-        guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
-        let key = SignedAppCheck.realPath(reviewRoot)
-        guard var projects = all["projects"] == nil ? [:] : all["projects"] as? [String: Any],
-              var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + ": projects não é um objeto" }
-        if (entry["hasTrustDialogAccepted"] as? Bool) == true { return nil }
-        entry["hasTrustDialogAccepted"] = true; projects[key] = entry; all["projects"] = projects
-        guard let out = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .withoutEscapingSlashes]) else {
-            return reviewTrustNotWritten + ": não serializa"
+        func mark() -> [Int]? {
+            var st = stat()
+            guard stat(file, &st) == 0 else { return nil }
+            return [Int(st.st_ino), Int(st.st_size), Int(st.st_mtimespec.tv_sec), Int(st.st_mtimespec.tv_nsec)]
         }
-        let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
-        let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
-        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { return reviewTrustNotWritten + ": " + String(cString: strerror(errno)) }
-        let wrote = out.withUnsafeBytes { buf -> Bool in
-            var off = 0
-            while off < buf.count {
-                let n = write(fd, buf.baseAddress! + off, buf.count - off)
-                if n < 0 { if errno == EINTR { continue }; return false }
-                off += n
+        for _ in 0..<2 {
+            let seen = mark()
+            guard let data = FileManager.default.contents(atPath: file) else { return nil }
+            guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
+            let key = SignedAppCheck.realPath(reviewRoot)
+            guard var projects = all["projects"] == nil ? [:] : all["projects"] as? [String: Any],
+                  var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + ": projects não é um objeto" }
+            if (entry["hasTrustDialogAccepted"] as? Bool) == true { return nil }
+            entry["hasTrustDialogAccepted"] = true; projects[key] = entry; all["projects"] = projects
+            guard let out = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .withoutEscapingSlashes]) else {
+                return reviewTrustNotWritten + ": não serializa"
             }
-            return true
+            let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
+            let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
+            let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { return reviewTrustNotWritten + ": " + String(cString: strerror(errno)) }
+            let wrote = out.withUnsafeBytes { buf -> Bool in
+                var off = 0
+                while off < buf.count {
+                    let n = write(fd, buf.baseAddress! + off, buf.count - off)
+                    if n < 0 { if errno == EINTR { continue }; return false }
+                    off += n
+                }
+                return true
+            }
+            func err() -> String { String(cString: strerror(errno)) }
+            var why: String? = wrote ? nil : err()
+            if why == nil { beforeRename(tmp); if fchmod(fd, mode_t(mode)) != 0 { why = err() } }
+            if why == nil, fcntl(fd, F_FULLFSYNC) != 0, fsync(fd) != 0 { why = err() }
+            if close(fd) != 0, why == nil { why = err() }
+            if let why { unlink(tmp); return reviewTrustNotWritten + ": " + why }
+            guard mark() == seen else { unlink(tmp); continue }   // written meanwhile: read and merge again
+            if rename(tmp, file) != 0 { let why = err(); unlink(tmp); return reviewTrustNotWritten + ": " + why }
+            return reviewTrustWritten
         }
-        func err() -> String { String(cString: strerror(errno)) }
-        var why: String? = wrote ? nil : err()
-        if why == nil { beforeRename(tmp); if fchmod(fd, mode_t(mode)) != 0 { why = err() } }
-        if close(fd) != 0, why == nil { why = err() }
-        if why == nil, rename(tmp, file) != 0 { why = err() }
-        if let why { unlink(tmp); return reviewTrustNotWritten + ": " + why }
-        return reviewTrustWritten
+        return reviewTrustNotWritten + ": " + reviewTrustRaced
     }
+    static let reviewTrustRaced = "o arquivo mudou durante a gravação, duas vezes; deixado como está"
 
     /// F2 U1 (reviewLoopConfigBase): `~/.claude.json` as the loop takes its base, before any judged agent of the run.
     func reviewLoopConfigBase() async -> (hash: String, risky: String) {

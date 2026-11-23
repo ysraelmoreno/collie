@@ -1465,6 +1465,33 @@ extension WorkLoopReviewTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == [".claude.json"])
     }
 
+    /// F4 3: the file changes between the read and the `rename` (Claude Code writes it): read and merged again, the user's
+    /// write kept; changed on both tries: nothing written, the user's last write kept, the note says so, no temp file left.
+    @Test func trustRereadsWhenTheFileChangesMidway() throws {
+        let root = URL(fileURLWithPath: "/collie-v3-root/collie-review")
+        let home = try Self.v3Home(#"{"numStartups":1}"#); defer { try? FileManager.default.removeItem(at: home) }
+        let file = home.appendingPathComponent(".claude.json")
+        var tries = 0
+        let note = WorkLoop.trustReviewRoot(home: home, reviewRoot: root) { _ in
+            tries += 1
+            if tries == 1 { try? #"{"numStartups":2,"user":"mine"}"#.write(to: file, atomically: true, encoding: .utf8) }
+        }
+        #expect(note == WorkLoop.reviewTrustWritten && tries == 2)
+        let all = try Self.v3Json(home)
+        #expect(all["numStartups"] as? Int == 2 && all["user"] as? String == "mine")
+        let entry = (all["projects"] as? [String: Any])?[SignedAppCheck.realPath(root)] as? [String: Any]
+        #expect(entry?["hasTrustDialogAccepted"] as? Bool == true)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == [".claude.json"])
+        // changed on every try: gives up, the user's file as they left it
+        var n = 0
+        let gaveUp = WorkLoop.trustReviewRoot(home: home, reviewRoot: URL(fileURLWithPath: "/collie-v3-other/collie-review")) { _ in
+            n += 1; try? #"{"user":"again-\#(n)"}"#.write(to: file, atomically: true, encoding: .utf8)
+        }
+        #expect(gaveUp == WorkLoop.reviewTrustNotWritten + ": " + WorkLoop.reviewTrustRaced && n == 2)
+        #expect(try String(contentsOf: file, encoding: .utf8) == #"{"user":"again-2"}"#)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: home.path) == [".claude.json"])
+    }
+
     /// F2 V3b (rule 4): the write fails (the home not writable): the loop goes on, the reviewers are summoned, the note
     /// says why, the file is untouched and no temp file is left.
     @Test func trustWriteFailureIsNotedAndTheLoopGoesOn() async throws {

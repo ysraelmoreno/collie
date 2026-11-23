@@ -20,19 +20,19 @@ extension WorkLoop {
         var persona: String, model: String?, approved: Bool, invalid: String?, findings: [ReviewFinding]
     }
 
-    static func reviewerName(_ agent: String, persona: String) -> String {
-        // ponytail: the persona's slug after the attempt's name, cut to AgentNaming.max from the head; `unique` sorts
-        // out a name taken meanwhile
-        let tail = "-" + AgentNaming.slug(persona)
-        return String(agent.prefix(Swift.max(0, AgentNaming.max - tail.count))).trimmingCharacters(in: CharacterSet(charactersIn: "-")) + tail
-    }
+    // ponytail: `unique` sorts out a name taken meanwhile
+    static func reviewerName(_ agent: String, persona: String) -> String { AgentNaming.reviewer(agent, persona: persona) }
+
+    /// F2 X4: what the reviewers read instead of a spec when the task has none at the base (no spec, outside the repo
+    /// or not committed): said, never the title in silence.
+    static let noSpec = "sem spec no commit base"
 
     /// F2 X1: a reviewer's own folder, empty (no agent config of anyone's), made by the daemon under its temp dir, outside
     /// every worktree and paddock: one per attempt and persona (the name carries both), removed once its reviewer is
     /// dismissed. nil: it could not be made (that reviewer is mute, a refusal).
     /// ponytail: a daemon that falls mid-review leaves it in the temp dir, which the system clears.
     static func reviewScratch(_ name: String) -> URL? {
-        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-review")
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent(AgentNaming.reviewDir)
             .appendingPathComponent(name + "-" + UUID().uuidString.prefix(8).lowercased())
         do { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) } catch { return nil }
         return d
@@ -80,8 +80,10 @@ extension WorkLoop {
             .flatMap { $0.status == 0 ? $0.stdout.split(separator: "\0").map(String.init) : nil } ?? []
         let lines = diff.split(separator: "\n").filter { ($0.hasPrefix("+") && !$0.hasPrefix("+++")) || ($0.hasPrefix("-") && !$0.hasPrefix("---")) }.count
         do {
+            // F2 X4: a diff that touches a persona or a spec of the work's tasks (what judges the next attempts) calls seguranca
             personas = try PersonaRouter(catalog: try await basePersonas(before, dir))
-                .select(changedPaths: paths, diffLines: lines, diffText: diff, requested: loop.personas)
+                .select(changedPaths: paths, diffLines: lines, diffText: diff, requested: loop.personas,
+                        specs: work.tasks.compactMap { $0.spec.map { Self.repoRelative($0, dir) } })
         } catch {
             // no catalog to judge with is no approval
             let why = "revisor recusou: sem personas no commit base (\(error))"
@@ -89,6 +91,7 @@ extension WorkLoop {
                             note: LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): \(why)"))
         }
         let spec = await specText(task.spec, at: before, dir)
+        let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
         let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name)) }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
@@ -97,7 +100,7 @@ extension WorkLoop {
                 let as_ = { var l = loop; l.model = model; return l }()
                 // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
                 let nonce = ReviewPrompt.newNonce()
-                let prompt = ReviewPrompt.build(persona: p, spec: spec.isEmpty ? task.title : spec, diff: diff, evidence: evidence, check: check, nonce: nonce)
+                let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce)
                 let name = Self.reviewerName(agent, persona: p.name), cwd = scratch[i]
                 g.addTask {
                     var id: UUID?
@@ -132,7 +135,8 @@ extension WorkLoop {
                 + (r.1.invalid.map { ", \($0)" } ?? "") + (r.1.findings.isEmpty ? "" : ": " + r.1.findings.map { "[\($0.severity.rawValue)] \($0.text)" }.joined(separator: "; "))
         }
         writeReviewFile(work.id, task: task.id, n: n, runs.map(\.1))
-        let note = LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): " + line + "\n" + each.joined(separator: "\n"))
+        let note = LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
+            + "\n" + each.joined(separator: "\n"))
         return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)))
     }
 

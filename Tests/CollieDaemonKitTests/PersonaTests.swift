@@ -120,6 +120,19 @@ struct PersonaTests {
             == ["correcao", "seguranca", "testes", "simplicidade"])
     }
 
+    /// F2 X4: a persona or a spec of the work's tasks is what judges the next attempts: seguranca reviews the change,
+    /// with the fixture's globs and with the repository's own catalog.
+    @Test func personasAndSpecsCallSeguranca() throws {
+        #expect(try Self.names(["docs/fabrica/personas/correcao.md"]) == ["correcao", "seguranca"])
+        let r = try Self.router()
+        #expect(try r.select(changedPaths: ["docs/x/spec.md"], diffLines: 1, specs: ["docs/x/spec.md"]).map(\.name) == ["correcao", "seguranca"])
+        #expect(try r.select(changedPaths: ["docs/x/other.md"], diffLines: 1, specs: ["docs/x/spec.md"]).map(\.name) == ["correcao"])
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/fabrica/personas")
+        let real = try PersonaCatalog.parse(file: "seguranca.md", text: String(contentsOf: dir.appendingPathComponent("seguranca.md"), encoding: .utf8))
+        #expect(PersonaRouter.matches(real.paths, any: ["docs/fabrica/personas/testes.md"]))
+        #expect(PersonaRouter.matches(real.paths, any: ["docs/superpowers/specs/dl14/x4.md"]))
+    }
+
     @Test func globs() {
         #expect(PersonaRouter.matches(glob: "Sources/**", path: "Sources/A/B.swift"))
         #expect(PersonaRouter.matches(glob: "Sources/CollieDaemonKit/Daemon*", path: "Sources/CollieDaemonKit/DaemonServer.swift"))

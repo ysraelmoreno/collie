@@ -1,7 +1,7 @@
 ---
 name: seguranca
 model: opus
-paths: ["Sources/CollieDaemonKit/Sandbox/**", "Sources/CollieDaemonKit/Remote/**", "Helpers/**", "scripts/**", "Resources/**", ".github/**"]
+paths: ["Sources/CollieDaemonKit/Sandbox/**", "Sources/CollieDaemonKit/Remote/**", "Helpers/**", "scripts/**", "Resources/**", ".github/**", "docs/fabrica/personas/**", "docs/superpowers/specs/**"]
 ---
 # Persona: Segurança e privacidade
 

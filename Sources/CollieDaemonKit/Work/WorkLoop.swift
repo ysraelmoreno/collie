@@ -852,9 +852,14 @@ actor WorkLoop {
     /// The spec's text at `before`; empty: no spec, outside the repo or not committed there.
     func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
         guard let spec else { return "" }
-        let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
+        let rel = Self.repoRelative(spec, dir)
         guard !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 else { return "" }
         return r.stdout
+    }
+
+    /// A spec's path as the repo knows it: relative to `dir` when under it, else as given.
+    static func repoRelative(_ spec: String, _ dir: URL) -> String {
+        spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
     }
 
     static let configTampered = "alterou \(ProjectWorkConfig.fileName)"

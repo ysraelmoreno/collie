@@ -65,11 +65,15 @@ enum PersonaCatalog {
 }
 
 /// R5: which personas review a diff. Rules (F2): `correcao` always; `simplicidade` when the diff passes 150 lines;
-/// `motor-concorrencia` also when the added code uses async/await/Task; every other persona (and motor) by its globs.
+/// `motor-concorrencia` also when the added code uses async/await/Task; `seguranca` also when the diff touches
+/// `docs/fabrica/personas/**` or a spec of the work's tasks (F2 X4: what judges the next attempts); every other persona
+/// (and motor, seguranca) by its globs.
 struct PersonaRouter: Sendable {
     static let always = "correcao"
     static let bigDiff = "simplicidade"
     static let concurrency = "motor-concorrencia"
+    static let security = "seguranca"
+    static let personasGlob = "docs/fabrica/personas/**"
     static let bigDiffLines = 150
     /// Most specific first: `max` keeps the head of this list. Personas outside it come after, by name.
     static let specificity = ["correcao", "seguranca", "motor-concorrencia", "testes", "simplicidade"]
@@ -78,8 +82,9 @@ struct PersonaRouter: Sendable {
 
     /// `diffText`: the diff itself, only read for the async/await/Task rule. `requested` (the task's explicit list)
     /// wins over the rules but must name catalog personas; `correcao` is never cut, by either path.
+    /// `specs`: the repo-relative spec paths of the work's tasks.
     func select(changedPaths: [String], diffLines: Int, diffText: String = "", requested: [String]? = nil,
-                max: Int = 4) throws -> [Persona] {
+                max: Int = 4, specs: [String] = []) throws -> [Persona] {
         let byName = Dictionary(catalog.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         var names: Set<String>
         if let requested {
@@ -91,6 +96,7 @@ struct PersonaRouter: Sendable {
                 case Self.always: true
                 case Self.bigDiff: diffLines > Self.bigDiffLines
                 case Self.concurrency: Self.usesConcurrency(diffText) || Self.matches(persona.paths, any: changedPaths)
+                case Self.security: Self.matches(persona.paths + [Self.personasGlob], any: changedPaths) || changedPaths.contains { specs.contains($0) }
                 default: Self.matches(persona.paths, any: changedPaths)
                 }
             }.map(\.name))

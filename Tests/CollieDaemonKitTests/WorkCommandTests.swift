@@ -466,6 +466,47 @@ extension WorkCommandTests {
         }
     }
 
+    /// F2 X4: `--review` with no persona committed at HEAD is refused at launch, before any agent is spent.
+    @Test func runReviewWithoutCatalogIsRefused() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)
+        try "# Fake\n".write(to: repo.appendingPathComponent("docs/fabrica/personas/correcao.md"), atomically: true, encoding: .utf8)   // not committed
+        for personas in [nil, "auto", "correcao"] {
+            do {
+                _ = try await CommandRouter.loopReview(review: true, personas: personas, reviewerModel: nil, dir: repo)
+                Issue.record("accepted \(String(describing: personas))")
+            } catch {
+                #expect(error.code == .invalidArgs && error.message.contains("sem personas em docs/fabrica/personas"), "\(error)")
+            }
+        }
+        // without --review nothing changes
+        #expect(try await CommandRouter.loopReview(review: false, personas: nil, reviewerModel: nil, dir: repo) == (false, nil, nil))
+    }
+
+    /// F2 X4: a reviewer is marked inside its summon (before the launch), so it never stands unmarked in the paddock;
+    /// a dismiss unmarks it.
+    @Test func reviewerIsMarkedByItsSummon() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("x4-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true)
+            let r = Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let id = try await d.router.loopSummon(r, as: s.uuid, scratch: scratch)
+            #expect(await d.router.loopReviewers.contains(id))
+            await d.router.loopDismiss(id)
+            #expect(await !d.router.loopReviewers.contains(id))
+            // a refused summon (the name is taken) leaves no mark behind
+            let before = await d.router.loopReviewers
+            await #expect(throws: ProtocolError.self) {
+                _ = try await d.router.loopSummon(Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("S"), "preset": .string("shell")]),
+                                                  as: s.uuid, scratch: scratch)
+            }
+            #expect(await d.router.loopReviewers == before)
+        }
+    }
+
     @Test func runReviewFlagsAreValidatedAgainstTheCommittedPersonas() async throws {
         let repo = try await makeRepo()
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)

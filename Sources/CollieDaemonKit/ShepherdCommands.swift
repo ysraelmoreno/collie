@@ -158,6 +158,11 @@ extension CommandRouter {
         var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         rec.model = model
+        // F2 X4: a reviewer is marked before it exists, so no other loop of the paddock ever counts it as working;
+        // unmarked again if the summon fails
+        var born = false
+        if scratch != nil { loopReviewers.insert(rec.id) }
+        defer { if !born { loopReviewers.remove(rec.id) } }
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)
         do {
@@ -171,6 +176,7 @@ extension CommandRouter {
                 result["promptError"] = .string("\(error.code.rawValue): \(error.message)")
             }
         }
+        born = true
         return .object(result)
     }
 }

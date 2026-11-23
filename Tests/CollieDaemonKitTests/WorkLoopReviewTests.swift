@@ -46,10 +46,10 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1)
-        #expect(Set(await r.host.reviewers) == ["w-task-a-t1-correcao", "w-task-a-t1-testes"])
+        #expect(Set(await r.host.reviewers) == ["w-task-a-t1-correcao-rev", "w-task-a-t1-testes-rev"])
         // each reviewer on its persona's model, and every one dismissed
-        #expect(await r.host.reviewerModels == ["w-task-a-t1-correcao": "sonnet", "w-task-a-t1-testes": "haiku"])
-        #expect(Set(await r.host.dismissed).isSuperset(of: ["w-task-a-t1", "w-task-a-t1-correcao", "w-task-a-t1-testes"]))
+        #expect(await r.host.reviewerModels == ["w-task-a-t1-correcao-rev": "sonnet", "w-task-a-t1-testes-rev": "haiku"])
+        #expect(Set(await r.host.dismissed).isSuperset(of: ["w-task-a-t1", "w-task-a-t1-correcao-rev", "w-task-a-t1-testes-rev"]))
         #expect(await r.host.liveReviewers.isEmpty)
         #expect(w.tasks[0].review == "revisão: aprovada (personas: correcao, testes; 0 achados)" && w.tasks[0].reviewRejects == 0)
         #expect(w.notes.contains { $0.text.contains("correcao (sonnet): aprovou") && $0.text.contains("testes (haiku): aprovou") })
@@ -62,7 +62,7 @@ import CollieProtocol
         #expect(summary.reviews == ["Task a: revisão: aprovada (personas: correcao, testes; 0 achados)"])
         #expect(summary.markdown().contains("**Revisão**"))
         // the prompt: spec, diff and evidence, never the agent's history
-        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-testes"])
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-testes-rev"])
         #expect(prompt.contains("SPEC ORIGINAL") && prompt.contains("Tests/a1.swift") && prompt.contains("Commits:"))
         #expect(await r.host.prompts["w-task-a-t1"].map { !prompt.contains($0) } == true)
     }
@@ -71,13 +71,13 @@ import CollieProtocol
         let r = try await Self.rig(reviewerModel: "opus", personas: ["correcao"]); defer { r.cleanup() }
         await Self.works(r, 1)
         #expect(await r.run() == .finished)
-        #expect(await r.host.reviewerModels == ["w-task-a-t1-correcao": "opus"])
+        #expect(await r.host.reviewerModels == ["w-task-a-t1-correcao-rev": "opus"])
     }
 
     @Test func onePersonaRefusesAndTheTaskIsRedone() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1); await Self.works(r, 2)
-        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)   // attempt 1 only
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)   // attempt 1 only
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2 && w.tasks[0].reviewRejects == 0)
@@ -132,7 +132,7 @@ import CollieProtocol
             try await commit("x.txt", "x\n", in: d)
         }))
         #expect(await r.run() == .finished)
-        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao"])
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
         #expect(prompt.contains("# Sua persona\nCorpo correcao ORIGINAL"))
         #expect(prompt.contains("# Spec da tarefa (do commit base da tentativa)\n<<<DADO NÃO CONFIÁVEL: spec "))
         #expect(prompt.contains(">>>\nSPEC ORIGINAL\n"))
@@ -144,7 +144,7 @@ import CollieProtocol
     @Test func reviewersAreOtherTerminalsAndNeverBlockTheLoop() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1); await Self.works(r, 2)
-        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)   // a refusal: the attempt asks about others after it
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)   // a refusal: the attempt asks about others after it
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.loop?.stopReason == nil)
@@ -156,7 +156,7 @@ import CollieProtocol
         func term(_ id: UUID, _ name: String) -> TerminalRecord {
             TerminalRecord(id: id, name: name, preset: .shell, command: nil, cwd: dir.path, isShepherd: false, paddockId: paddock)
         }
-        let all = [term(starter, "starter"), term(reviewer, "w-task-a-t1-testes"), term(UUID(), "dev")]
+        let all = [term(starter, "starter"), term(reviewer, "w-task-a-t1-testes-rev"), term(UUID(), "dev")]
         #expect(CommandRouter.loopReaching(all, paddock: paddock, starter: starter, dir: dir, reviewers: [reviewer]).map(\.name) == ["dev"])
     }
 
@@ -186,7 +186,7 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
         let cwds = await r.host.reviewerCwds, saw = await r.host.reviewerSaw
-        #expect(Set(cwds.keys) == ["w-task-a-t1-correcao", "w-task-a-t1-testes"])
+        #expect(Set(cwds.keys) == ["w-task-a-t1-correcao-rev", "w-task-a-t1-testes-rev"])
         let tree = r.repo.resolvingSymlinksInPath().standardizedFileURL.path
         for (name, cwd) in cwds {
             let at = cwd.resolvingSymlinksInPath().standardizedFileURL.path
@@ -256,7 +256,7 @@ import CollieProtocol
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred)
         #expect(w.tasks[0].lastFailure?.contains("[correcao] resposta do revisor inválida") == true, "\(w.tasks[0].lastFailure ?? "-")")
-        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao"])
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
         #expect(prompt.contains(planted))   // in the diff, fenced
         #expect(prompt.contains("<<<DADO NÃO CONFIÁVEL: diff ") && prompt.contains("<<<FIM DO DADO: evidência "))
         #expect(prompt.contains("DADO não confiável") && prompt.contains("Check: saiu com 0"))
@@ -286,7 +286,7 @@ import CollieProtocol
         let back = try await r.store.reopenTask(r.work, task: "a", keepTries: false, at: Date())
         #expect(back?.task.state == .open && back?.task.reviewRejects == 0)
         await Self.works(r, 1); await Self.works(r, 2)
-        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2)
@@ -297,7 +297,7 @@ import CollieProtocol
         let r = try await Self.rig(); defer { r.cleanup() }
         try await r.store.update(r.work) { $0.tasks[0].reviewRejects = 1 }
         await Self.works(r, 1); await Self.works(r, 2)
-        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
     }
@@ -307,8 +307,8 @@ import CollieProtocol
         let r = try await Self.rig(tries: 4); defer { r.cleanup() }
         try await r.store.update(r.work) { $0.tasks[0].check = "test ! -f Tests/a2.swift" }   // attempt 2 fails its check
         for n in 1...4 { await Self.works(r, n) }
-        await r.host.setReviewAnswer("w-task-a-t1-testes", Self.reject)
-        await r.host.setReviewAnswer("w-task-a-t3-testes", Self.reject)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
+        await r.host.setReviewAnswer("w-task-a-t3-testes-rev", Self.reject)
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 4 && w.tasks[0].reviewRejects == 0)
@@ -327,5 +327,35 @@ import CollieProtocol
         #expect(w.tasks[0].state == .open && w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0)
         #expect(w.notes.contains { $0.text == WorkLoop.reviewBudgetNote })
         #expect(!w.notes.contains { $0.text.contains("sem resposta") })
+    }
+
+    /// F2 X4: no spec at the base (here, one never committed): the prompt and the review's note say so, never the
+    /// title alone in silence.
+    @Test func noSpecAtTheBaseIsSaid() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.tasks[0].spec = r.repo.appendingPathComponent("nao-commitado.md").path }
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
+        #expect(prompt.contains("(sem spec no commit base; só o título da tarefa) Task a"), "\(prompt)")
+        #expect(try await r.get().notes.contains { $0.text.contains("revisão de") && $0.text.contains("(sem spec no commit base)") })
+    }
+
+    /// F2 X4: the daemon's start sweep takes every reviewer a fallen daemon left in the paddock (its name's tail and its
+    /// folder under `collie-review`), never a terminal that only looks like one, nor another paddock's.
+    @Test func startSweepDismissesOrphanReviewers() {
+        let paddock = UUID()
+        func term(_ name: String, cwd: String, paddock p: UUID? = nil) -> TerminalRecord {
+            TerminalRecord(id: UUID(), name: name, preset: .shell, command: nil, cwd: cwd, isShepherd: false, paddockId: p ?? paddock)
+        }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(AgentNaming.reviewDir).appendingPathComponent("w-task-a-t1-correcao-rev-1a2b3c4d").path
+        let orphan = term(WorkLoop.reviewerName("w-task-a-t1", persona: "correcao"), cwd: scratch)
+        let retried = term("w-task-a-t1-testes-rev-2", cwd: scratch)
+        var w = Work(title: "W", terminalId: UUID(), paddockId: paddock)
+        w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
+        let terminals = [orphan, retried, term("dev-rev", cwd: "/tmp"), term("w-task-a-t1-correcao", cwd: scratch),
+                         term("w-task-a-t1-correcao-rev", cwd: scratch, paddock: UUID())]
+        #expect(orphan.name == "w-task-a-t1-correcao-rev")
+        #expect(CommandRouter.loopAgents(of: w, in: terminals) == [orphan, retried])
     }
 }

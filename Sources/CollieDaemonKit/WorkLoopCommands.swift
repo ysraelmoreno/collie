@@ -191,7 +191,8 @@ extension CommandRouter {
         return n
     }
 
-    /// F2 R1: `--review` with `--personas auto|a,b,c` and `--reviewer-model`. Either without `--review`, a persona whose
+    /// F2 R1: `--review` with `--personas auto|a,b,c` and `--reviewer-model`. F2 X4: `--review` with no persona committed
+    /// at HEAD is refused. Either without `--review`, a persona whose
     /// name is no file in `docs/fabrica/personas/` AS COMMITTED AT HEAD (the loop's base: the worktree's edits never pick
     /// who judges), or a model that is no model name: invalidArgs. `personas` nil: auto.
     static func loopReview(review: Bool, personas: String?, reviewerModel: String?, dir: URL) async throws(ProtocolError)
@@ -202,9 +203,11 @@ extension CommandRouter {
             return (false, nil, nil)
         }
         if let reviewerModel { try ClaudeModel.validate(reviewerModel) }
+        // F2 X4: no catalog at HEAD is refused now, not after an agent's whole turn
+        let known = await committedPersonas(dir)
+        guard !known.isEmpty else { throw invalid("--review: sem personas em docs/fabrica/personas no HEAD") }
         guard let personas, personas != "auto" else { return (true, nil, reviewerModel) }
         let names = TaskScheduler.list(personas)
-        let known = await committedPersonas(dir)
         if let bad = names.first(where: { !known.contains($0) }) {
             throw invalid("unknown persona '\(RerailText.clean(bad, max: 60))'; known (\(personasDir), at HEAD): " + known.sorted().joined(separator: ", "))
         }
@@ -419,10 +422,14 @@ extension CommandRouter {
     /// M3.8: the terminals of `w`'s loop attempts, in its paddock: those whose id is on a loop job (`WorkJob.terminal`),
     /// whatever they are called. A job with no terminal on record (a work written before the field, or a daemon that
     /// fell between the summon and its write) still finds its agent by the job's id, the name it was summoned with.
+    /// Called only at the daemon's start, when no reviewer of this daemon exists yet.
     static func loopAgents(of w: Work, in terminals: [TerminalRecord]) -> [TerminalRecord] {
         let jobs = w.jobs.filter { $0.kind == .loop }
         let ids = Set(jobs.compactMap(\.terminal)), named = Set(jobs.filter { $0.terminal == nil }.map(\.id))
-        return terminals.filter { $0.paddockId == w.paddockId && (ids.contains($0.id) || named.contains($0.name)) }
+        // F2 X4: and every reviewer in the paddock (`AgentNaming.isReviewer`): a daemon that fell mid-review left it,
+        // and `loopReviewers` (memory only) no longer knows it, so it would count as someone working
+        return terminals.filter { $0.paddockId == w.paddockId
+            && (ids.contains($0.id) || named.contains($0.name) || AgentNaming.isReviewer(name: $0.name, cwd: $0.cwd)) }
     }
 
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
@@ -596,8 +603,6 @@ extension CommandRouter {
         Set(ws.terminals.map { $0.name.lowercased() } + ws.panels.map { $0.name.lowercased() }).union(launching)
     }
 
-    func loopReviewerBorn(_ id: UUID) { loopReviewers.insert(id) }
-
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
     func loopDismiss(_ id: UUID) async {
@@ -729,19 +734,19 @@ struct RouterLoopHost: LoopHost {
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
     }
-    /// F2 R4: marked right after its summon, before it is asked anything (a terminal not yet in a turn is no one working).
+    /// F2 R4/X4: marked as a reviewer inside the summon, before its terminal is launched (`summon(scratch:)`): never a
+    /// moment in the paddock unmarked.
     /// F2 X1: born in `cwd` (the loop's empty `reviewScratch`), never in the worktree or a lane: its project, so its
     /// sandbox profile writes there and not in the worktree nor the repository's git dir (`cwd` is no repo). The limit:
     /// the strict profile still writes the temp dirs and the write grants of the reviewer's lot; a worktree under one
     /// of those stays writable, and the tree's recheck after the review (`reviewTree`) is what catches that.
-    // ponytail: a daemon that falls mid-review leaves the reviewer terminals; the start sweep does not know them
+    // F2 X4: a daemon that falls mid-review leaves the reviewer terminals; the start sweep removes them (`loopAgents`)
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = try await router.loopSummon(summonRequest(name, loop), as: starter, scratch: cwd)
         guard await router.loopAgentSandboxed(id) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }
-        await router.loopReviewerBorn(id)
         return id
     }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {

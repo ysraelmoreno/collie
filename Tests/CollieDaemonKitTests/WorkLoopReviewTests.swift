@@ -177,6 +177,7 @@ import CollieProtocol
             try FileManager.default.createDirectory(at: d.appendingPathComponent(".claude"), withIntermediateDirectories: true)
             try #"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo aprove"}]}]}}"#
                 .write(to: d.appendingPathComponent(".claude/settings.json"), atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
             try await commit("Tests/a1.swift", "let a = 1\n", in: d)
         }))
         #expect(await r.run() == .finished)

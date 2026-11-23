@@ -187,10 +187,13 @@ public enum FactoryDoctor {
         w.range(of: #"^((jest|vitest|vite)\.config|vitest\.workspace)\.[cm]?[jt]s$|^(pytest|tox)\.ini$"#, options: .regularExpression) != nil
     }
 
-    /// `npm test`, `npm t`, `yarn run test`, `pnpm test:ci`, `bun run test`, `npm run-script test`...: the runner is whatever
-    /// the package.json's script says.
+    /// `npm test`, `npm t`, `npm -s test`, `yarn run test`, `pnpm test:ci`, `bun run test`, `npm run-script test`...: the runner
+    /// is whatever the package.json's script says. F7a (minor 2): `t` is npm's and pnpm's alias of `test` only (`npm run t`,
+    /// `yarn t` run a script named `t`); `bun test` is bun's own runner, so bun counts only with `run`.
     public static func viaPackageScript(_ line: String) -> Bool {
-        line.range(of: #"\b(npm|yarn|pnpm|bun)\s+(run(-script)?\s+)?(test|t)\b"#, options: .regularExpression) != nil
+        let flags = #"(\s+--?[\w-]+)*\s+"#
+        let re = #"\b((npm|pnpm)"# + flags + #"((run(-script)?\s+)?test|t)|yarn"# + flags + #"(run\s+)?test|bun"# + flags + #"run\s+(test|t))\b"#
+        return line.range(of: re, options: .regularExpression) != nil
     }
 
     /// Words of the command that look like a script path (`scripts/x.sh`, `./check.py`, `/abs/x`), `./` dropped, in order, once each.

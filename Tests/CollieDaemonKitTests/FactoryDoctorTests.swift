@@ -256,10 +256,12 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
 /// Minor C (round 3): `viaPackageScript` takes bun, `npm t` and `run-script`, and looks at every line that runs tests.
 @Suite struct FactoryDoctorPackageScriptTests {
     @Test func everyPackageManagerSpelling() {
-        for l in ["npm test", "npm t", "npm run test", "npm run-script test", "yarn test:unit", "pnpm run test", "bun run test", "bun test"] {
+        for l in ["npm test", "npm t", "npm run test", "npm run-script test", "yarn test:unit", "pnpm run test", "bun run test", "bun run t",
+                  "npm -s test", "npm --silent test", "yarn --silent run test", "CI=1 npm test"] {
             #expect(FactoryDoctor.viaPackageScript(l), "\(l)")
         }
-        for l in ["npx --no-install jest", "npm run build", "npm run tsc", "pytest -q", "bun run lint"] {
+        for l in ["npx --no-install jest", "npm run build", "npm run tsc", "pytest -q", "bun run lint", "bun test", "bun test --watch",
+                  "npm run t", "yarn t", "npm tsc"] {
             #expect(!FactoryDoctor.viaPackageScript(l), "\(l)")
         }
     }

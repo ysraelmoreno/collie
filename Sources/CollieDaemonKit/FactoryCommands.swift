@@ -154,13 +154,13 @@ extension CommandRouter {
 
 /// U5: `collie factory ratchet <check|update|raise> <name>`: the profile's ratchet measured once and compared with its baseline
 /// file, read confined to the project (no `..`, not absolute, never through a symlink). F6a: the daemon never writes it: for
-/// `update`/`raise` it hands `path` and `newBaseline` to the CLI, which writes in the agent's process (`BaselineWriter`), so
+/// `update`/`raise` it hands `root`, `rel` and `newBaseline` to the CLI, which writes in the agent's process (`BaselineWriter`), so
 /// the agent's own sandbox decides (rounds 1 to 3 kept finding places the daemon wrote that the sandbox would deny).
 enum FactoryRatchet {
     enum Action: String, Sendable { case check, update, raise }
     /// `newBaseline`: the whole file the CLI writes at `path` (nil: nothing to write); the daemon answers `wrote: false`.
     struct Outcome: Sendable, Equatable {
-        var output: String, passed: Bool, newBaseline: String? = nil, path: String
+        var output: String, passed: Bool, newBaseline: String? = nil, root: String, rel: String
     }
     static let maxBaselineBytes = 1 << 20, maxLogLines = 100
     static let measureTimeout: Duration = .seconds(600)
@@ -188,22 +188,10 @@ enum FactoryRatchet {
         }
     }
 
-    /// The baseline's folder as a fd, opened component by component from the root with `openat(O_DIRECTORY|O_NOFOLLOW)`:
-    /// a link anywhere on the way (the root itself too, A round 3) is refused, and the read goes through this fd. The caller closes it.
+    /// The baseline's folder as a fd (`ConfinedDir`, shared with the CLI's writer): no link followed on the way, the root
+    /// itself included (A round 3). The caller closes it.
     static func openDir(root: URL, rel: String) throws(ProtocolError) -> Int32 {
-        var fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw ProtocolError(code: .invalidArgs, message: "não consegui abrir a raiz do projeto") }
-        for c in rel.split(separator: "/").dropLast() {
-            let next = openat(fd, String(c), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            let e = errno
-            close(fd)
-            guard next >= 0 else {
-                throw ProtocolError(code: .invalidArgs, message: e == ENOENT ? "a pasta do baseline '\(rel)' não existe"
-                                    : "a pasta do baseline '\(rel)' não é uma pasta comum (link simbólico?)")
-            }
-            fd = next
-        }
-        return fd
+        do { return try ConfinedDir.openDir(root: root.path, rel: rel) } catch { throw ProtocolError(code: .invalidArgs, message: error.message) }
     }
 
     /// The file `name` in `dir`'s text; "" when absent (a first baseline). A link, a folder, a FIFO or a big file is refused.
@@ -241,7 +229,7 @@ enum FactoryRatchet {
 
     /// The decision on one measurement. `check`: 0 only when equal (improved exits 1 too, like scripts/ci/lint.sh: the lowered
     /// baseline must be committed); `update`: hands over only an improvement; `raise`: hands over with the reason logged.
-    /// Nothing is written here (F6a): `newBaseline` and `path` go to the CLI.
+    /// Nothing is written here (F6a): `newBaseline`, `root` (the resolved root) and `rel` go to the CLI, which checks them again (F7a).
     static func apply(_ action: Action, name: String, root: URL, baselinePath rel: String, measured: String,
                       reason: String?, now: Date, home: URL, collie: URL) throws(ProtocolError) -> Outcome {
         func bad(_ e: Ratchet.Refusal, _ what: String) -> ProtocolError {
@@ -252,16 +240,25 @@ enum FactoryRatchet {
             }
         }
         let file = try target(root: root, rel: rel).lastPathComponent
-        try place(root: root, rel: rel, home: home, collie: collie)
-        let real = URL(fileURLWithPath: SignedAppCheck.realPath(root)), path = real.appendingPathComponent(rel).path
-        let dir = try openDir(root: real, rel: rel)
+        // nit 6 (round 4): the root opened ONCE; `place` checks the path of that fd and the folder is walked from it
+        let rootFd: Int32
+        do { rootFd = try ConfinedDir.openRoot(SignedAppCheck.realPath(root)) } catch { throw ProtocolError(code: .invalidArgs, message: error.message) }
+        defer { close(rootFd) }
+        guard let realRoot = ConfinedDir.path(of: rootFd) else { throw ProtocolError(code: .internal, message: "não consegui ler o caminho da raiz do projeto") }
+        let real = URL(fileURLWithPath: realRoot), path = real.path
+        try place(root: real, rel: rel, home: home, collie: collie)
+        let dir: Int32
+        do { dir = try ConfinedDir.openDir(rootFd, rel: rel) } catch { throw ProtocolError(code: .invalidArgs, message: error.message) }
         defer { close(dir) }
         let old = try read(dir: dir, file, rel: rel)
         let base: Ratchet.Baseline, cur: Ratchet.Baseline
         do { base = try Ratchet.Baseline.parse(old) } catch { throw bad(error, rel) }
         do { cur = try Ratchet.Baseline.parse(measured) } catch { throw bad(error, "a medição de '\(name)'") }
         // the file's `#` lines (the raise log) stay on top, in order
-        let header = old.split(separator: "\n").filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.map(String.init)
+        // nit 4 (round 4): a `#` line with a control character (the parser skips comments unchecked) is dropped
+        let header = old.split(separator: "\n").filter {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") && !$0.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) && $0 != "\t" }
+        }.map(String.init)
         // nit: the log keeps its last `maxLogLines` lines, so it never grows past what `read` takes (1 MB)
         func log(_ ls: [String]) -> String { ls.suffix(maxLogLines).map { "\($0)\n" }.joined() }
         func list(_ cs: [Ratchet.Change]) -> String { cs.map { "  \($0.key): \($0.before) -> \($0.after)" }.joined(separator: "\n") }
@@ -273,26 +270,26 @@ enum FactoryRatchet {
         switch action {
         case .check:
             switch verdict {
-            case .same: return Outcome(output: "catraca \(name): igual ao baseline\n", passed: true, path: path)
+            case .same: return Outcome(output: "catraca \(name): igual ao baseline\n", passed: true, root: path, rel: rel)
             case .improved(let cs):
-                if empty { return Outcome(output: "catraca \(name): \(emptyNote)\n", passed: false, path: path) }
-                return Outcome(output: "catraca \(name): melhorou. Rode `collie factory ratchet update \(name)` e commite \(rel):\n\(list(cs))\n", passed: false, path: path)
+                if empty { return Outcome(output: "catraca \(name): \(emptyNote)\n", passed: false, root: path, rel: rel) }
+                return Outcome(output: "catraca \(name): melhorou. Rode `collie factory ratchet update \(name)` e commite \(rel):\n\(list(cs))\n", passed: false, root: path, rel: rel)
             case .worse(let cs):
-                return Outcome(output: "catraca \(name): piorou (passou de \(rel)):\n\(list(cs))\n", passed: false, path: path)
+                return Outcome(output: "catraca \(name): piorou (passou de \(rel)):\n\(list(cs))\n", passed: false, root: path, rel: rel)
             }
         case .update:
             guard !empty else { throw ProtocolError(code: .invalidArgs, message: "\(emptyNote); nada gravado") }
             guard let low = Ratchet.lowered(baseline: base, current: cur) else {
                 guard case .worse(let cs) = verdict else { preconditionFailure() }
-                return Outcome(output: "catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n", passed: false, path: path)
+                return Outcome(output: "catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n", passed: false, root: path, rel: rel)
             }
-            guard verdict != .same else { return Outcome(output: "catraca \(name): igual ao baseline; nada a gravar\n", passed: true, path: path) }
-            return Outcome(output: "catraca \(name): baseline abaixado em \(rel)\n", passed: true, newBaseline: log(header) + low.render(), path: path)
+            guard verdict != .same else { return Outcome(output: "catraca \(name): igual ao baseline; nada a gravar\n", passed: true, root: path, rel: rel) }
+            return Outcome(output: "catraca \(name): baseline abaixado em \(rel)\n", passed: true, newBaseline: log(header) + low.render(), root: path, rel: rel)
         case .raise:
             let up: Ratchet.Raised
             do { up = try Ratchet.raise(baseline: base, to: cur, reason: reason ?? "", date: now) } catch { throw bad(error, "") }
             return Outcome(output: "catraca \(name): baseline gravado em \(rel)\n" + up.log.map { "  \($0)\n" }.joined(), passed: true,
-                           newBaseline: log(header + up.log) + up.baseline.render(), path: path)
+                           newBaseline: log(header + up.log) + up.baseline.render(), root: path, rel: rel)
         }
     }
 }
@@ -300,7 +297,7 @@ enum FactoryRatchet {
 extension CommandRouter {
     /// `factory.ratchet.<action>`: runs the ratchet's `measure` once (bash in the project, bounded and sandboxed like a loop
     /// check: `FactoryRatchet.measure`) and applies `FactoryRatchet.apply`. `passed` false: the CLI exits 1. F6a: writes
-    /// nothing; `newBaseline` (or null) and `path` go back, and the CLI writes them in the agent's process.
+    /// nothing; `newBaseline` (or null), `root` and `rel` go back, and the CLI writes them in the agent's process.
     func factoryRatchet(_ t: TerminalRecord, _ action: FactoryRatchet.Action, name: String, reason: String?) async throws(ProtocolError) -> JSONValue {
         // nit E (round 3): the root as the rest of the daemon computes it (the terminal's project root, the sandbox's home)
         let root = URL(fileURLWithPath: t.projectRoot ?? ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId }, home: sandboxHomeDir).path)
@@ -328,7 +325,42 @@ extension CommandRouter {
         }
         let o = try FactoryRatchet.apply(action, name: name, root: root, baselinePath: rel, measured: res.stdout, reason: reason, now: Date(),
                                         home: sandboxHomeDir, collie: config.paths.root)
-        return .object(["output": .string(o.output), "passed": .bool(o.passed), "wrote": .bool(false), "path": .string(o.path),
+        return .object(["output": .string(o.output), "passed": .bool(o.passed), "wrote": .bool(false), "root": .string(o.root), "rel": .string(o.rel),
                         "newBaseline": o.newBaseline.map(JSONValue.string) ?? .null])
+    }
+}
+
+/// F7a (round 4, major 1): the CLI's half of `collie factory ratchet`, pure enough to test without a process. The daemon's
+/// `root` and `rel` are NOT trusted: `rel` passes `FactoryProfile.confinedPath` again, `root` must be the project root this
+/// process computes from its own cwd (`ProjectRoot`'s rule), and the writer walks the folder by fd without following links.
+/// `update`/`raise` with `--terminal` are refused: this process does not run inside the other terminal's sandbox, so it
+/// would write where that sandbox may deny (`check` only reads and stays allowed).
+public enum RatchetCLI {
+    public static func refusal(_ command: String, _ args: [String: JSONValue]) -> String? {
+        guard command == "factory.ratchet.update" || command == "factory.ratchet.raise", args["terminal"] != nil else { return nil }
+        return "\(command.dropFirst("factory.ratchet.".count)) com --terminal recusado: o baseline é gravado por este processo, fora do sandbox daquele terminal. Rode o comando de dentro do próprio terminal (sem --terminal); `check` com --terminal segue valendo"
+    }
+
+    /// The daemon's answer -> what to print (`.null`: nothing) and the exit code. `newBaseline` is written (then `wrote: true`)
+    /// only for `update`/`raise`, after the checks above; a writer's error goes to `err` and exits 1 with nothing printed.
+    public static func handleRatchet(_ result: JSONValue, command: String, args: [String: JSONValue], cwd: String,
+                                     home: URL = URL(fileURLWithPath: NSHomeDirectory()), err: (String) -> Void,
+                                     write: (String, String, String) throws -> Void = { try BaselineWriter.write($0, root: $1, rel: $2) }) -> (JSONValue, Int32) {
+        guard case .object(var o) = result else { return (result, 0) }
+        if command != "factory.ratchet.check", case .string(let text)? = o["newBaseline"] {
+            if let e = refusal(command, args) { err(e); return (.null, 1) }
+            guard case .string(let root)? = o["root"], case .string(let rel)? = o["rel"], FactoryProfile.confinedPath(rel) else {
+                err("baseline não gravado: o daemon devolveu um caminho fora do projeto ou proibido"); return (.null, 1)
+            }
+            let mine = ProjectRoot.resolve(cwd: cwd, paddock: nil, home: home).path
+            guard SignedAppCheck.realPath(URL(fileURLWithPath: root)) == mine else {
+                err("baseline não gravado: a raiz do daemon (\(root)) não é a raiz do projeto desta pasta (\(mine))"); return (.null, 1)
+            }
+            do { try write(text, mine, rel) } catch {
+                err("baseline não gravado em \(rel): \((error as? BaselineWriter.Failure)?.message ?? "\(error)")"); return (.null, 1)
+            }
+            o["wrote"] = .bool(true)
+        }
+        return (.object(o), o["passed"] == .bool(false) ? 1 : 0)
     }
 }

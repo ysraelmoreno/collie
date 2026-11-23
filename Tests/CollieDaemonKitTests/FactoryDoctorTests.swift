@@ -143,7 +143,8 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
                            ci: ["Makefile": "ci:\n\tscripts/ci.sh\n", ".github/workflows/a.yml": "run: scripts/ci.sh\n"])
         let a = D.score(s), b = D.score(s)
         #expect(a == b && D.text(a, min: 1) == D.text(b, min: 1))
-        #expect(try JSONEncoder().encode(a) == JSONEncoder().encode(b))
+        let enc = JSONEncoder(); enc.outputFormatting = .sortedKeys   // the CLI prints sorted keys too
+        #expect(try enc.encode(a) == enc.encode(b))
         #expect(try JSONDecoder().decode(D.Report.self, from: JSONEncoder().encode(a)) == a)
         #expect(layer(a, .static).evidence.contains("+ áreas: a, b"))
         #expect(layer(a, .static).evidence.contains("+ o CI roda o mesmo gate: .github/workflows/a.yml: run: scripts/ci.sh"))   // sorted: .github first

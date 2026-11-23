@@ -385,7 +385,7 @@ import CollieProtocol
         try text.write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
     }
 
-    /// F2 V2: the judged agent changes `~/.claude.json`'s `env` during its turn: every reviewer is mute, none summoned.
+    /// F2 V2/U1: the judged agent changes `~/.claude.json`'s `env` during its turn: every reviewer is mute (U1's note), none summoned.
     @Test func globalConfigChangedBeforeTheLaunchSilencesTheReviewers() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
         let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
@@ -396,7 +396,7 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigMoved) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigRiskyNote) == true, "\(w.tasks[0].lastFailure ?? "-")")
         #expect(await r.host.reviewers.isEmpty)
     }
 

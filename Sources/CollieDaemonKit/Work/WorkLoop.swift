@@ -33,8 +33,9 @@ protocol LoopHost: Sendable {
     /// the loop's profile, which cannot write a sibling `lane-*` worktree nor `<common>/worktrees/lane-*`. Only on
     /// paths the daemon builds and validates itself. What runs inside a lane (agent, check, gate) stays in `git`.
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
-    /// T1 f2fix8 (reviewOneCopy): `laneGit` with `stdin` fed to git (`cat-file --batch`'s oids), killed past `timeout`.
-    func laneGit(_ args: [String], stdin: Data, timeout: Duration, in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// T1 f2fix8 (reviewOneCopy): `laneGit` with `stdin` fed to git (`cat-file --batch`'s oids), killed past `timeout`,
+    /// its output bounded by `cap` (T2 f2fix8: only `reviewSnapshot` asks above the plain `laneGit`'s 1 MiB).
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult
     /// M3b.5: this daemon's id (its install id), written in every lane it makes: a sweep removes only lanes with it.
     func laneOwner() async -> String
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
@@ -90,8 +91,8 @@ extension LoopHost {
     func laneGone(_ lane: Lane) async {}
     /// A host with one git (the tests' fakes, which have no profile).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
-    func laneGit(_ args: [String], stdin: Data, timeout: Duration, in dir: URL) async throws(ProtocolError) -> ProcessResult {
-        try await GitRunner.run(args, in: dir, timeout: timeout, cap: 64 << 20, stdin: stdin)
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await GitRunner.run(args, in: dir, timeout: timeout, cap: cap, stdin: stdin)
     }
     func namesTaken() async -> Set<String> { [] }
     /// A host with no reviewers: the review fails closed (every persona 'sem resposta').
@@ -629,6 +630,10 @@ actor WorkLoop {
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
                 ran.line = "parecer: falhou (\(Self.reviewerTouched))"
                 ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
+            } else if globalTouched, !ran.outcome.approved {
+                // F2 reviewVetoKept: a veto from a possibly tampered context can only fail more (the safe side): it stays,
+                // the config note joins it; only a non-veto goes mute
+                ran.note = String(ran.note.prefix(Self.noteChars - 128)) + "\n" + Self.reviewGlobalConfigTouched
             } else if globalTouched {
                 ran.outcome = ReviewVerdict.silent(Self.reviewGlobalConfigTouched)
                 ran.line = Self.reviewAdvisoryLine(ran.outcome, Self.reviewGlobalConfigTouched)

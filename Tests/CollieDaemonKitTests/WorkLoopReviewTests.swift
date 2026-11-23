@@ -455,10 +455,12 @@ import CollieProtocol
         #expect(await r.host.reviewers.isEmpty)
     }
 
-    /// F2 U1: attempt 1 plants an `env` key: its reviewers are mute, the base is the loop's, taken before attempt 1's
-    /// agent, never one that already holds the plant. A1 (reviewAdvisory): mute is no opinion, the check decides.
+    /// F2 U1: attempt 1 plants an `env` key and fails by its check (no review); attempt 2's reviewers are mute: the
+    /// base is the loop's, taken before attempt 1's agent, never one that already holds the plant (T2 f2fix8: with A1 a
+    /// passing attempt 1 left attempt 2 unrun, and this untested). A1 (reviewAdvisory): mute is no opinion.
     @Test func plantedEnvInASacrificedAttemptSilencesTheNext() async throws {
         let r = try await Self.rig(tries: 2); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.tasks[0].check = "test ! -e x.txt" }   // attempt 1's x.txt fails it
         let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
         await r.host.set("w-task-a-t1", LoopScript(act: { d in
             let text = #"{"numStartups":1,"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"0","ZDOTDIR":"/tmp/x"},"projects":{"/x":{"lastCost":1}}}"#
@@ -468,7 +470,8 @@ import CollieProtocol
         await Self.works(r, 2)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true, "\(w.tasks[0].review ?? "-")")
         #expect(Self.said(w, WorkLoop.reviewGlobalConfigRiskyNote), "\(w.notes.map(\.text))")
         #expect(await r.host.reviewers.isEmpty)
         #expect(w.loop?.reviewConfigBase != nil && w.loop?.reviewConfigBaseRisky?.isEmpty == false)
@@ -488,13 +491,12 @@ import CollieProtocol
         #expect(WorkLoop.reviewGlobalConfigRisky(home: home.appendingPathComponent("none")) == "")
     }
 
-    /// F2 V2: changed during the review: the verdicts are dropped (a veto too). A1 (reviewAdvisory): the tree is as
-    /// judged, so it is no opinion, not a touch: the check decides, no refusal counted.
+    /// F2 V2: changed during the review: a non-veto is dropped. A1 (reviewAdvisory): the tree is as judged, so it is
+    /// no opinion, not a touch: the check decides, no refusal counted.
     @Test func globalConfigChangedDuringTheReviewDropsTheVerdicts() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
         let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
         await Self.works(r, 1)
-        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
         await r.host.setReviewerAct("correcao") { _ in try Self.claudeJson(home, env: "1", startups: 1) }
         #expect(await r.run() == .finished)
         let w = try await r.get()
@@ -502,6 +504,22 @@ import CollieProtocol
         #expect(w.tasks[0].review == "parecer: sem parecer (\(WorkLoop.reviewGlobalConfigTouched))")
         #expect(w.tasks[0].reviewRejects ?? 0 == 0)
         #expect(w.notes.contains { $0.text.contains(WorkLoop.reviewGlobalConfigTouched) })
+    }
+
+    /// T2 f2fix8 (reviewVetoKept): changed during the review, a confirmed veto stays a veto (a veto from a possibly
+    /// tampered context can only fail more, the safe side), the config note joined to it: attempt 1 fails, 2 runs.
+    @Test func globalConfigChangedDuringTheReviewKeepsAVeto() async throws {
+        let r = try await Self.rig(tries: 2); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        await Self.works(r, 1); await Self.works(r, 2)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
+        await r.host.setReviewerAct("w-task-a-t1-correcao-rev") { _ in try Self.claudeJson(home, env: "1", startups: 1) }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2, "\(w.tasks[0].state) \(w.tasks[0].tries ?? 0)")
+        let first = try #require(w.notes.first { $0.text.hasPrefix("[loop] parecer de \"Task a\", tentativa 1") }?.text)
+        #expect(first.contains("parecer: veto") && first.contains(WorkLoop.reviewGlobalConfigTouched), "\(first)")
+        #expect(Self.said(w, "revisor recusou: [testes] Tests/a1.swift:1 falta o caso vazio"), "\(w.notes.map(\.text))")
     }
 
     /// F2 V2: Claude Code's own counters change (top level, a project's `last*`): the review goes on as normal.
@@ -1171,8 +1189,8 @@ private extension CommandRouter {
 
 /// Every git the daemon's own runner ran (`laneGit`), with the profile it ran under.
 private actor V1GitLog {
-    var calls: [(args: [String], profile: URL?)] = []
-    func add(_ args: [String], _ profile: URL?) { calls.append((args, profile)) }
+    var calls: [(args: [String], profile: URL?, cap: Int)] = []
+    func add(_ args: [String], _ profile: URL?, cap: Int = 0) { calls.append((args, profile, cap)) }
 }
 
 extension WorkLoopReviewTests {
@@ -1187,9 +1205,9 @@ extension WorkLoopReviewTests {
         let paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
         await d.router.v1Add(paddock)
         let work = UUID(), log = V1GitLog()
-        let recorded: LaneGit = { (args, dir, profile, stdin, timeout) async throws(ProtocolError) in
-            await log.add(args, profile)
-            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin, timeout: timeout)
+        let recorded: LaneGit = { (args, dir, profile, stdin, timeout, cap) async throws(ProtocolError) in
+            await log.add(args, profile, cap: cap)
+            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin, timeout: timeout, cap: cap)
         }
         let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock,
                                   sandbox: (f.home, "/bin/zsh"), laneRunner: recorded)
@@ -1219,6 +1237,10 @@ extension WorkLoopReviewTests {
         // the tree's argument is the resolved hash, never a name
         let tree = try #require(calls.first { $0.args.first == "ls-tree" })
         #expect(tree.args.last == (try await head()))
+        // T2 f2fix8: only the copy's own gits ask above the plain laneGit's 1 MiB
+        #expect(calls.filter { ["ls-tree", "cat-file"].contains($0.args.first) }.allSatisfy { $0.cap == WorkLoop.reviewSnapshotCap })
+        _ = try await host.laneGit(["--version"], in: f.paddock)
+        #expect(await log.calls.last?.cap == 1 << 20)
 
         // F2 U2: an `export-ignore` of the commit hides nothing from the copy
         try "hidden.txt export-ignore\n".write(to: f.paddock.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
@@ -1231,6 +1253,17 @@ extension WorkLoopReviewTests {
         case .success(let u):
             #expect((try? String(contentsOf: u.url.appendingPathComponent("hidden.txt"), encoding: .utf8)) == "segredo\n")
         case .failure(let e): Issue.record("snapshot failed: \(e.why)")
+        }
+
+        // T2 f2fix8: a path that is not UTF-8 (only in the index: APFS refuses the name) fails the copy by name
+        let plant = #"oid=$(printf 'x\n' | git hash-object -w --stdin) && git update-index --add --cacheinfo "100644,$oid,$(printf 'bad\377.txt')" && git -c user.name=t -c user.email=t@t commit -qm bad"#
+        let sh = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", plant], in: f.paddock,
+                                              env: ProcessInfo.processInfo.environment, timeout: .seconds(30))
+        #expect(sh.status == 0, "\(sh.stderr)")
+        let s3 = try #require(WorkLoop.reviewScratch("v1c", in: host.reviewRoot)); defer { WorkLoop.dropScratch(s3) }
+        switch await loop.reviewSnapshot(try await head(), f.paddock, into: s3) {
+        case .success: Issue.record("a non-UTF-8 path was copied")
+        case .failure(let e): #expect(e.why.contains(WorkLoop.reviewSnapshotNotUTF8), "\(e.why)")
         }
     }
 }

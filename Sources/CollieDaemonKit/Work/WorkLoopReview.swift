@@ -139,9 +139,12 @@ extension WorkLoop {
     struct Snapshot: Sendable { var url: URL; var skipped: [String] }
 
     /// T1 f2fix8 (reviewOneCopy): a blob above `reviewOneCopyMaxBlob`, or one that would take the copy past
-    /// `reviewOneCopyMaxTotal`, is left out (named in the note): under `loopGit`'s 64 MiB cap, headers included.
+    /// `reviewOneCopyMaxTotal`, is left out (named in the note): under `reviewSnapshotCap`, headers included.
     static let reviewOneCopyMaxBlob = 4 << 20
     static let reviewOneCopyMaxTotal = 48 << 20
+    /// T2 f2fix8: the output cap of the copy's own gits (`ls-tree`, `cat-file --batch`); every other `laneGit` keeps 1 MiB.
+    static let reviewSnapshotCap = 64 << 20
+    static let reviewSnapshotNotUTF8 = "caminho não UTF-8 no commit"
     /// T1 f2fix8: the copy has `reviewOneCopyDeadline(turn)` seconds to be made: a fifth of the reviewers' turn, at least 30.
     static func reviewOneCopyDeadline(_ turn: Int) -> Int { Swift.max(30, turn / 5) }
     static let reviewOneCopyLate = "sem parecer: cópia não ficou pronta a tempo"
@@ -175,15 +178,19 @@ extension WorkLoop {
         var dirs: [String] = [snap.path]
         // folders read-only on any way out: a failure leaves nothing writable (`dropScratch` reopens them)
         defer { for d in dirs.reversed() { chmod(d, 0o555) } }
-        guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "-l", "--full-tree", hash], in: dir), ls.status == 0, !ls.truncated else {
+        guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "-l", "--full-tree", hash], stdin: nil, timeout: .seconds(120),
+                                                    cap: Self.reviewSnapshotCap, in: dir), ls.status == 0, !ls.truncated else {
             return fail("git ls-tree falhou")
         }
         let names = Set(Self.agentConfigs + ["CLAUDE.local.md"])
         // `inline`: a submodule's content, never read from git
         var items: [(comps: [Substring], path: String, oid: String, size: Int, inline: Data?)] = [], skipped: [String] = [], total = 0
-        for entry in ls.stdout.split(separator: "\0") {
-            guard let tab = entry.firstIndex(of: "\t") else { return fail("ls-tree ilegível") }
-            let meta = entry[..<tab].split(separator: " "), path = String(entry[entry.index(after: tab)...])
+        // T2 f2fix8: split on NUL in bytes; a path that is not UTF-8 fails the copy by name (decoded, it would become
+        // U+FFFD and two such paths collide on O_EXCL)
+        for entry in ls.stdoutData.split(separator: 0) {
+            guard let tab = entry.firstIndex(of: 0x09) else { return fail("ls-tree ilegível") }
+            let meta = String(decoding: entry[..<tab], as: UTF8.self).split(separator: " ")
+            guard let path = String(data: entry[(tab + 1)...], encoding: .utf8) else { return fail(Self.reviewSnapshotNotUTF8) }
             guard meta.count == 4 else { return fail("ls-tree ilegível") }
             let mode = meta[0], oid = String(meta[2])
             guard ["100644", "100755", "120000", "160000"].contains(mode) else { return fail("modo \(mode) em \(path)") }
@@ -206,7 +213,7 @@ extension WorkLoop {
             let input = Data(wanted.map { $0.oid + "\n" }.joined().utf8)
             let left = end - .now
             guard left > .zero else { return fail("sem tempo") }
-            guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, timeout: left, in: dir), b.status == 0, !b.truncated else {
+            guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, timeout: left, cap: Self.reviewSnapshotCap, in: dir), b.status == 0, !b.truncated else {
                 return fail("git cat-file --batch falhou")
             }
             let out = b.stdoutData

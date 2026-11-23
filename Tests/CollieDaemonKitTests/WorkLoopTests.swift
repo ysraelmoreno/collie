@@ -249,9 +249,9 @@ actor LoopFakeHost: LoopHost {
         return r
     }
     /// T1 f2fix8: `cat-file --batch` with its stdin, counted in `gits` like any other.
-    func laneGit(_ args: [String], stdin: Data, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+    func laneGit(_ args: [String], stdin: Data, timeout: Duration, in dir: URL) async throws(ProtocolError) -> ProcessResult {
         gits.append(args)
-        let r = try await GitRunner.run(args, in: dir, cap: 64 << 20, stdin: stdin)
+        let r = try await GitRunner.run(args, in: dir, timeout: timeout, cap: 64 << 20, stdin: stdin)
         await gitProbe?(args)
         return r
     }

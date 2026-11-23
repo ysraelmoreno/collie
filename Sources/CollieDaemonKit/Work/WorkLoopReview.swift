@@ -158,9 +158,13 @@ extension WorkLoop {
     /// checked (no absolute, empty, `.`, `..` nor `.git` component); written with O_EXCL|O_NOFOLLOW in folders made
     /// here; a symlink (120000) becomes a text file holding its target; a submodule (160000) a file holding its oid.
     /// T1 f2fix8 (reviewOneCopy): three gits whatever the tree's size: `rev-parse`, `ls-tree -r -z -l` (sizes first:
-    /// the caps are applied before any blob is read) and one `cat-file --batch` fed every oid on its stdin.
-    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> Result<Snapshot, SnapshotFailure> {
-        func fail(_ why: String) -> Result<Snapshot, SnapshotFailure> { .failure(SnapshotFailure(why: "cópia do commit: " + why)) }
+    /// the caps are applied before any blob is read) and one `cat-file --batch` fed every oid on its stdin. `end`: past
+    /// it the batch is killed, or the writing stops, and the copy fails with `reviewOneCopyLate`.
+    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL,
+                        until end: ContinuousClock.Instant = .now + .seconds(600)) async -> Result<Snapshot, SnapshotFailure> {
+        func fail(_ why: String) -> Result<Snapshot, SnapshotFailure> {
+            .failure(SnapshotFailure(why: ContinuousClock.now >= end ? Self.reviewOneCopyLate : "cópia do commit: " + why))
+        }
         let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
         guard let r = try? await host.laneGit(["rev-parse", "--verify", "--end-of-options", judged + "^{commit}"], in: dir), r.status == 0 else {
             return fail("o commit não resolveu")
@@ -200,7 +204,9 @@ extension WorkLoop {
         var blobs: [Data] = []
         if !wanted.isEmpty {
             let input = Data(wanted.map { $0.oid + "\n" }.joined().utf8)
-            guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, in: dir), b.status == 0, !b.truncated else {
+            let left = end - .now
+            guard left > .zero else { return fail("sem tempo") }
+            guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, timeout: left, in: dir), b.status == 0, !b.truncated else {
                 return fail("git cat-file --batch falhou")
             }
             let out = b.stdoutData
@@ -217,7 +223,7 @@ extension WorkLoop {
         }
         var made: Set<String> = [], next = 0
         for item in items {
-            if Task.isCancelled { return fail("cancelada") }
+            if ContinuousClock.now >= end { return fail("sem tempo") }
             let data: Data
             if let inline = item.inline { data = inline } else { data = blobs[next]; next += 1 }
             var p = snap.path
@@ -238,20 +244,15 @@ extension WorkLoop {
     }
 
     /// T1 f2fix8 (reviewOneCopy): the attempt's ONE copy of the judged commit (`reviewSnapshot`), in a folder of its own
-    /// under `reviewRoot`, made within `deadline` seconds (its gits killed past it: `killOnCancel`). The caller clones it
-    /// into each reviewer's folder (`reviewClone`) and drops `master` (always, whatever the result).
+    /// under `reviewRoot`, made within `deadline` seconds (the batch git is killed past it). The caller clones it into
+    /// each reviewer's folder (`reviewClone`) and drops `master` (always, whatever the result).
+    // ponytail: `rev-parse` and `ls-tree` keep `laneGit`'s own 120 s; the end is checked after them, not inside
     func reviewOneCopy(_ judged: String, _ dir: URL, agent: String, deadline: Int) async -> (master: URL?, Result<Snapshot, SnapshotFailure>) {
+        let end = ContinuousClock.now + .seconds(deadline)
         guard let master = Self.reviewScratch(Self.reviewerName(agent, persona: "copia"), in: host.reviewRoot) else {
             return (nil, .failure(SnapshotFailure(why: "cópia do commit: pasta não criada")))
         }
-        let built = await withTaskGroup(of: Result<Snapshot, SnapshotFailure>?.self) { g in
-            g.addTask { await BoundedProcess.$killOnCancel.withValue(true) { await self.reviewSnapshot(judged, dir, into: master) } }
-            g.addTask { try? await Task.sleep(for: .seconds(deadline)); return nil }
-            let first = await g.next() ?? nil
-            g.cancelAll()
-            return first
-        }
-        return (master, built ?? .failure(SnapshotFailure(why: Self.reviewOneCopyLate)))
+        return (master, await reviewSnapshot(judged, dir, into: master, until: end))
     }
 
     /// T1 f2fix8 (reviewOneCopy): the copy cloned into `<scratch>/reviewSnapshot` (`clonefile`: APFS shares the blocks

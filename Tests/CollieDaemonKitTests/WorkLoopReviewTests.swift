@@ -1187,9 +1187,9 @@ extension WorkLoopReviewTests {
         let paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
         await d.router.v1Add(paddock)
         let work = UUID(), log = V1GitLog()
-        let recorded: LaneGit = { (args, dir, profile, stdin) async throws(ProtocolError) in
+        let recorded: LaneGit = { (args, dir, profile, stdin, timeout) async throws(ProtocolError) in
             await log.add(args, profile)
-            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin)
+            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin, timeout: timeout)
         }
         let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock,
                                   sandbox: (f.home, "/bin/zsh"), laneRunner: recorded)
@@ -1281,6 +1281,18 @@ extension WorkLoopReviewTests {
         try "mudado\n".write(to: fa, atomically: false, encoding: .utf8)
         #expect(try String(contentsOf: fb, encoding: .utf8) == "original\n")
         #expect(try String(contentsOf: c.url.appendingPathComponent("a.txt"), encoding: .utf8) == "original\n")
+    }
+
+    /// Past its deadline the copy is no copy: every reviewer is mute with `reviewOneCopyLate` (A1: a note, no veto).
+    @Test func reviewOneCopyPastItsDeadline() async throws {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true")]); defer { r.cleanup() }
+        let head = try await GitRunner.run(["rev-parse", "HEAD"], in: r.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scratch = try #require(WorkLoop.reviewScratch("t1late", in: r.host.reviewRoot)); defer { WorkLoop.dropScratch(scratch) }
+        switch await r.loop.reviewSnapshot(head, r.repo, into: scratch, until: .now) {
+        case .success: Issue.record("a copy past its deadline")
+        case .failure(let f): #expect(f.why == WorkLoop.reviewOneCopyLate, "\(f.why)")
+        }
+        #expect(!(await r.host.gits.contains { $0.first == "cat-file" }), "the batch ran past the deadline")
     }
 
     /// The turn that runs out while the copy is made is no refusal: no reviewer, the attempt ends for want of budget.

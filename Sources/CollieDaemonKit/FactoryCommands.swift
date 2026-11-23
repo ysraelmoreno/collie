@@ -27,9 +27,18 @@ enum FactoryDoctorReader {
         for p in paths where isCI(p) && s.ci.count < maxScripts {
             if let t = text(root, p) { s.ci[p] = t }
         }
-        switch baitResults(root: root) {   // U4: escaped baits lower their layer
+        // U4: escaped baits lower their layer. A link or a big file is refused; an invalid file only marks the layers it hides
+        // (minor nit: it no longer takes the whole report down)
+        switch data(root, FactoryBait.resultsPath) {
         case .failure(let e): return .failure(e)
-        case .success(let r): s.baits = r?.doctorInput
+        case .success(nil): break
+        case .success(let d?):
+            switch BaitResults.parse(d) {
+            case .success(let r): s.baits = r.doctorInput
+            case .failure(let e):
+                let m = "\(FactoryBait.resultsPath): \(e.message)"
+                s.baits = FactoryDoctor.BaitResults(errors: Dictionary(uniqueKeysWithValues: BaitResults.failingLayers(d).map { ($0.rawValue, m) }))
+            }
         }
         return .success(s)
     }
@@ -123,7 +132,7 @@ extension CommandRouter {
             case .success(let x): r = x ?? BaitResults()
             }
             let rep: [String: JSONValue] = ["byLayer": value(r.captureRateByLayer()), "byPersona": value(r.captureRateByPersona()),
-                                            "escaped": value(r.runs.filter { !$0.caught }), "costSeconds": .number(Double(r.runs.reduce(0) { $0 + $1.costSeconds })),
+                                            "escaped": value(r.runs.filter { !$0.caught }), "costSeconds": .number(Double(r.totalCost)),
                                             "runs": .number(Double(r.runs.count))]
             return .object(["output": .string(lines(r.report())), "report": .object(rep)])
         }
@@ -146,7 +155,7 @@ extension CommandRouter {
 enum FactoryRatchet {
     enum Action: String, Sendable { case check, update, raise }
     struct Outcome: Sendable, Equatable { var output: String, passed: Bool, wrote: Bool }
-    static let maxBaselineBytes = 1 << 20
+    static let maxBaselineBytes = 1 << 20, maxLogLines = 100
     static let measureTimeout: Duration = .seconds(600)
 
     /// The baseline's path checked by `FactoryProfile.confinedPath` (the parser's rule, one function): relative, no `..`,
@@ -254,7 +263,9 @@ enum FactoryRatchet {
         do { base = try Ratchet.Baseline.parse(old) } catch { throw bad(error, rel) }
         do { cur = try Ratchet.Baseline.parse(measured) } catch { throw bad(error, "a medição de '\(name)'") }
         // the file's `#` lines (the raise log) stay on top, in order
-        let header = old.split(separator: "\n").filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.map { "\($0)\n" }.joined()
+        let header = old.split(separator: "\n").filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.map(String.init)
+        // nit: the log keeps its last `maxLogLines` lines, so it never grows past what `read` takes (1 MB)
+        func log(_ ls: [String]) -> String { ls.suffix(maxLogLines).map { "\($0)\n" }.joined() }
         func list(_ cs: [Ratchet.Change]) -> String { cs.map { "  \($0.key): \($0.before) -> \($0.after)" }.joined(separator: "\n") }
         let verdict = Ratchet.compare(baseline: base, current: cur)
         // minor 6: a measure that exits 0 with no output would zero the baseline; refused in update, flagged in check
@@ -278,12 +289,12 @@ enum FactoryRatchet {
                 return Outcome(output: "catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n", passed: false, wrote: false)
             }
             guard verdict != .same else { return Outcome(output: "catraca \(name): igual ao baseline; nada a gravar\n", passed: true, wrote: false) }
-            try write(header + low.render(), dir: dir, file, rel: rel)
+            try write(log(header) + low.render(), dir: dir, file, rel: rel)
             return Outcome(output: "catraca \(name): baseline abaixado em \(rel)\n", passed: true, wrote: true)
         case .raise:
             let up: Ratchet.Raised
             do { up = try Ratchet.raise(baseline: base, to: cur, reason: reason ?? "", date: now) } catch { throw bad(error, "") }
-            try write(header + up.log.map { "\($0)\n" }.joined() + up.baseline.render(), dir: dir, file, rel: rel)
+            try write(log(header + up.log) + up.baseline.render(), dir: dir, file, rel: rel)
             return Outcome(output: "catraca \(name): baseline gravado em \(rel)\n" + up.log.map { "  \($0)\n" }.joined(), passed: true, wrote: true)
         }
     }

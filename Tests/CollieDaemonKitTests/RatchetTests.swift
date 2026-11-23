@@ -169,6 +169,18 @@ private func apply(_ a: FactoryRatchet.Action, _ dir: URL, measured: String, rea
     }
 
     /// F1 (minor 6): an empty measurement over a non-empty baseline is refused by update and flagged by check.
+    @Test func raiseLogKeepsItsLast100Lines() throws {   // nit: the log never grows past what `read` takes
+        try project { dir in
+            let old = (1...150).map { "# 2026-01-01: k \($0) -> \($0 + 1): r\($0)\n" }.joined() + "k 1\n"
+            try Data(old.utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))
+            #expect(try apply(.raise, dir, measured: "k 2\n", reason: "mais um").wrote)
+            let logs = (file(dir, "scripts/ci/base.txt") ?? "").split(separator: "\n").filter { $0.hasPrefix("#") }
+            #expect(logs.count == 100 && logs.first == "# 2026-01-01: k 52 -> 53: r52" && logs.last?.hasSuffix("k 1 -> 2: mais um") == true)
+            #expect(try apply(.update, dir, measured: "k 1\n").wrote)
+            #expect((file(dir, "scripts/ci/base.txt") ?? "").split(separator: "\n").filter { $0.hasPrefix("#") } == logs)
+        }
+    }
+
     @Test func emptyMeasurementRefused() throws {
         try project { dir in
             try Data("r a 2\n".utf8).write(to: dir.appendingPathComponent("scripts/ci/base.txt"))

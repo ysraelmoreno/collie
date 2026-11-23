@@ -94,11 +94,12 @@ private let sample = BaitResults(runs: [
         guard case .success(let back) = results(text) else { Issue.record("\(String(describing: failure(results(text))?.message))"); return }
         #expect(back == sample && back.render() == text)
         #expect(sample.captureRateByLayer() == ["review": .init(caught: 2, total: 3), "judge": .init(caught: 0, total: 1)])
-        #expect(sample.captureRateByPersona() == ["correcao": .init(caught: 1, total: 4), "seguranca": .init(caught: 1, total: 4)])
+        // a persona's denominator is the review layer's runs (3), not every run (4): the report's case "1 of 3"
+        #expect(sample.captureRateByPersona() == ["correcao": .init(caught: 1, total: 3), "seguranca": .init(caught: 1, total: 3)])
         #expect(sample.escaped() == ["review": 1, "judge": 1])
         #expect(BaitResults().escaped().isEmpty && BaitResults().captureRateByLayer().isEmpty)
         let r = sample.report()
-        #expect(r.contains("review: 2/3 (66%)") && r.contains("correcao: 1/4 (25%)") && r.contains("custo: 1020 s"))
+        #expect(r.contains("review: 2/3 (66%)") && r.contains("correcao: 1/3 (33%)") && r.contains("custo: 1020 s"))
         #expect(r.contains("corrida (2026-11-23, camada review)") && r.contains("spec-editado"))
         #expect(BaitResults().report().contains("nenhuma isca passou"))
     }
@@ -111,8 +112,23 @@ private let sample = BaitResults(runs: [
         #expect(failure(results(#"{"version": 1, "runs": [\#(run.replacingOccurrences(of: ", \"layer\": \"review\"", with: ""))]}"#)) == .caughtWithoutLayer(path: "runs[0]"))
         #expect(failure(results(#"{"version": 1, "runs": [\#(run.replacingOccurrences(of: "true", with: "1"))]}"#)) == .wrongType(path: "runs[0].caught", expected: "booleano"))
         #expect(failure(results(#"{"version": 1, "runs": [\#(run.replacingOccurrences(of: "\"costSeconds\": 1", with: "\"costSeconds\": -5"))]}"#)) == .outOfRange(path: "runs[0].costSeconds", value: -5))
-        // an escaped run may omit the persona and carry the layer it got past; null is accepted for both
-        if case .failure(let e) = results(#"{"version": 1, "runs": [{"bait": "x", "date": "d", "caught": false, "layer": null, "persona": null, "costSeconds": 0}]}"#) { Issue.record("\(e.message)") }
+        // an escaped run may omit the persona (null too) but must carry the layer it got past
+        if case .failure(let e) = results(#"{"version": 1, "runs": [{"bait": "x", "date": "d", "caught": false, "layer": "judge", "persona": null, "costSeconds": 0}]}"#) { Issue.record("\(e.message)") }
+        for l in [#""layer": null, "#, ""] {
+            #expect(failure(results(#"{"version": 1, "runs": [{"bait": "x", "date": "d", "caught": false, \#(l)"costSeconds": 0}]}"#)) == .escapedWithoutLayer(path: "runs[0]"), "\(l)")
+        }
+        // the cost has a ceiling (a week), so no sum traps
+        #expect(failure(results(#"{"version": 1, "runs": [\#(run.replacingOccurrences(of: "\"costSeconds\": 1", with: "\"costSeconds\": 604801"))]}"#)) == .outOfRange(path: "runs[0].costSeconds", value: 604801))
+        if case .failure(let e) = results(#"{"version": 1, "runs": [\#(run.replacingOccurrences(of: "\"costSeconds\": 1", with: "\"costSeconds\": 604800"))]}"#) { Issue.record("\(e.message)") }
+        let huge = run.replacingOccurrences(of: "\"costSeconds\": 1", with: "\"costSeconds\": 9000000000000000000")
+        #expect(failure(results(#"{"version": 1, "runs": [\#(huge), \#(huge)]}"#)) == .outOfRange(path: "runs[0].costSeconds", value: 9_000_000_000_000_000_000))
+    }
+
+    @Test func costSumSaturates() {   // runs built in code skip the parser's ceiling: the sum still never traps
+        let big = BaitResults.Run(bait: "x", date: "d", caught: true, layer: .review, costSeconds: 9_000_000_000_000_000_000)
+        let r = BaitResults(runs: [big, big])
+        #expect(r.totalCost == Int.max && r.report().contains("custo: \(Int.max) s"))
+        #expect(sample.totalCost == 1020)
     }
 
     // MARK: the doctor
@@ -134,9 +150,18 @@ private let sample = BaitResults(runs: [
         try put(proj, FactoryBait.resultsPath, sample.render())
         guard case .success(let snap) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("snapshot"); return }
         #expect(snap.baits == FactoryDoctor.BaitResults(escapedBaits: ["review": 1, "judge": 1]))
+        // an invalid file does not take the doctor down: a bad root marks every layer, a bad run only its own layer
         try put(proj, FactoryBait.resultsPath, #"{"version": 1, "runs": [], "x": 1}"#)
-        guard case .failure(let e) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("bad file accepted"); return }
-        #expect(e.message.contains("campo desconhecido 'x'"))
+        guard case .success(let bad) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("bad file took the doctor down"); return }
+        #expect(Set(bad.baits?.errors.keys ?? [:].keys) == Set(FactoryDoctor.Layer.allCases.map(\.rawValue)))
+        #expect(bad.baits?.errors["judge"]?.contains("campo desconhecido 'x'") == true)
+        let good = #"{"bait": "a", "date": "d", "caught": true, "layer": "review", "costSeconds": 1}"#
+        try put(proj, FactoryBait.resultsPath, #"{"version": 1, "runs": [\#(good), {"bait": "b", "date": "d", "caught": true, "layer": "judge", "costSeconds": -1}]}"#)
+        guard case .success(let one) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("bad run took the doctor down"); return }
+        #expect(one.baits?.errors.keys.sorted() == ["judge"] && one.baits?.escapedBaits.isEmpty == true)
+        let marked = FactoryDoctor.score(FactoryDoctor.Snapshot(config: c, baits: one.baits))
+        #expect(s(marked, .judge) == max(0, s(clean, .judge) - 1) && s(marked, .static) == s(clean, .static))
+        #expect(marked.layers.first { $0.layer == .judge }!.evidence.last?.hasPrefix("erro: .collie/factory/bait-results.json: 'runs[1].costSeconds'") == true)
         let file = proj.appendingPathComponent(FactoryBait.resultsPath)
         try FileManager.default.removeItem(at: file)
         let outside = try dir("isca-out")

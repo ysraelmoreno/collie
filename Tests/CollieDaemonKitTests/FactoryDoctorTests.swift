@@ -87,17 +87,30 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
         let good = D.Snapshot(config: try cfg(#"{"gate": "scripts/ci.sh"}"#), scripts: ["scripts/ci.sh": "swift test\n"])
         let g = layer(D.score(good), .judge)
         #expect(g.score == 3 && g.evidence == ["gate cita scripts/ci.sh, versionado: lido do commit base"])
+        // a cited script the repository does not have is no evidence: a warning
+        let ghost = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "scripts/ci.sh"}"#))), .judge)
+        #expect(ghost.score == 1 && ghost.evidence == ["aviso: gate cita scripts/ci.sh, que não existe no repositório"])
+        // a bare gate cites no versioned file: at most 2 (the runner's config is unguarded)
+        let bare = layer(D.score(D.Snapshot(config: try cfg(#"{"gate": "npm test", "precheck": "npm run build"}"#))), .judge)
+        #expect(bare.score == 2 && bare.evidence.first?.contains("não citam nenhum arquivo versionado") == true && !bare.nextAction.isEmpty)
+        // naming the file that controls the runner counts
+        let named = D.Snapshot(config: try cfg(#"{"gate": "npm test --prefix . && cat package.json"}"#), paths: ["package.json"])
+        #expect(layer(D.score(named), .judge).score == 3 && layer(D.score(named), .judge).evidence == ["gate cita package.json, versionado: lido do commit base"])
     }
 
     @Test func smallRules() {
         #expect(D.runsTests("swift test --filter X") && D.runsTests("npm test") && D.runsTests("go test ./...") && D.runsTests("cd a && pytest -q"))
         #expect(D.runsTests("xcodebuild test -scheme A") && D.runsTests("./node_modules/.bin/vitest run"))
         #expect(!D.runsTests("test -f x && swift build") && !D.runsTests("make") && !D.runsTests("cargo check"))
+        for c in ["npm run test:ci", "yarn test:unit", "npm run test-e2e", "bundle exec rspec", "npx mocha", "python -m unittest discover",
+                  "vendor/bin/phpunit", "ctest --output-on-failure", "make check"] { #expect(D.runsTests(c), "\(c)") }
+        #expect(!D.runsTests("npm run testing") && !D.runsTests("make build") && !D.runsTests("check"))
         #expect(D.citedPaths("./scripts/a.sh x && bash tools/b.py --flag=c/d && echo hi") == ["scripts/a.sh", "tools/b.py"])
         #expect(D.outsideRepo("/a") && D.outsideRepo("~/a") && D.outsideRepo("a/../../b") && !D.outsideRepo("scripts/a.sh"))
         #expect(D.ignored("build/x.sh", "build") && D.ignored("a/tmp.sh", "*.sh") && D.ignored("local/x", "/local/"))
         #expect(!D.ignored("src/local/x", "/local/") && !D.ignored("scripts/a.sh", "# scripts\n!scripts/a.sh"))
         #expect(D.onlyLooksForFiles("test -f a && grep -q b a\n[ -f c ]") && !D.onlyLooksForFiles("grep x a && swift test") && !D.onlyLooksForFiles(""))
+        #expect(D.onlyLooksForFiles("grep -q x a || exit 1\n{ test -f b; }\ntrue\necho ok") && !D.onlyLooksForFiles("grep -q x a || exit 1\nswift test\necho ok"))
         #expect(D.personaFile("pm", ["docs/fabrica/personas/pm.md"]) == "docs/fabrica/personas/pm.md")
         #expect(D.personaFile("pm", ["review/personas/pm.md"]) == "review/personas/pm.md" && D.personaFile("pm", ["pm.md"]) == nil)
         #expect([0, 1, 2, 3].map(D.rating) == [.fraco, .fraco, .ok, .forte])

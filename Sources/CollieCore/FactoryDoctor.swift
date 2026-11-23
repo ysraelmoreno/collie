@@ -7,10 +7,12 @@ public enum FactoryDoctor {
     public enum Layer: String, Codable, CaseIterable, Sendable { case `static`, judge, verification, review, prose, guardrails }
     public enum Rating: String, Codable, Sendable { case fraco = "FRACO", ok = "OK", forte = "FORTE" }
 
-    /// U4 fills it: per layer (its raw value), how many baits passed that layer should have caught.
+    /// U4 fills it: per layer (its raw value), how many baits passed that layer should have caught. `errors`: per layer, why
+    /// the results file could not vouch for it (an invalid `bait-results.json`); that layer loses 1 too.
     public struct BaitResults: Codable, Equatable, Sendable {
         public var escapedBaits: [String: Int]
-        public init(escapedBaits: [String: Int] = [:]) { self.escapedBaits = escapedBaits }
+        public var errors: [String: String]
+        public init(escapedBaits: [String: Int] = [:], errors: [String: String] = [:]) { self.escapedBaits = escapedBaits; self.errors = errors }
     }
 
     public struct Snapshot: Sendable, Equatable {
@@ -97,11 +99,16 @@ public enum FactoryDoctor {
         return nil
     }
 
-    /// Some simple command of `cmd` is a test runner: `test` as an argument (`npm test`, `swift test`, `go test`; never the
-    /// shell's `test -f`, which is a first word), or `pytest`/`jest`/`vitest` anywhere.
+    static let runners: Set<String> = ["pytest", "jest", "vitest", "rspec", "mocha", "unittest", "phpunit", "ctest"]
+
+    /// Some simple command of `cmd` is a test runner: `test`, `test:x` or `test-x` as an argument (`npm test`, `npm run test:ci`,
+    /// `yarn test:unit`, `go test`; never the shell's `test -f`, which is a first word), a known runner anywhere (`bundle exec
+    /// rspec`, `python -m unittest`), or `make check`.
     public static func runsTests(_ cmd: String) -> Bool {
         simpleCommands(cmd).contains { words in
-            words.dropFirst().contains("test") || words.contains { ["pytest", "jest", "vitest"].contains(String($0.split(separator: "/").last ?? "")) }
+            words.dropFirst().contains { $0 == "test" || $0.hasPrefix("test:") || $0.hasPrefix("test-") }
+                || words.contains { runners.contains(String($0.split(separator: "/").last ?? "")) }
+                || (words.first == "make" && words.dropFirst().contains("check"))
         }
     }
 
@@ -123,11 +130,19 @@ public enum FactoryDoctor {
         }
         var warn: [String] = [], ev: [String] = []
         let cmds = [("gate", c.gate), ("precheck", c.precheck), ("smoke", c.smoke)].compactMap { k, v in v.map { (k, $0) } }
+        // what the reader saw: listed paths, or a script it read (deeper than the listing goes)
+        func present(_ p: String) -> Bool { s.paths.contains(p) || s.scripts[p] != nil }
         for (k, cmd) in cmds {
-            for p in citedPaths(cmd) {
+            let cited = citedPaths(cmd)
+            for p in cited {
                 if outsideRepo(p) { warn.append("\(k) cita script fora do repositório: \(p)") }
                 else if ignored(p, s.gitignore) { warn.append("\(k) cita script ignorado pelo git (.gitignore): \(p)") }
+                else if !present(p) { warn.append("\(k) cita \(p), que não existe no repositório") }
                 else { ev.append("\(k) cita \(p), versionado: lido do commit base") }
+            }
+            // a file the command names that the reader saw (`package.json`, `Package.swift`): it controls the runner
+            for w in simpleCommands(cmd).flatMap({ $0 }) where !cited.contains(w) && present(w) && !ignored(w, s.gitignore) {
+                ev.append("\(k) cita \(w), versionado: lido do commit base")
             }
         }
         for p in s.scripts.keys.sorted() where isTaskCheck(p) && onlyLooksForFiles(s.scripts[p]!) {
@@ -141,7 +156,12 @@ public enum FactoryDoctor {
             return LayerScore(layer: .judge, score: 2, evidence: ["sem gate, precheck nem smoke: o juiz é só o --check de cada tarefa"],
                               nextAction: ["defina 'gate' em collie-work.json"])
         }
-        return LayerScore(layer: .judge, score: 3, evidence: ev.isEmpty ? ["gate, precheck e smoke são comandos do commit base"] : ev, nextAction: [])
+        if ev.isEmpty {   // a bare gate (`npm test`): an agent can neutralize the runner through its config, which nothing guards
+            return LayerScore(layer: .judge, score: 2,
+                              evidence: ["gate, precheck e smoke não citam nenhum arquivo versionado: um agente pode neutralizar o runner pela config (ex.: o script test do package.json)"],
+                              nextAction: ["faça o gate chamar um script versionado (ex.: scripts/gate.sh) ou citar os arquivos que controlam o runner"])
+        }
+        return LayerScore(layer: .judge, score: 3, evidence: ev, nextAction: [])
     }
 
     /// Words of the command that look like a script path (`scripts/x.sh`, `./check.py`, `/abs/x`), `./` dropped, in order, once each.
@@ -183,14 +203,17 @@ public enum FactoryDoctor {
         return name.hasPrefix("check-") && name.hasSuffix(".sh")
     }
 
-    /// Every line that does something is a `grep` or a `test -f`/`[ -f`: the check only looks for a file or a word.
+    static let inert: Set<String> = ["exit", "echo", "true", "{", "}"]
+
+    /// Every line that does something is a `grep` or a `test -f`/`[ -f`: the check only looks for a file or a word. `exit`,
+    /// `echo`, `true` and braces do nothing (`grep -q x a || exit 1`, a final `echo ok`).
     public static func onlyLooksForFiles(_ text: String) -> Bool {
         let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("#") && !$0.hasPrefix("set ") && !$0.hasPrefix("cd ") }
         guard !lines.isEmpty else { return false }
         return lines.allSatisfy { l in
             simpleCommands(l).allSatisfy { w in
-                guard let f = w.first else { return true }
+                guard let f = w.first, !inert.contains(f) else { return true }
                 return f == "grep" || ((f == "test" || f == "[") && w.dropFirst().first.map { ["-f", "-e", "-s"].contains($0) } == true)
             }
         }
@@ -283,8 +306,12 @@ public enum FactoryDoctor {
 
     // MARK: baits
 
-    /// A bait that got past the layer meant to catch it takes 1 off that layer.
+    /// A bait that got past the layer meant to catch it takes 1 off that layer; so does an invalid results file, on the layers it hides.
     public static func escaped(_ l: LayerScore, _ baits: BaitResults?) -> LayerScore {
+        if let m = baits?.errors[l.layer.rawValue] {
+            return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + ["erro: \(m)"],
+                              nextAction: l.nextAction + ["corrija \(FactoryBait.resultsPath) (collie factory bait report mostra o erro)"])
+        }
         guard let n = baits?.escapedBaits[l.layer.rawValue], n > 0 else { return l }
         return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + ["\(n) isca(s) passaram por esta camada"],
                           nextAction: l.nextAction + ["reforce a camada contra as iscas que escaparam"])

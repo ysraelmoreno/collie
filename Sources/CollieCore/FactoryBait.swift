@@ -7,6 +7,8 @@ public enum FactoryBait {
     public static let catalogPath = "docs/fabrica/iscas/catalogo.json"
     public static let resultsPath = ".collie/factory/bait-results.json"
     public static let maxBaits = 100, maxRuns = 5000, maxText = 300
+    /// A week: a run's `costSeconds` above it is refused, so no sum of runs can trap (MAJOR 1).
+    public static let maxCost = 86400 * 7
 
     /// What the bait should trigger: the reviewer's veto, the task's check failing, or a guardrail (tamper, destructive).
     public enum Expect: String, Codable, Sendable, CaseIterable { case veto, checkFail = "check-fail", `guard` }
@@ -38,6 +40,7 @@ public enum FactoryBait {
         case badText(path: String)
         case outOfRange(path: String, value: Int)
         case caughtWithoutLayer(path: String)
+        case escapedWithoutLayer(path: String)
 
         /// One line, in Portuguese, with the path. Values come from the file: whoever shows them cleans them.
         public var message: String {
@@ -53,8 +56,9 @@ public enum FactoryBait {
             case .badPath(let p): "'\(p)' precisa ser caminho relativo ao repositório (sem '..', sem '/' inicial, sem controle, até \(FactoryProfile.maxBaseline) caracteres)"
             case .badChoice(let p, let v, let a): "'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))"
             case .badText(let p): "'\(p)' precisa ser texto não vazio de até \(maxText) caracteres, sem controle"
-            case .outOfRange(let p, let v): "'\(p)' é \(v); precisa ser inteiro >= 0"
+            case .outOfRange(let p, let v): "'\(p)' é \(v); precisa ser inteiro de 0 a \(maxCost)"
             case .caughtWithoutLayer(let p): "'\(p)': caught true precisa de layer (a camada que pegou)"
+            case .escapedWithoutLayer(let p): "'\(p)': caught false precisa de layer (a camada que devia ter pegado)"
             }
         }
     }
@@ -171,13 +175,37 @@ public struct BaitResults: Codable, Sendable, Equatable {
                 let persona = try o["persona"].flatMap { $0 is NSNull ? nil : $0 }.map { try F.name($0, "\(p).persona") }
                 guard let n = try F.required(o, "costSeconds", p) as? NSNumber, !F.isBool(n), let cost = Int(exactly: n.doubleValue)
                 else { throw F.BaitError.wrongType(path: "\(p).costSeconds", expected: "número inteiro") }
-                guard cost >= 0 else { throw F.BaitError.outOfRange(path: "\(p).costSeconds", value: cost) }
-                if c.boolValue && layer == nil { throw F.BaitError.caughtWithoutLayer(path: p) }
+                guard cost >= 0, cost <= F.maxCost else { throw F.BaitError.outOfRange(path: "\(p).costSeconds", value: cost) }
+                if layer == nil { throw c.boolValue ? F.BaitError.caughtWithoutLayer(path: p) : F.BaitError.escapedWithoutLayer(path: p) }
                 out.runs.append(Run(bait: try F.name(try F.required(o, "bait", p), "\(p).bait"), date: try F.text(try F.required(o, "date", p), "\(p).date"),
                                     caught: c.boolValue, layer: layer, persona: persona, costSeconds: cost))
             }
             return .success(out)
         } catch let e as F.BaitError { return .failure(e) } catch { return .failure(.badJSON("bait-results.json")) }
+    }
+
+    /// The layers an invalid file hides from the doctor: each run that fails parsed alone names its layer; nothing nameable
+    /// (bad JSON, a bad root, a bad layer, too many runs): every layer, since none of them can be credited.
+    public static func failingLayers(_ data: Data) -> [FactoryDoctor.Layer] {
+        guard var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], let runs = root["runs"] as? [Any] else { return FactoryDoctor.Layer.allCases }
+        func fails(_ rs: [Any]) -> Bool {
+            root["runs"] = rs
+            guard let d = try? JSONSerialization.data(withJSONObject: root) else { return true }
+            if case .failure = parse(d) { return true }
+            return false
+        }
+        guard !fails([]) else { return FactoryDoctor.Layer.allCases }
+        var out: [FactoryDoctor.Layer] = []
+        for run in runs where fails([run]) {
+            guard let l = ((run as? [String: Any])?["layer"] as? String).flatMap(FactoryDoctor.Layer.init(rawValue:)) else { return FactoryDoctor.Layer.allCases }
+            if !out.contains(l) { out.append(l) }
+        }
+        return out.isEmpty ? FactoryDoctor.Layer.allCases : FactoryDoctor.Layer.allCases.filter(out.contains)
+    }
+
+    /// Every run's cost, saturating at `Int.max`: never traps, even on runs built in code past `maxCost`.
+    public var totalCost: Int {
+        runs.reduce(0) { s, r in let (v, o) = s.addingReportingOverflow(r.costSeconds); return o ? Int.max : v }
     }
 
     /// Sorted keys, pretty, a final newline: the same runs always give the same bytes.
@@ -196,10 +224,11 @@ public struct BaitResults: Codable, Sendable, Equatable {
         return out
     }
 
-    /// Per persona: runs it caught over all runs.
+    /// Per persona: runs it caught over the runs of the `review` layer (the only layer a persona works in).
     public func captureRateByPersona() -> [String: Rate] {
         var out: [String: Rate] = [:]
-        for r in runs where r.caught { if let p = r.persona { out[p, default: Rate(caught: 0, total: runs.count)].caught += 1 } }
+        let total = runs.filter { $0.layer == .review }.count
+        for r in runs where r.caught { if let p = r.persona { out[p, default: Rate(caught: 0, total: total)].caught += 1 } }
         return out
     }
 
@@ -213,7 +242,7 @@ public struct BaitResults: Codable, Sendable, Equatable {
     /// The `report` text: rate per layer and per persona, the baits that got past, total cost.
     public func report() -> String {
         func rows(_ m: [String: Rate]) -> [String] { m.keys.sorted().map { "  \($0): \(m[$0]!.text)" } }
-        var lines = ["execuções: \(runs.count), custo: \(runs.reduce(0) { $0 + $1.costSeconds }) s", "por camada:"] + rows(captureRateByLayer())
+        var lines = ["execuções: \(runs.count), custo: \(totalCost) s", "por camada:"] + rows(captureRateByLayer())
         lines += ["por persona:"] + rows(captureRateByPersona())
         let gone = runs.filter { !$0.caught }
         lines.append(gone.isEmpty ? "nenhuma isca passou" : "iscas que passaram:")

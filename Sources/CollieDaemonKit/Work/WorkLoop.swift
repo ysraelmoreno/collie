@@ -67,6 +67,8 @@ protocol LoopHost: Sendable {
     /// F2 Z2: what a strict loop agent writes under the home besides caches (`WorkLoop.strictWritable`): the home and
     /// those paths (write grants, paddocks).
     func strictWrites() async -> (home: URL, paths: [String])
+    /// F2 V2: the home whose `.claude.json` the reviewers read (`reviewGlobalConfigHash`): `strictWrites`'s.
+    func globalConfigHome() async -> URL
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -98,6 +100,7 @@ extension LoopHost {
     var reviewRoot: URL { WorkLoop.reviewRoot(of: patchDir(UUID()).deletingLastPathComponent()) }
     /// The tests' fakes: the user's home, no grants.
     func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), []) }
+    func globalConfigHome() async -> URL { await strictWrites().home }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -292,7 +295,7 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        if loop.review == true { run.globalConfig = Self.reviewGlobalConfigHash(home: await host.strictWrites().home, reviewRoot: host.reviewRoot) }
+        if loop.review == true { run.globalConfig = Self.reviewGlobalConfigHash(home: await host.globalConfigHome(), reviewRoot: host.reviewRoot) }
         // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
                                                         precheck: loop.precheck != nil, reviewer: loop.review == true,
@@ -558,7 +561,7 @@ actor WorkLoop {
             let tree = await reviewTree(dir)
             let configs = Self.reviewHashAgentConfig(dir, status: tree)
             // F2 V2: the home's `~/.claude.json` as the reviewers are launched: changed since the start, all mute
-            let home = await host.strictWrites().home
+            let home = await host.globalConfigHome()
             let globalLaunch = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, configMoved: r.globalConfig != globalLaunch, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)

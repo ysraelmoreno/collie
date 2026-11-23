@@ -62,10 +62,11 @@ actor LoopFakeHost: LoopHost {
     /// F2 Z2: what the loop's agent writes under the home (its grants, paddocks): none unless a test opens some.
     var opened: [String] = []
     func setOpened(_ o: [String]) { opened = o }
-    /// F2 V2: a fake home (its `.claude.json`), instead of the user's.
+    /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
     var home: URL?
     func setHome(_ h: URL) { home = h }
-    func strictWrites() async -> (home: URL, paths: [String]) { (home ?? URL(fileURLWithPath: NSHomeDirectory()), opened) }
+    func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), opened) }
+    func globalConfigHome() async -> URL { home ?? URL(fileURLWithPath: NSHomeDirectory()) }
     /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
     static func testRoot() -> URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

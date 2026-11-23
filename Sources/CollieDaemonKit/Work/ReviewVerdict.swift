@@ -36,11 +36,13 @@ struct PersonaVerdict: Sendable, Equatable {
     }
 }
 
-/// R2: the review of one attempt. `reason` is set only on a refusal; `notes` are minor/nit of approving personas.
+/// R2: the review of one attempt. A1 (reviewAdvisory): `approved` is false only on a veto, whose `reason` it carries;
+/// `notes` are what did not veto; `silent` says why there is no opinion at all (then the attempt goes as if unreviewed).
 struct ReviewOutcome: Sendable, Equatable {
     var approved: Bool
     var reason: String?
     var notes: [String]
+    var silent: String? = nil
 }
 
 /// R2: pure reading of a reviewer's answer and aggregation of the personas. No host, no clock.
@@ -132,24 +134,38 @@ enum ReviewVerdict {
         return text.hasSuffix("\n") ? n - 1 : (text.isEmpty ? 0 : n)
     }
 
-    /// Refuses if ANY persona refuses (or none answered); minor/nit of approving personas become notes.
+    /// A1 (reviewAdvisory): the review is an opinion (parecer), never an approval. Only a VETO fails the attempt: a
+    /// valid reject with at least one `confirmed` finding. Anything else is a note: an approve, a reject with only
+    /// minor/nit (or a blocker without file and line), a mute or invalid persona ("sem parecer: [p] ..."). No valid
+    /// verdict at all (none answered, all mute or invalid) is `silent`, the note "sem parecer: <motivo>".
     static func aggregate(_ verdicts: [PersonaVerdict]) -> ReviewOutcome {
-        guard !verdicts.isEmpty else {
-            return ReviewOutcome(approved: false, reason: "revisor recusou: nenhuma persona respondeu", notes: [])
+        let vetoes = verdicts.compactMap { v -> String? in
+            let found = v.invalid == nil && !v.approved ? v.findings.filter(confirmed) : []
+            return found.isEmpty ? nil : "[\(v.persona)] " + found.map(\.text).joined(separator: "; ")
         }
-        let refusals = verdicts.filter { !$0.approved }
-        let notes = verdicts.filter(\.approved).flatMap { verdict in
-            verdict.findings.filter { !$0.severity.blocks }.map { "[\(verdict.persona)] \($0.text)" }
+        let notes = verdicts.flatMap { v -> [String] in
+            if let invalid = v.invalid { return ["\(reviewAdvisoryNone): [\(v.persona)] \(invalid)"] }
+            return v.findings.filter { v.approved || !confirmed($0) }.map { "[\(v.persona)] \($0.text)" }
         }
-        guard !refusals.isEmpty else { return ReviewOutcome(approved: true, reason: nil, notes: notes) }
-        let parts = refusals.map { verdict -> String in
-            let blocking = verdict.findings.filter(\.severity.blocks).map(\.text)
-            var said = blocking
-            if let invalid = verdict.invalid { said.insert(invalid, at: 0) }
-            if said.isEmpty { said = ["reject sem finding blocker/major"] }
-            return "[\(verdict.persona)] " + said.joined(separator: "; ")
+        guard vetoes.isEmpty else {
+            return ReviewOutcome(approved: false, reason: "revisor recusou: " + vetoes.joined(separator: " | "), notes: notes)
         }
-        return ReviewOutcome(approved: false, reason: "revisor recusou: " + parts.joined(separator: " | "), notes: notes)
+        guard verdicts.allSatisfy({ $0.invalid != nil }) else { return ReviewOutcome(approved: true, reason: nil, notes: notes) }
+        return silent(verdicts.isEmpty ? "nenhuma persona respondeu" : verdicts.map { "[\($0.persona)] \($0.invalid ?? "")" }.joined(separator: "; "))
+    }
+
+    /// A1: a finding that can veto: blocker or major, with file, line and claim filled in.
+    static func confirmed(_ f: ReviewFinding) -> Bool {
+        f.severity.blocks && f.line != nil && !(f.file ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+            && !f.claim.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// A1 (reviewAdvisory): what a task with no opinion says, in its note, its `review` line and the loop's report.
+    static let reviewAdvisoryNone = "sem parecer"
+
+    /// A1: no opinion: the attempt goes as the check and the gate decided, with the note "sem parecer: <why>".
+    static func silent(_ why: String) -> ReviewOutcome {
+        ReviewOutcome(approved: true, reason: nil, notes: ["\(reviewAdvisoryNone): \(why)"], silent: why)
     }
 
     /// Index of the last occurrence of `needle` in `haystack`.

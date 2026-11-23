@@ -215,6 +215,9 @@ public enum WorkStatusText {
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
         let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
         var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" \(how): \(done.count) feitas, \(deferred.count) adiadas." + stateHint]
+        // A1 (reviewAdvisory): the tasks the review gave no opinion on
+        let silent = ran.filter { $0.review?.hasPrefix("parecer: " + ReviewVerdict.reviewAdvisoryNone) == true }.count
+        if silent > 0 { lines.append("parecer: \(silent) " + (silent == 1 ? "tarefa" : "tarefas") + " " + ReviewVerdict.reviewAdvisoryNone) }
         lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)

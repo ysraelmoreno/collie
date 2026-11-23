@@ -335,7 +335,14 @@ extension WorkLoop {
         rmdir(scratch.deletingLastPathComponent().path)
     }
 
-    /// No answer (summon refused, terminal gone, past the turn's time, empty text): a refusal, fail closed.
+    /// A1 (reviewAdvisory): the task's `review` line: "parecer: veto (...)", "parecer: sem veto (...)" or
+    /// "parecer: sem parecer (...)" (what `WorkStatusText.loopEnded` counts). Never "aprovado".
+    static func reviewAdvisoryLine(_ o: ReviewOutcome, _ detail: String) -> String {
+        "parecer: " + (!o.approved ? "veto" : o.silent != nil ? ReviewVerdict.reviewAdvisoryNone : "sem veto") + " (\(detail))"
+    }
+
+    /// No answer (summon refused, terminal gone, past the turn's time, empty text): invalid, never a veto nor an approval
+    /// (A1, reviewAdvisory: 'sem parecer').
     static func mute(_ persona: String) -> PersonaVerdict {
         PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "revisor \(persona) sem resposta")
     }
@@ -404,10 +411,10 @@ extension WorkLoop {
                 .select(changedPaths: paths, diffLines: lines, diffText: diff, requested: loop.personas,
                         specs: work.tasks.compactMap { $0.spec.map { Self.repoRelative($0, dir) } })
         } catch {
-            // no catalog to judge with is no approval
-            let why = "revisor recusou: sem personas no commit base (\(error))"
-            return Reviewed(outcome: .init(approved: false, reason: why, notes: []), line: "revisão: recusada (sem personas)",
-                            note: LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): \(why)"))
+            // A1 (reviewAdvisory): no catalog to judge with is no opinion, not a veto: the check and the gate decide
+            let outcome = ReviewVerdict.silent("sem personas no commit base (\(error))")
+            return Reviewed(outcome: outcome, line: Self.reviewAdvisoryLine(outcome, "sem personas"),
+                            note: LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): \(outcome.notes.joined(separator: "; "))"))
         }
         // F2 X5: a finding's line is checked in the file as judged
         let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
@@ -474,14 +481,14 @@ extension WorkLoop {
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
         let outcome = ReviewVerdict.aggregate(verdicts)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }
-        let line = "revisão: \(outcome.approved ? "aprovada" : "recusada") (personas: \(personas.map(\.name).joined(separator: ", ")); \(found) "
-            + (found == 1 ? "achado" : "achados") + ")"
+        let line = Self.reviewAdvisoryLine(outcome, "personas: \(personas.map(\.name).joined(separator: ", ")); \(found) "
+            + (found == 1 ? "achado" : "achados"))
         let each = runs.map { r in
-            "\(r.1.persona) (\(r.1.model ?? "modelo do laço")): \(r.1.approved ? "aprovou" : "recusou")"
+            "\(r.1.persona) (\(r.1.model ?? "modelo do laço")): \(r.1.invalid != nil ? ReviewVerdict.reviewAdvisoryNone : r.1.approved ? "approve" : "reject")"
                 + (r.1.invalid.map { ", \($0)" } ?? "") + (r.1.findings.isEmpty ? "" : ": " + r.1.findings.map { "[\($0.severity.rawValue)] \($0.text)" }.joined(separator: "; "))
         }
         writeReviewFile(work.id, task: task.id, n: n, runs.map(\.1))
-        let note = LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
+        let note = LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
             + "\n" + each.joined(separator: "\n"))
         return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)))
     }

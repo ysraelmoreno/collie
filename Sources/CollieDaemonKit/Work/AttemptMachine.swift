@@ -234,7 +234,8 @@ enum AttemptMachine {
             if moved { s.facts.moves.append("o portão moveu o HEAD") }
             return verdict(&s, resetLine(moved, reset))
 
-        // F2 R3: a refusal is a failure as any other (retry, defer on the last try or after two in a row)
+        // F2 R3: a veto is a failure as any other (retry, defer on the last try or after two in a row)
+        // A1 (reviewAdvisory): only a veto; approve, mute, invalid and minor-only reject are notes ('sem parecer: ...')
         case (.reviewing, .reviewDone(let outcome)):
             if outcome.approved { s.facts.reviewNotes = outcome.notes } else { s.facts.review = outcome.reason ?? "revisor recusou" }
             return verdict(&s)
@@ -262,7 +263,7 @@ enum AttemptMachine {
             case .pass:
                 // the task passed and another terminal works: nothing to discard, the loop stops after it
                 let notes = s.facts.reviewNotes
-                let done: [Effect] = [.markDone] + (notes.isEmpty ? [] : [.note("[loop \(s.task)] revisão aprovou, com notas: " + notes.joined(separator: "; "))])
+                let done: [Effect] = [.markDone] + (notes.isEmpty ? [] : [.note("[loop \(s.task)] parecer: " + notes.joined(separator: "; "))])
                 guard let who = s.facts.blockedBy else { return (s, done) }
                 return (s, done + [.note(WorkLoop.blockedNote(who)), .stopLoop(.init(.othersWorking, detail: who))])
             case .retry(let reason, let discards):

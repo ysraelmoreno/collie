@@ -106,7 +106,9 @@ struct ReviewVerdictTests {
         let v = Self.parse(text, persona: "testes")
         #expect(!v.approved)
         #expect(v.invalid?.contains("incoerente") == true)
-        #expect(ReviewVerdict.aggregate([v]).reason?.contains("a.swift:1 teste não falha") == true)
+        // A1 (reviewAdvisory): incoherent is invalid, no opinion, never a veto nor an approval
+        let outcome = ReviewVerdict.aggregate([v])
+        #expect(outcome.approved && outcome.reason == nil && outcome.silent?.contains("incoerente") == true)
     }
 
     @Test func limits() {
@@ -141,9 +143,28 @@ struct ReviewVerdictTests {
     @Test func aggregateAllApprove() {
         let outcome = ReviewVerdict.aggregate([Self.parse(Self.approve, persona: "correcao")])
         #expect(outcome == ReviewOutcome(approved: true, reason: nil, notes: []))
-        #expect(!ReviewVerdict.aggregate([]).approved)
+        #expect(ReviewVerdict.aggregate([]) == ReviewVerdict.silent("nenhuma persona respondeu"))
         let invalid = ReviewVerdict.aggregate([Self.parse("lixo", persona: "testes")])
-        #expect(invalid.reason?.contains("[testes] resposta do revisor inválida") == true)
+        #expect(invalid.approved && invalid.notes.first?.hasPrefix("sem parecer: [testes] resposta do revisor inválida") == true, "\(invalid)")
+    }
+
+    /// A1 (reviewAdvisory): only a valid reject with a blocker/major holding file, line and claim vetoes.
+    @Test func reviewAdvisoryOnlyAConfirmedFindingVetoes() {
+        let veto = ReviewVerdict.aggregate([Self.parse(Self.reject, persona: "seguranca")])
+        #expect(!veto.approved && veto.silent == nil && veto.reason?.hasPrefix("revisor recusou: [seguranca] src/X.swift:12") == true)
+        #expect(veto.notes == ["[seguranca] src/Y.swift:3 nome ruim (fix: renomear)"])
+        for weak in [Self.reject.replacingOccurrences(of: "blocker", with: "minor"),
+                     Self.reject.replacingOccurrences(of: #""line":12,"#, with: ""),
+                     Self.reject.replacingOccurrences(of: #""file":"src/X.swift","#, with: "")] {
+            let o = ReviewVerdict.aggregate([Self.parse(weak, persona: "seguranca")])
+            #expect(o.approved && o.reason == nil && o.silent == nil && o.notes.count == 2, "\(weak): \(o)")
+        }
+        // a veto stands beside a mute persona, which is only a note
+        let mixed = ReviewVerdict.aggregate([Self.parse(Self.reject, persona: "seguranca"), Self.parse("", persona: "testes")])
+        #expect(!mixed.approved && mixed.notes.contains { $0.hasPrefix("sem parecer: [testes]") })
+        // one valid approve beside a mute one: an opinion, not silent
+        let half = ReviewVerdict.aggregate([Self.parse(Self.approve, persona: "correcao"), Self.parse("", persona: "testes")])
+        #expect(half.approved && half.silent == nil && half.notes.count == 1)
     }
 
     static let persona = Persona(name: "seguranca", model: "sonnet", paths: ["**"], body: "# Persona: Segurança\nlente de segurança")

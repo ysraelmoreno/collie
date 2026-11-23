@@ -195,7 +195,7 @@ private let twice = "\(AttemptDecision.twiceRefused); \(refusal)"
 
 private let reviewed = Path(name: "review approves: its notes go to the attempt's note", review: true, steps: reviewing + [
     Step(.reviewDone(.init(approved: true, reason: nil, notes: ["[testes] a nit"])), .deciding, verdict("passou", then: .decide)),
-    Step(.decided(.pass), .finished, [.markDone, .note("[loop a] revisão aprovou, com notas: [testes] a nit")]),
+    Step(.decided(.pass), .finished, [.markDone, .note("[loop a] parecer: [testes] a nit")]),
 ])
 
 private let reviewPaths: [Path] = [
@@ -238,6 +238,17 @@ private let reviewPaths: [Path] = [
     ]),
     Path(name: "starter gone during the review", review: true, steps: reviewing + [
         Step(.starterGone, .finished, [.reopen(job: "starter gone"), .stopLoop(.init(.starterGone))]),
+    ]),
+    // A1 (reviewAdvisory): no opinion (mute, invalid, ~/.claude.json changed) is no failure: done as the check said
+    Path(name: "review without opinion: done, the note says sem parecer", review: true, steps: reviewing + [
+        Step(.reviewDone(ReviewVerdict.silent("nenhuma persona respondeu")), .deciding, verdict("passou", then: .decide)),
+        Step(.decided(.pass), .finished, [.markDone, .note("[loop a] parecer: sem parecer: nenhuma persona respondeu")]),
+    ]),
+    Path(name: "reviewer touched the tree: a failure, not a refusal", review: true, steps: reviewing + [
+        Step(.reviewerTouched, .deciding, verdict(WorkLoop.reviewerTouched, then: .awaitOthers)),
+    ]),
+    Path(name: "review budget out: no verdict, the loop stops", review: true, steps: reviewing + [
+        Step(.reviewBudgetOut, .finished, [.uncount, .note(WorkLoop.reviewBudgetNote), .stopLoop(.init(.budgetSpent))]),
     ]),
 ]
 

@@ -80,7 +80,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
     public var loop: LoopStats?
     /// M5.4: the work's token counts (all its tasks' attempts); nil for a work none were read for.
     public var tokens: TokenCount?
-    /// F2 R4: one line per task the review judged ("<title>: revisão: aprovada (personas: a, b; n achados)"); nil (and
+    /// F2 R4: one line per task the review judged ("<title>: parecer: sem veto (personas: a, b; n achados)"); nil (and
     /// absent from the JSON and the markdown) when no review ran.
     public var reviews: [String]?
 
@@ -126,7 +126,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
     /// `boldTitle`: the title as a `**bold**` line (the chat) instead of a `##` heading (the panel drops that line).
     public func markdown(boldTitle: Bool = false) -> String {
         let sections = [("Feito", done), ("Para depois", later), (active ? "Em aberto" : "Não feito", notDone),
-                        ("Onde parou", stoppedAt.map { [$0] } ?? []), ("Revisão", reviews ?? [])]
+                        ("Onde parou", stoppedAt.map { [$0] } ?? []), ("Parecer", reviews ?? [])]
         // ponytail: k items a section; over the limit, retry with fewer (k = 0 keeps only the counts)
         for k in [Self.maxItems, 20, 10, 5, 2, 1, 0] {
             var lines = [boldTitle ? "**\(title)**" : "## " + title] + (loop.map { ["", $0.line] } ?? [])

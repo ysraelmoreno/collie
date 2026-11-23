@@ -49,7 +49,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// F2 R1, `work task add --agent --model`: the agent (claude|cursor|codex) and model of WHO WORKS on the task (nil:
     /// the loop's). Only recorded and shown for now; R4 uses them.
     public var agent: String?; public var model: String?
-    /// F2 R4: the last review of the task, as the summary shows it ("revisão: aprovada (personas: a, b; 2 achados)"),
+    /// F2 R4: the last review of the task, as the summary shows it ("parecer: sem veto (personas: a, b; 2 achados)"),
     /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
     public var review: String?; public var reviewRejects: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when

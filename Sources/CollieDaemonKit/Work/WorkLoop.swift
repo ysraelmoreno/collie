@@ -588,7 +588,9 @@ actor WorkLoop {
             // F2 V2: changed during the review: nothing the reviewers said counts
             let globalTouched = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot) != globalLaunch
             let reviewConfigOthers = configChanged ? await host.othersWorking() : nil
-            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil) || globalTouched
+            // A1 (reviewAdvisory): only a tree really changed fails the attempt (tampering); `~/.claude.json` changed alone
+            // leaves the tree as judged: no opinion ('sem parecer'), the check and the gate decide
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil)
             let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
             var movedSaid = ""
             if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
@@ -620,8 +622,12 @@ actor WorkLoop {
                         + (keep.isEmpty ? "" : "\nmantidos (ignorados novos, de quem não se sabe): " + keep.joined(separator: ", "))).prefix(400))
                 }
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
-                ran.line = "revisão: recusada (\(Self.reviewerTouched))"
+                ran.line = "parecer: falhou (\(Self.reviewerTouched))"
                 ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
+            } else if globalTouched {
+                ran.outcome = ReviewVerdict.silent(Self.reviewGlobalConfigTouched)
+                ran.line = Self.reviewAdvisoryLine(ran.outcome, Self.reviewGlobalConfigTouched)
+                ran.note = String(ran.note.prefix(Self.noteChars - 128)) + "\n" + ran.outcome.notes.joined(separator: "; ")
             }
             if !movedSaid.isEmpty { ran.note = String(ran.note.prefix(Self.noteChars - movedSaid.count)) + movedSaid }
             // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)

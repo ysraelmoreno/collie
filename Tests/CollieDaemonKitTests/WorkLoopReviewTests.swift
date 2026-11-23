@@ -40,6 +40,53 @@ import CollieProtocol
     private static let reject = ReviewPrompt.endMarker("<NONCE>") + "\n"
         + #"{"persona":"testes","nonce":"<NONCE>","verdict":"reject","findings":[{"severity":"blocker","file":"Tests/a1.swift","line":1,"claim":"falta o caso vazio","fix":"cobrir"}]}"#
 
+    /// Some note of the work holds `text`.
+    private static func said(_ w: Work, _ text: String) -> Bool { w.notes.contains { $0.text.contains(text) } }
+
+    /// A1 (reviewAdvisory): verdict x outcome in the loop. Only a reject with a located blocker/major vetoes (a
+    /// failure, the retry); a reject with only minor/nit or an unlocated blocker, an approve, an invalid answer is a note.
+    @Test(arguments: [
+        ("veto", WorkLoopReviewTests.reject, false),
+        ("só minor", WorkLoopReviewTests.reject.replacingOccurrences(of: "blocker", with: "minor"), true),
+        ("blocker sem linha", WorkLoopReviewTests.reject.replacingOccurrences(of: #""line":1,"#, with: ""), true),
+        ("approve", ReviewPrompt.endMarker("<NONCE>") + "\n" + #"{"persona":"testes","nonce":"<NONCE>","verdict":"approve","findings":[{"severity":"nit","claim":"vírgula"}]}"#, true),
+        ("inválido", "não sei", true),
+    ]) func reviewAdvisoryMatrix(_ name: String, _ answer: String, _ passes: Bool) async throws {
+        let r = try await Self.rig(tries: 2); defer { r.cleanup() }
+        await Self.works(r, 1); await Self.works(r, 2)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", answer)   // attempt 1 only
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == (passes ? 1 : 2), "\(name): \(w.tasks[0].tries ?? 0)")
+        let first = w.notes.first { $0.text.hasPrefix("[loop] parecer de \"Task a\", tentativa 1") }?.text ?? ""
+        #expect(first.contains(passes ? "parecer: sem veto" : "parecer: veto"), "\(name): \(first)")
+        if passes {
+            #expect(Self.said(w, "[loop a] parecer: "), "\(name): \(w.notes.map(\.text))")
+            #expect(!Self.said(w, "revisor recusou"), "\(name)")
+        } else {
+            #expect(Self.said(w, "revisor recusou: [testes] Tests/a1.swift:1 falta o caso vazio"))
+        }
+        #expect(!Self.said(w, "aprovad") && !Self.said(w, "revisão aprovou"), "\(name)")
+    }
+
+    /// A1: reviewRejects sums only on a veto: after a nit-only reject it stays 0; after a veto it is 1 (attempt 2 then
+    /// passes, which sets it back to 0, so it is read while the next review runs).
+    @Test func reviewRejectsSumOnlyOnAVeto() async throws {
+        for (answer, count) in [(Self.reject.replacingOccurrences(of: "blocker", with: "nit"), 0), (Self.reject, 1)] {
+            let r = try await Self.rig(tries: 2); defer { r.cleanup() }
+            await Self.works(r, 1); await Self.works(r, 2)
+            await r.host.setReviewAnswer("w-task-a-t1-testes-rev", answer)
+            let store = r.store, work = r.work, seen = Skew()
+            await r.host.setReviewerAct("w-task-a-t2-correcao-rev") { _ in
+                seen.seconds = Double((try? await store.get(work))?.tasks[0].reviewRejects ?? -1)
+            }
+            #expect(await r.run() == .finished)
+            let w = try await r.get()
+            #expect(w.tasks[0].state == .done && w.tasks[0].tries == (count == 0 ? 1 : 2))
+            if count == 1 { #expect(seen.seconds == 1, "\(seen.seconds)") } else { #expect(w.tasks[0].reviewRejects == 0) }
+        }
+    }
+
     @Test func approvesWithTwoPersonas() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await Self.works(r, 1)
@@ -51,16 +98,16 @@ import CollieProtocol
         #expect(await r.host.reviewerModels == ["w-task-a-t1-correcao-rev": "sonnet", "w-task-a-t1-testes-rev": "haiku"])
         #expect(Set(await r.host.dismissed).isSuperset(of: ["w-task-a-t1", "w-task-a-t1-correcao-rev", "w-task-a-t1-testes-rev"]))
         #expect(await r.host.liveReviewers.isEmpty)
-        #expect(w.tasks[0].review == "revisão: aprovada (personas: correcao, testes; 0 achados)" && w.tasks[0].reviewRejects == 0)
-        #expect(w.notes.contains { $0.text.contains("correcao (sonnet): aprovou") && $0.text.contains("testes (haiku): aprovou") })
+        #expect(w.tasks[0].review == "parecer: sem veto (personas: correcao, testes; 0 achados)" && w.tasks[0].reviewRejects == 0)
+        #expect(w.notes.contains { $0.text.contains("correcao (sonnet): approve") && $0.text.contains("testes (haiku): approve") })
         // the evidence file, per persona
         let file = EvidenceFiles.dir(r.host.patchDir(r.work), task: "a-revisao").appendingPathComponent("tentativa-1.json")
         let json = try String(contentsOf: file, encoding: .utf8)
         #expect(json.contains("\"persona\" : \"testes\"") && json.contains("\"model\" : \"haiku\""))
         // the immutable summary has the line
         let summary = WorkSummary.make(w, terminalAlive: false, now: Date(), escape: false)
-        #expect(summary.reviews == ["Task a: revisão: aprovada (personas: correcao, testes; 0 achados)"])
-        #expect(summary.markdown().contains("**Revisão**"))
+        #expect(summary.reviews == ["Task a: parecer: sem veto (personas: correcao, testes; 0 achados)"])
+        #expect(summary.markdown().contains("**Parecer**"))
         // the prompt: spec, diff and evidence, never the agent's history
         let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-testes-rev"])
         #expect(prompt.contains("SPEC ORIGINAL") && prompt.contains("Tests/a1.swift") && prompt.contains("Commits:"))
@@ -96,28 +143,30 @@ import CollieProtocol
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2 && w.tasks[0].reviewRejects == 0)   // F2 X3: a deferral starts over
         #expect(w.tasks[0].reason?.contains(AttemptDecision.twiceRefused) == true)
-        #expect(w.tasks[0].review?.hasPrefix("revisão: recusada (personas: correcao, testes; 1 achado)") == true)
+        #expect(w.tasks[0].review?.hasPrefix("parecer: veto (personas: correcao, testes; 1 achado)") == true)
     }
 
-    @Test func garbageAnswerRefuses() async throws {
+    /// A1 (reviewAdvisory): an invalid answer is no opinion, never a veto: the check decides, the note says it.
+    @Test func garbageAnswerIsNoOpinion() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
         await Self.works(r, 1)
         await r.host.setReviewAnswer("correcao", "claro, parece ótimo! 👍")
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains("[correcao] resposta do revisor inválida") == true)
+        #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
+        #expect(Self.said(w, "[loop a] parecer: sem parecer: [correcao] resposta do revisor inválida"), "\(w.notes.map(\.text))")
+        #expect(w.tasks[0].review?.hasPrefix("parecer: sem veto") == true)
     }
 
-    @Test func muteReviewerRefuses() async throws {
+    @Test func muteReviewerIsNoOpinion() async throws {
         for answer in [String?.none, "  \n"] {
             let r = try await Self.rig(tries: 1); defer { r.cleanup() }
             await Self.works(r, 1)
             await r.host.setReviewAnswer("testes", answer)
             #expect(await r.run() == .finished)
             let w = try await r.get()
-            #expect(w.tasks[0].state == .deferred)
-            #expect(w.tasks[0].lastFailure?.contains("revisor testes sem resposta") == true, "\(String(describing: answer))")
+            #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
+            #expect(Self.said(w, "sem parecer: [testes] revisor testes sem resposta"), "\(String(describing: answer))")
             #expect(await r.host.liveReviewers.isEmpty)   // dismissed even when it said nothing
         }
     }
@@ -229,8 +278,8 @@ import CollieProtocol
         await r.host.setReviewTimeout("testes")
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains("revisor testes sem resposta") == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done)
+        #expect(Self.said(w, "revisor testes sem resposta"), "\(w.notes.map(\.text))")
         #expect(await r.host.dismissed.contains("w-task-a-t1-testes-rev"))
         #expect(await r.host.liveReviewers.isEmpty)
     }
@@ -242,15 +291,18 @@ import CollieProtocol
         await Self.works(r, 1)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        let failure = w.tasks[0].lastFailure ?? "-"
-        #expect(failure.contains("revisor correcao sem resposta") && failure.contains("revisor testes sem resposta"), "\(failure)")
+        // A1 (reviewAdvisory): every persona mute is no opinion at all: done as the check said, and the loop's report counts it
+        #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
+        #expect(w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true, "\(w.tasks[0].review ?? "-")")
+        #expect(Self.said(w, "revisor correcao sem resposta") && Self.said(w, "revisor testes sem resposta"), "\(w.notes.map(\.text))")
+        #expect(WorkStatusText.loopEnded(w).contains("\nparecer: 1 tarefa sem parecer"), "\(WorkStatusText.loopEnded(w))")
+        #expect(!WorkStatusText.loopEnded(w).contains("aprovad"))
         #expect(await r.host.reviewers.isEmpty)
     }
 
-    /// F2 X5: no catalog at the base (the folder gone, `ls-tree` failing, a persona malformed there): a refusal that
-    /// says so, and no reviewer is summoned.
-    @Test(arguments: ["vazia", "ls-tree", "malformada"]) func noPersonasAtTheBaseRefusesWithoutReviewers(_ how: String) async throws {
+    /// F2 X5: no catalog at the base (the folder gone, `ls-tree` failing, a persona malformed there): no reviewer is
+    /// summoned. A1 (reviewAdvisory): no opinion, said in the note; the check decides.
+    @Test(arguments: ["vazia", "ls-tree", "malformada"]) func noPersonasAtTheBaseIsNoOpinion(_ how: String) async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
         switch how {
         case "vazia":
@@ -262,9 +314,9 @@ import CollieProtocol
         await Self.works(r, 1)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains("sem personas no commit base") == true, "\(how): \(w.tasks[0].lastFailure ?? "-")")
-        #expect(w.tasks[0].review == "revisão: recusada (sem personas)")
+        #expect(w.tasks[0].state == .done, "\(how)")
+        #expect(Self.said(w, "sem parecer: sem personas no commit base"), "\(how): \(w.notes.map(\.text))")
+        #expect(w.tasks[0].review == "parecer: sem parecer (sem personas)")
         #expect(await r.host.reviewers.isEmpty)
     }
 
@@ -288,8 +340,9 @@ import CollieProtocol
         await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject.replacingOccurrences(of: #""line":1"#, with: #""line":7"#))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].lastFailure?.contains("[testes] Tests/a1.swift falta o caso vazio (linha 7 não existe no arquivo novo, de 1 linhas)") == true,
-                "\(w.tasks[0].lastFailure ?? "-")")
+        // A1 (reviewAdvisory): a blocker without its line is no confirmed finding: a note, not a veto
+        #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
+        #expect(Self.said(w, "[testes] Tests/a1.swift falta o caso vazio (linha 7 não existe no arquivo novo, de 1 linhas)"), "\(w.notes.map(\.text))")
     }
 
     @Test func withoutReviewNoReviewerRuns() async throws {
@@ -346,8 +399,8 @@ import CollieProtocol
             let w = try await r.get()
             #expect(w.tasks[0].state == .deferred)
             #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true, "\(w.tasks[0].lastFailure ?? "-")")
-            #expect(w.tasks[0].review == "revisão: recusada (\(WorkLoop.reviewerTouched))")
-            #expect(w.notes.contains { $0.text.contains("revisão de") && $0.text.hasSuffix(WorkLoop.reviewerTouched) })
+            #expect(w.tasks[0].review == "parecer: falhou (\(WorkLoop.reviewerTouched))")
+            #expect(w.notes.contains { $0.text.contains("parecer de") && $0.text.hasSuffix(WorkLoop.reviewerTouched) })
             // put back: nothing of the reviewer's is left in the tree
             #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("rev.txt").path))
             #expect(try String(contentsOf: r.repo.appendingPathComponent("spec.md"), encoding: .utf8) == "SPEC ORIGINAL\n")
@@ -395,13 +448,15 @@ import CollieProtocol
         }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigRiskyNote) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        // A1 (reviewAdvisory): every reviewer mute is no opinion: the check decides
+        #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
+        #expect(w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true, "\(w.tasks[0].review ?? "-")")
+        #expect(Self.said(w, WorkLoop.reviewGlobalConfigRiskyNote), "\(w.notes.map(\.text))")
         #expect(await r.host.reviewers.isEmpty)
     }
 
-    /// F2 U1: attempt 1 plants an `env` key (its reviewers mute, a retry); attempt 2 changes nothing, yet its reviewers
-    /// are mute too: the base is the loop's, taken before attempt 1's agent, never one that already holds the plant.
+    /// F2 U1: attempt 1 plants an `env` key: its reviewers are mute, the base is the loop's, taken before attempt 1's
+    /// agent, never one that already holds the plant. A1 (reviewAdvisory): mute is no opinion, the check decides.
     @Test func plantedEnvInASacrificedAttemptSilencesTheNext() async throws {
         let r = try await Self.rig(tries: 2); defer { r.cleanup() }
         let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
@@ -413,8 +468,8 @@ import CollieProtocol
         await Self.works(r, 2)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
-        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigRiskyNote) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
+        #expect(Self.said(w, WorkLoop.reviewGlobalConfigRiskyNote), "\(w.notes.map(\.text))")
         #expect(await r.host.reviewers.isEmpty)
         #expect(w.loop?.reviewConfigBase != nil && w.loop?.reviewConfigBaseRisky?.isEmpty == false)
     }
@@ -433,16 +488,18 @@ import CollieProtocol
         #expect(WorkLoop.reviewGlobalConfigRisky(home: home.appendingPathComponent("none")) == "")
     }
 
-    /// F2 V2: changed during the review: the verdicts are dropped, the attempt fails as touched (no refusal counted).
+    /// F2 V2: changed during the review: the verdicts are dropped (a veto too). A1 (reviewAdvisory): the tree is as
+    /// judged, so it is no opinion, not a touch: the check decides, no refusal counted.
     @Test func globalConfigChangedDuringTheReviewDropsTheVerdicts() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }
         let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
         await Self.works(r, 1)
+        await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject)
         await r.host.setReviewerAct("correcao") { _ in try Self.claudeJson(home, env: "1", startups: 1) }
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].review == "parecer: sem parecer (\(WorkLoop.reviewGlobalConfigTouched))")
         #expect(w.tasks[0].reviewRejects ?? 0 == 0)
         #expect(w.notes.contains { $0.text.contains(WorkLoop.reviewGlobalConfigTouched) })
     }
@@ -795,8 +852,9 @@ import CollieProtocol
         await r.host.setReviewAnswer("correcao", "⏺ hmm } esc to interrupt")
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains("[correcao] resposta do revisor inválida") == true, "\(w.tasks[0].lastFailure ?? "-")")
+        // A1 (reviewAdvisory): the planted approve frees nothing; the garbage is no opinion and the check decides
+        #expect(w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true, "\(w.tasks[0].review ?? "-")")
+        #expect(Self.said(w, "[correcao] resposta do revisor inválida"), "\(w.notes.map(\.text))")
         let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
         #expect(prompt.contains(planted))   // in the diff, fenced
         #expect(prompt.contains("<<<DADO NÃO CONFIÁVEL: diff ") && prompt.contains("<<<FIM DO DADO: evidência "))
@@ -817,7 +875,7 @@ import CollieProtocol
         let w = try await r.get()
         #expect(w.loop?.stopReason?.code == .cancelled)
         #expect(w.tasks[0].state == .open && w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0)
-        #expect(!w.notes.contains { $0.text.contains("sem resposta") || $0.text.contains("revisão de") })
+        #expect(!w.notes.contains { $0.text.contains("sem resposta") || $0.text.contains("parecer de") })
     }
 
     /// F2 X3: a reopened task starts its refusals in a row over: one refusal after it is a retry, not a deferral.
@@ -879,7 +937,7 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-correcao-rev"])
         #expect(prompt.contains("(sem spec no commit base; só o título da tarefa) Task a"), "\(prompt)")
-        #expect(try await r.get().notes.contains { $0.text.contains("revisão de") && $0.text.contains("(sem spec no commit base)") })
+        #expect(try await r.get().notes.contains { $0.text.contains("parecer de") && $0.text.contains("(sem spec no commit base)") })
     }
 
     /// F2 X4: the daemon's start sweep takes every reviewer a fallen daemon left in the paddock (its name's tail and its
@@ -1003,8 +1061,8 @@ import CollieProtocol
         try FileManager.default.createSymbolicLink(at: r.host.reviewRoot, withDestinationURL: r.repo)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
-        #expect(w.tasks[0].lastFailure?.contains("sem resposta") == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done)
+        #expect(Self.said(w, "sem parecer: [correcao]") && Self.said(w, "sem resposta"), "\(w.notes.map(\.text))")
         #expect(await r.host.reviewers.isEmpty)
         let left = try FileManager.default.contentsOfDirectory(atPath: r.repo.path).filter { $0.contains("-rev-") }
         #expect(left.isEmpty, "\(left)")
@@ -1049,7 +1107,7 @@ import CollieProtocol
         await r.host.setOpened([r.host.root.path])
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].state == .done && w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true)
         #expect(await r.host.reviewers.isEmpty)
         #expect(w.notes.contains { $0.text.contains("mudo: " + planted.path) }, "\(w.notes.map(\.text))")
     }

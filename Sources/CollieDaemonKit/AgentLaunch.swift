@@ -146,7 +146,7 @@ public enum AgentLaunch {
             try write(["mcpServers": servers], m)
             // the model it ran (summon --model, collie model, its transcript), unless the command picks one itself
             let model = rec.model.flatMap { base.contains("--model") ? nil : " --model " + quote($0) } ?? ""
-            return spec(["-lc", base + model + " --settings " + quote(f.path) +  --mcp-config " + quote(m.path) + (reviewerNoMcp ? " --strict-mcp-config" : "")
+            return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path) + (reviewerNoMcp ? " --strict-mcp-config" : "")
                          + pluginDirs.map { " --plugin-dir " + quote($0.path) }.joined() + (resume ? " --continue" : "")])
         }
         if let c = rec.command {

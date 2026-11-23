@@ -564,14 +564,24 @@ import CollieProtocol
     }
 
     /// F2 Y1: the reviewer's profile: its own folder (inside Collie's closed dir) readable and writable, the review
-    /// root around it and the paddock's worktree not. Run for real under `sandbox-exec`.
+    /// root around it and the paddock's worktree not. The rules' order always; run for real under `sandbox-exec` where
+    /// a sandbox can be applied (not from inside another, as a sandboxed terminal's own `swift test`).
     @Test func reviewerProfileWritesItsFolderAndNotTheWorktree() throws {
         let h = try FakeHome()
         let review = WorkLoop.reviewRoot(of: h.collie)
         let scratch = try #require(WorkLoop.reviewScratch("w-rev", in: review))
         let other = try #require(WorkLoop.reviewScratch("x-rev", in: review))
+        let text = SandboxProfile.render(h.input(project: scratch))
+        // the folder's allow comes after Collie's deny (the last matching rule wins), and nothing re-opens the root
+        let deny = try #require(text.range(of: "(deny file-read* file-write*", options: .backwards))
+        let allow = try #require(text.range(of: "(allow file-read* file-write*\n  (subpath \(SandboxProfile.q(scratch.path)))"))
+        #expect(deny.upperBound <= allow.lowerBound)
+        #expect(!text.contains("(subpath \(SandboxProfile.q(review.path)))") && !text.contains("(subpath \(SandboxProfile.q(other.path)))"))
+        let probe = try h.run(try h.profile(h.input(project: scratch)), "true", cwd: scratch)
+        guard probe.status == 0 else { return }   // no nested sandbox here: the text above is what is checked
         let profile = try h.profile(h.input(project: scratch))
-        #expect(try h.run(profile, "echo ok > note && cat note", cwd: scratch) == (0, "ok\n"))
+        let own = try h.run(profile, "echo ok > note && cat note", cwd: scratch)
+        #expect(own == (0, "ok\n"), "\(own.out)\n\((try? String(contentsOf: profile, encoding: .utf8)) ?? "")")
         #expect(try h.run(profile, "touch '\(h.paddock.path)/planted'", cwd: scratch).status != 0)
         #expect(try h.run(profile, "touch '\(h.repo.path)/planted'", cwd: scratch).status != 0)
         #expect(try h.run(profile, "echo x > '\(review.path)/CLAUDE.md'", cwd: scratch).status != 0)

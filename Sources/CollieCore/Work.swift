@@ -182,6 +182,10 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// names chosen (nil: auto, R5's router picks); `reviewerModel` the model that overrides every persona's (nil: each
     /// persona's own, else the loop's). Only recorded and shown for now.
     public var review: Bool?; public var personas: [String]?; public var reviewerModel: String?
+    /// F2 U1 (`--review`): `~/.claude.json` as the loop began, before its first judged agent: its hash
+    /// (`reviewGlobalConfigHash`) and its `env`/`autoConnectIde` (`reviewGlobalConfigRisky`). Every attempt of the run is
+    /// compared with these, never with a base taken after an agent ran. nil: not taken (no review, or a loop from before).
+    public var reviewConfigBase: String?, reviewConfigBaseRisky: String?
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {

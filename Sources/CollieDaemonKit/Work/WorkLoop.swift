@@ -197,9 +197,12 @@ actor WorkLoop {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
         // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
+        // F2 U1: reviewLoopConfigBase, `~/.claude.json` before the run's first judged agent: one base for every attempt
+        let base = (try? await store.get(id))?.loop?.review == true ? await reviewLoopConfigBase() : nil
         try? await store.update(id) { w in
             guard w.loop?.state == .running else { return }
             w.loop?.stopReason = nil
+            if let base, w.loop?.reviewConfigBase == nil { w.loop?.reviewConfigBase = base.hash; w.loop?.reviewConfigBaseRisky = base.risky }
             for i in w.tasks.indices where w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }
         }
         // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
@@ -295,7 +298,12 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        if loop.review == true { run.globalConfig = Self.reviewGlobalConfigHash(home: await host.globalConfigHome(), reviewRoot: host.reviewRoot) }
+        // F2 U1: the loop's base (`run`), never one taken here: an attempt's agent may have planted it in the last one.
+        // Only a loop that never took one (an engine run outside `run`) takes it here, as before
+        if loop.review == true {
+            if let hash = loop.reviewConfigBase { run.globalConfig = (hash, loop.reviewConfigBaseRisky ?? "") }
+            else { run.globalConfig = await reviewLoopConfigBase() }
+        }
         // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
                                                         precheck: loop.precheck != nil, reviewer: loop.review == true,
@@ -352,8 +360,8 @@ actor WorkLoop {
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
         /// F2 X2: the check's and the gate's exit status, the only part of their run the reviewers read.
         var checkStatus: Int32?, gateStatus: Int32?
-        /// F2 V2: `reviewGlobalConfigHash` at the attempt's start, before its agent (`--review` only)
-        var globalConfig: String?
+        /// F2 U1: the loop's `reviewLoopConfigBase` (`--review` only)
+        var globalConfig: (hash: String, risky: String)?
         /// When the verdict was reached.
         var at: Date
         var end = AttemptEnd.go
@@ -563,8 +571,12 @@ actor WorkLoop {
             // F2 V2: the home's `~/.claude.json` as the reviewers are launched: changed since the start, all mute
             let home = await host.globalConfigHome()
             let globalLaunch = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot)
+            // F2 U1: an `env` or `autoConnectIde` the loop's base did not hold exactly mutes first, then any other change
+            let risky = Self.reviewGlobalConfigRisky(home: home)
+            let configSilenced = !risky.isEmpty && risky != r.globalConfig?.risky ? Self.reviewGlobalConfigRiskyNote
+                : r.globalConfig?.hash != globalLaunch ? Self.reviewGlobalConfigMoved : nil
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
-                                   evidence: evidence, configMoved: r.globalConfig != globalLaunch, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
+                                   evidence: evidence, configSilenced: configSilenced, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             if ran.budgetOut { return .reviewBudgetOut }
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)

@@ -218,6 +218,8 @@ extension WorkLoop {
     /// F2 V2: why every reviewer is mute when the home's `~/.claude.json` changed between the attempt's start and the
     /// reviewers' launch, and the note when it changed during the review (verdicts dropped, `reviewerTouched`).
     static let reviewGlobalConfigMoved = "configuração global mudou durante a tentativa"
+    /// F2 U1: the note when `~/.claude.json` holds an `env` key or `autoConnectIde` true the loop's base did not.
+    static let reviewGlobalConfigRiskyNote = "configuração global tem env ou autoConnectIde"
     static let reviewGlobalConfigTouched = "configuração global (~/.claude.json) mudou durante a revisão"
 
     /// F2 V2 (reviewGlobalConfigHash): `~/.claude.json` is writable by every strict terminal (`EssentialPaths`, R13) and
@@ -254,6 +256,28 @@ extension WorkLoop {
         } else if let p = all["projects"] { kept["projects"] = p }
         guard let canon = try? JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys, .fragmentsAllowed]) else { return "raw:" + sha(data) }
         return sha(canon)
+    }
+
+    /// F2 U1 (reviewGlobalConfigRisky): what in `~/.claude.json` runs code or reaches out in every reviewer's Bash
+    /// (`env`: `PATH`, `ZDOTDIR`; `autoConnectIde`): "" when `env` has no key and `autoConnectIde` is not true (or no
+    /// file); else the SHA-256 of both, canonical. Not a JSON object: the bytes' hash (fail closed).
+    static func reviewGlobalConfigRisky(home: URL) -> String {
+        guard let data = FileManager.default.contents(atPath: home.appendingPathComponent(".claude.json").path) else { return "" }
+        func sha(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }
+        guard let all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return "raw:" + sha(data) }
+        let env = all["env"], ide = all["autoConnectIde"]
+        let quietEnv = env == nil || env is NSNull || (env as? [String: Any])?.isEmpty == true
+        let quietIde = ide == nil || ide is NSNull || ((ide as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && !$0.boolValue } ?? false)
+        if quietEnv && quietIde { return "" }
+        let kept: [String: Any] = ["env": env ?? NSNull(), "autoConnectIde": ide ?? NSNull()]
+        guard let canon = try? JSONSerialization.data(withJSONObject: kept, options: [.sortedKeys, .fragmentsAllowed]) else { return "raw:" + sha(data) }
+        return sha(canon)
+    }
+
+    /// F2 U1 (reviewLoopConfigBase): `~/.claude.json` as the loop takes its base, before any judged agent of the run.
+    func reviewLoopConfigBase() async -> (hash: String, risky: String) {
+        let home = await host.globalConfigHome()
+        return (Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot), Self.reviewGlobalConfigRisky(home: home))
     }
 
     /// F2 Z2: whether a strict loop agent may write `path` (resolved: a symlink counts where it points), fail closed: the
@@ -373,7 +397,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers').
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, configMoved: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configSilenced: String? = nil, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -403,8 +427,8 @@ extension WorkLoop {
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
         let planted = Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
-        // F2 V2: `~/.claude.json` changed since the attempt began (the judged agent may have written it): every reviewer mute
-        let silenced = configMoved ? Self.reviewGlobalConfigMoved : planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
+        // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
+        let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
         let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }
         // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree
         var snapshots: [URL?] = [], snapshotWhy: [String?] = []

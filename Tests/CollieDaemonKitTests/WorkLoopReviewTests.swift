@@ -400,6 +400,39 @@ import CollieProtocol
         #expect(await r.host.reviewers.isEmpty)
     }
 
+    /// F2 U1: attempt 1 plants an `env` key (its reviewers mute, a retry); attempt 2 changes nothing, yet its reviewers
+    /// are mute too: the base is the loop's, taken before attempt 1's agent, never one that already holds the plant.
+    @Test func plantedEnvInASacrificedAttemptSilencesTheNext() async throws {
+        let r = try await Self.rig(tries: 2); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            let text = #"{"numStartups":1,"env":{"CLAUDE_CODE_DISABLE_AUTO_MEMORY":"0","ZDOTDIR":"/tmp/x"},"projects":{"/x":{"lastCost":1}}}"#
+            try text.write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+            try await commit("x.txt", "x\n", in: d)
+        }))
+        await Self.works(r, 2)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2, "\(w.tasks[0].state) \(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewGlobalConfigRiskyNote) == true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(await r.host.reviewers.isEmpty)
+        #expect(w.loop?.reviewConfigBase != nil && w.loop?.reviewConfigBaseRisky?.isEmpty == false)
+    }
+
+    /// F2 U1: an `env` and `autoConnectIde` the loop's base already held (the owner's): the reviewers run.
+    @Test func envInTheLoopBaseDoesNotSilence() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let home = try await Self.fakeHome(r); defer { try? FileManager.default.removeItem(at: home) }
+        let text = #"{"autoConnectIde":true,"env":{"PATH":"/usr/bin"}}"#
+        try text.write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(!(await r.host.reviewers.isEmpty))
+        #expect(WorkLoop.reviewGlobalConfigRisky(home: home.appendingPathComponent("none")) == "")
+    }
+
     /// F2 V2: changed during the review: the verdicts are dropped, the attempt fails as touched (no refusal counted).
     @Test func globalConfigChangedDuringTheReviewDropsTheVerdicts() async throws {
         let r = try await Self.rig(tries: 1); defer { r.cleanup() }

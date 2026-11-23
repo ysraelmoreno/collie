@@ -944,8 +944,9 @@ actor CommandRouter {
     func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
         if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
-        // L2: on the record (survives a daemon restart). M3.3: a lane's agent is strict whatever the workspace's mode
-        rec.startMode = rec.sandbox == .sandboxed ? (lanePaddock(of: rec) != nil ? .strict : sandboxMode) : nil
+        // L2: on the record (survives a daemon restart). M3.3: a lane's agent is strict whatever the workspace's mode. F2 A5: so is a
+        // reviewer (`loopReviewers`, marked before the launch): never weaker than the agent it judges
+        rec.startMode = rec.sandbox == .sandboxed ? (lanePaddock(of: rec) != nil || loopReviewers.contains(rec.id) ? .strict : sandboxMode) : nil
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)

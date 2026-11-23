@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Checks of the Fábrica para usuários tasks (docs/superpowers/specs/fabrica/*.md): scripts/check-fabrica-loop.sh u1|u3|u5|u2|u4
+# Checks of the Fábrica para usuários tasks (docs/superpowers/specs/fabrica/*.md): scripts/check-fabrica-loop.sh u1|u3|u5|u2|u4|f1|f2|f3|f4
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
-case "${1:?u1|u3|u5|u2|u4}" in
+case "${1:?u1|u3|u5|u2|u4|f1|f2|f3|f4}" in
   u1) t --filter FactoryProfileTests --filter ProjectWorkConfigTests --filter WorkAreaTests --filter WorkConfigTamperTests \
         && test -f Sources/CollieCore/FactoryProfile.swift && grep -q "invalidFactory" Sources/CollieCore/ProjectWorkConfig.swift ;;
   u3) t --filter FactoryDoctorTests --filter FactoryProfileTests --filter ProjectWorkConfigTests \
@@ -14,5 +14,9 @@ case "${1:?u1|u3|u5|u2|u4}" in
         && scripts/test-factory-detect.sh && test -f docs/fabrica/skill/factory-init/SKILL.md ;;
   u4) t --filter FactoryBaitTests --filter FactoryDoctorTests \
         && test -f docs/fabrica/iscas/catalogo.json && test -f docs/fabrica/skill/factory-bait/SKILL.md ;;
+  f1) t --filter RatchetTests --filter FactoryDoctorTests --filter FactoryProfileTests --filter ProjectWorkConfigTests ;;
+  f2) t --filter FactoryBaitTests --filter FactoryDoctorTests --filter RatchetTests --filter FactoryModelsTests ;;
+  f3) t --filter FactoryModelsTests --filter FactoryBaitTests --filter FactoryDoctorTests && scripts/test-factory-detect.sh ;;
+  f4) t --filter WorkCommandTests --filter WorkLoopReviewTests ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

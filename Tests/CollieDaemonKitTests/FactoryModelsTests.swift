@@ -20,14 +20,17 @@ private func put(_ dir: URL, _ rel: String, _ body: String) throws {
     try Data(body.utf8).write(to: u)
 }
 
-/// Runs `bash scripts/gate.sh` of the model `stack` in a project made of `files`, with the runners (`swift`, `npx`, `python3`)
-/// swapped for a stub that prints its arguments and exits 0 (`stubs` overrides one by name); `links` are symlinks (path: target).
-/// F6b: the folder is a git repository with everything not ignored added, since the gate looks only at what git sees.
-/// Returns the exit code and stdout + stderr.
+/// Runs `bash scripts/<script> <args>` (gate.sh by default) of the model `stack` in a project made of `files`, with the runners
+/// (`swift`, `npx`, `python3`) swapped for a stub that prints its arguments and exits 0 (`stubs` overrides one by name); `links`
+/// are symlinks (path: target). F6b: `prep` makes the folder a git repository with everything not ignored added, since the gate
+/// looks only at what git sees. F7b: `noGit` leaves git out of the script's PATH. Returns the exit code and stdout + stderr.
 private func runGate(_ stack: String, _ files: [String: String], links: [String: String] = [:],
-                     stubs: [String: String] = [:]) throws -> (status: Int32, out: String) {
+                     stubs: [String: String] = [:], prep: String = "git init -q && git add -A", noGit: Bool = false,
+                     script: String = "gate.sh", args: [String] = []) throws -> (status: Int32, out: String) {
     let d = try tempDir(); defer { try? FileManager.default.removeItem(at: d) }
-    try put(d, "scripts/gate.sh", try text(modelos.appendingPathComponent("\(stack)/scripts/gate.sh")))
+    for s in ["gate.sh", "check-feature.sh"] {
+        try put(d, "scripts/\(s)", try text(modelos.appendingPathComponent("\(stack)/scripts/\(s)")))
+    }
     for (rel, body) in files { try put(d, rel, body) }
     for (rel, target) in links { try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent(rel).path, withDestinationPath: target) }
     for runner in ["swift", "npx", "python3"] {
@@ -37,15 +40,25 @@ private func runGate(_ stack: String, _ files: [String: String], links: [String:
     let env = ["PATH": d.appendingPathComponent("stub").path + ":/usr/bin:/bin", "HOME": d.path]
     let g = Process()
     g.executableURL = URL(fileURLWithPath: "/bin/bash")
-    g.arguments = ["-c", "git init -q && git add -A"]
+    g.arguments = ["-c", prep]
     g.currentDirectoryURL = d; g.environment = env
     try g.run(); g.waitUntilExit()
-    #expect(g.terminationStatus == 0, "git init/add")
+    #expect(g.terminationStatus == 0, "prep: \(prep)")
+    var runEnv = env
+    if noGit {   // only the tools the scripts call, git left out
+        let bin = d.appendingPathComponent("nogit")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for t in ["dirname", "mktemp", "rm", "env", "awk"] {
+            let src = ["/usr/bin/\(t)", "/bin/\(t)"].first { FileManager.default.isExecutableFile(atPath: $0) }!
+            try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent(t).path, withDestinationPath: src)
+        }
+        runEnv["PATH"] = d.appendingPathComponent("stub").path + ":" + bin.path
+    }
     let p = Process(), pipe = Pipe()
     p.executableURL = URL(fileURLWithPath: "/bin/bash")
-    p.arguments = ["scripts/gate.sh"]
+    p.arguments = ["scripts/\(script)"] + args
     p.currentDirectoryURL = d
-    p.environment = env
+    p.environment = runEnv
     p.standardOutput = pipe; p.standardError = pipe
     try p.run()
     let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -171,6 +184,10 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         // F6b (n1): `//` is no comment in a .py, `#` is no comment in a .js
         ("python", ["conftest.py": "// session.exitstatus = 0\n"], ["conftest.py": "# session.exitstatus = 0\n"], "stub python3"),
         ("node", ["jest.config.js": "# passWithNoTests: true\n"], ["jest.config.js": "// passWithNoTests: true\n"], "stub npx"),
+        // F7b (nit): what follows a `#` out of quotes is a comment; a `#` inside quotes is not
+        ("python", ["pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-q # --co\"\n"],
+         ["pytest.ini": "[pytest]\naddopts = \"-q\"  # do not add --co\n", "setup.cfg": "[tool:pytest]\naddopts = '-q' # --collect-only\n"], "stub python3"),
+        ("python", ["conftest.py": "x = '#'; session.exitstatus = 0\n"], ["conftest.py": "x = 1  # session.exitstatus = 0\n"], "stub python3"),
     ])
     func gateRefusesAForcedSuccessConfig(_ stack: String, _ forced: [String: String], _ clean: [String: String], _ ran: String) throws {
         let bad = try runGate(stack, forced)
@@ -187,9 +204,11 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         for (stack, name) in [("node", "jest.config.js"), ("python", "pytest.ini")] {
             let r = try runGate(stack, ["cfg/real": "x\n"], links: [name: "cfg/real"])
             #expect(r.status != 0 && r.out.contains("link simbólico em arquivo de config do runner: \(name)") && !r.out.contains("stub "), "\(stack): \(r.out)")
-            // a linked folder (its config sits in an ignored, pruned folder) fails as well
-            let dir = try runGate(stack, ["node_modules/x/\(name)": "x\n"], links: ["tests2": "node_modules/x"])
-            #expect(dir.status != 0 && dir.out.contains("link simbólico para pasta: tests2") && !dir.out.contains("stub "), "\(stack): \(dir.out)")
+            // F7b (m-E): a linked folder fails only when its target leaves the repository; inside it, git lists the target's files
+            let dir = try runGate(stack, [:], links: ["tests2": "/usr"])
+            #expect(dir.status != 0 && dir.out.contains("link simbólico para pasta fora do repositório: tests2") && !dir.out.contains("stub "), "\(stack): \(dir.out)")
+            let inside = try runGate(stack, [".agents/skills/x.md": "x\n", ".claude/settings.json": "{}\n"], links: [".claude/skills": "../.agents/skills"])
+            #expect(inside.status == 0 && inside.out.contains("stub ") && !inside.out.contains("gate:"), "\(stack): \(inside.out)")
             // F6b (M1): only what git sees counts: an ignored venv (its links, its site-packages conftest.py) and a versioned
             // link that is no runner config (CLAUDE.md -> AGENTS.md) leave the gate green
             let ok = try runGate(stack, [".gitignore": "venv/\n", "AGENTS.md": "x\n", "venv/bin/real": "x\n",
@@ -208,13 +227,97 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
             let r = try runGate("python", files)
             #expect(r.status != 0 && r.out.contains("troca o pytest") && !r.out.contains("stub "), "\(files): \(r.out)")
         }
-        // F6b (m4): Python below 3.11 has no -P, so gate and check run plain `python3 -m pytest`
-        let old = try runGate("python", [:], stubs: ["python3": "#!/bin/bash\n[ \"$1\" = -I ] && exit 1\necho \"stub python3 $*\"\n"])
-        #expect(old.status == 0 && old.out.contains("stub python3 -m pytest -q") && !old.out.contains("-P"), "\(old.out)")
+        // F7b (M-A): Python below 3.11 has no -P, so gate and check run isolated `python3 -I -m pytest`
+        for script in ["gate.sh", "check-feature.sh"] {
+            let old = try runGate("python", [:], stubs: ["python3": "#!/bin/bash\n[ \"$1 $2\" = \"-I -c\" ] && exit 1\necho \"stub python3 $*\"\n"],
+                                  script: script, args: script == "gate.sh" ? [] : ["tests"])
+            #expect(old.status == 0 && old.out.contains("stub python3 -I -m pytest -q") && !old.out.contains("-P"), "\(script): \(old.out)")
+        }
         let new = try runGate("python", [:])
         #expect(new.status == 0 && new.out.contains("stub python3 -P -m pytest -q"), "\(new.out)")
         let sw = try runGate("swift", ["Package.swift": "// passWithNoTests\n"])
         #expect(sw.status == 0 && sw.out.contains("stub swift test"), "\(sw.out)")
         #expect(!(try text(modelos.appendingPathComponent("swift/scripts/gate.sh"))).contains("grep"))
+    }
+
+    /// F7b (M-A): a pluggy.py or _pytest/ at the root that exits 0 never stands in for pytest, in the gate and in the check, with
+    /// each Python found (below 3.11 runs -I, from 3.11 -P). pytest is faked in a venv outside the project (no download): its
+    /// __main__ imports pluggy and _pytest and fails, as a failing test would. Without the flags the shadow wins (exit 0).
+    @Test func rootModulesCannotStandInForPytest() throws {
+        let pys = ["/usr/bin/python3", "/opt/homebrew/bin/python3.10", "/opt/homebrew/bin/python3.12", "/usr/bin/python3.10", "/usr/bin/python3.12"]
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
+        guard !pys.isEmpty else { return }
+        for py in pys {
+            let v = try tempDir(); defer { try? FileManager.default.removeItem(at: v) }
+            let mk = Process(), out = Pipe()
+            mk.executableURL = URL(fileURLWithPath: "/bin/bash")
+            mk.arguments = ["-c", "\"$0\" -m venv --without-pip \"$1\" && \"$1/bin/python\" -I -c 'import sysconfig; print(sysconfig.get_paths()[\"purelib\"])'", py, v.appendingPathComponent("venv").path]
+            mk.standardOutput = out
+            try mk.run()
+            let site = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            mk.waitUntilExit()
+            try #require(mk.terminationStatus == 0 && site.hasPrefix("/"), "\(py): venv")
+            let s = URL(fileURLWithPath: site)
+            try put(s, "pytest/__init__.py", "")
+            try put(s, "pytest/__main__.py", "import pluggy, _pytest\nraise SystemExit(1)\n")
+            try put(s, "pluggy.py", "")
+            try put(s, "_pytest/__init__.py", "")
+            let vpy = v.appendingPathComponent("venv/bin/python").path
+            let real = "#!/bin/bash\nexec \"\(vpy)\" \"$@\"\n"
+            let bare = "#!/bin/bash\na=(); for x in \"$@\"; do [ \"$x\" = -I ] || [ \"$x\" = -P ] || a+=(\"$x\"); done\nexec \"\(vpy)\" \"${a[@]}\"\n"
+            for shadow in ["pluggy.py", "_pytest/__init__.py"] {
+                let files = [shadow: "import os\nos._exit(0)\n", "tests/test_x.py": "def test_x():\n    assert False\n"]
+                for script in ["gate.sh", "check-feature.sh"] {
+                    let args = script == "gate.sh" ? [] : ["tests"]
+                    let r = try runGate("python", files, stubs: ["python3": real], script: script, args: args)
+                    #expect(r.status != 0, "\(py) \(script) \(shadow): \(r.out)")
+                }
+                let control = try runGate("python", files, stubs: ["python3": bare])
+                #expect(control.status == 0, "\(py) \(shadow): sem -I/-P a sombra deveria ganhar: \(control.out)")
+            }
+        }
+    }
+
+    /// F7b: the gates fail closed (no git, outside a repository, a git error) and see ignored runner configs, pruning venvs,
+    /// node_modules/, .tox/ and site-packages/; the forced() block is one text in every model, so a rule changes once.
+    @Test func gateFailsClosedAndSeesIgnoredConfigs() throws {
+        for stack in ["node", "python"] {
+            let noGit = try runGate(stack, [:], noGit: true)
+            #expect(noGit.status != 0 && noGit.out.contains("git não encontrado") && !noGit.out.contains("stub "), "\(stack): \(noGit.out)")
+            let outside = try runGate(stack, [:], prep: "true")
+            #expect(outside.status != 0 && outside.out.contains("fora de um repositório git") && !outside.out.contains("stub "), "\(stack): \(outside.out)")
+            let broken = try runGate(stack, ["a.txt": "x\n"], prep: "git init -q && git add -A && printf junk > .git/index")
+            #expect(broken.status != 0 && broken.out.contains("git ls-files falhou") && !broken.out.contains("stub "), "\(stack): \(broken.out)")
+            // pruned: a venv (pyvenv.cfg), node_modules/, .tox/, site-packages/
+            let pruned = try runGate(stack, [".gitignore": "env1/\nnode_modules/\n.tox/\nlib/\n", "env1/pyvenv.cfg": "home = /usr\n",
+                                             "env1/x/conftest.py": "session.exitstatus = 0\n", "env1/x/jest.config.js": "module.exports = { passWithNoTests: true }\n",
+                                             "node_modules/x/jest.config.js": "module.exports = { passWithNoTests: true }\n",
+                                             ".tox/py/conftest.py": "session.exitstatus = 0\n", "lib/site-packages/conftest.py": "session.exitstatus = 0\n"])
+            #expect(pruned.status == 0 && pruned.out.contains("stub ") && !pruned.out.contains("gate:"), "\(stack): \(pruned.out)")
+        }
+        // m-B: an ignored config is seen (.git/info/exclude or .gitignore), links among them too
+        let excluded = try runGate("python", ["tests/conftest.py": "def pytest_sessionfinish(session):\n    session.exitstatus = 0\n"],
+                                   prep: "git init -q && printf 'tests/conftest.py\\n' >> .git/info/exclude && git add -A")
+        #expect(excluded.status != 0 && excluded.out.contains("tests/conftest.py:2") && !excluded.out.contains("stub "), "\(excluded.out)")
+        let lib = try runGate("python", [".gitignore": "lib/\n", "lib/conftest.py": "session.exitstatus = 0\n"])
+        #expect(lib.status != 0 && lib.out.contains("lib/conftest.py:1"), "\(lib.out)")
+        let vitest = try runGate("node", [".gitignore": "vitest.config.ts\n", "vitest.config.ts": "export default { test: { passWithNoTests: true } }\n"])
+        #expect(vitest.status != 0 && vitest.out.contains("vitest.config.ts:1"), "\(vitest.out)")
+        let link = try runGate("node", [".gitignore": "jest.config.js\n", "cfg/real": "x\n"], links: ["jest.config.js": "cfg/real"])
+        #expect(link.status != 0 && link.out.contains("link simbólico em arquivo de config do runner: jest.config.js"), "\(link.out)")
+
+        // one forced() block for every model, and one interpreter choice for the python gate and check
+        func block(_ s: String) -> String? {
+            guard let a = s.range(of: "# forced <ERE"), let b = s.range(of: "\n}\n", range: a.upperBound..<s.endIndex) else { return nil }
+            return String(s[a.lowerBound..<b.upperBound])
+        }
+        let node = block(try text(modelos.appendingPathComponent("node/scripts/gate.sh")))
+        let py = block(try text(modelos.appendingPathComponent("python/scripts/gate.sh")))
+        #expect(node != nil && node == py, "o bloco forced() de node e python divergiu")
+        for p in ["python/scripts/gate.sh", "python/scripts/check-feature.sh"] {
+            let t = try text(modelos.appendingPathComponent(p))
+            #expect(t.contains("if python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then exec python3 -P -m pytest -q")
+                    && t.contains("exec python3 -I -m pytest -q") && !t.contains("exec python3 -m pytest"), "\(p)")
+        }
     }
 }

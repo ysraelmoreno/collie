@@ -48,15 +48,17 @@ Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci`, `existing` 
 Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
 - `collie-work.json`: do `profile.json` do modelo com as respostas da entrevista. Já existe: mescle só a chave `factory` e as chaves que faltam; nunca troque o `gate` do dono sem ele dizer.
 - `scripts/gate.sh`, executável: o `gate` é `bash scripts/gate.sh # <configs puras>`, o texto do `gate` do modelo. Ele roda o
-  runner direto e falha se um arquivo de config listado no comentário do topo força sucesso ou é link simbólico, olhando só o
-  que o git vê (versionados e não ignorados: `venv/`, `.tox/`, `node_modules/` ignorados não contam). Um link em arquivo de
-  config do runner ou para pasta tira o alvo da vista do juiz (troque-o por cópia); outro link (`CLAUDE.md -> AGENTS.md`) não conta.
+  runner direto e falha se um arquivo de config listado no comentário do topo força sucesso ou é link simbólico, olhando o que
+  o git lista (versionados, não versionados e os ignorados com nome de config, fora de venv, `node_modules/`, `.tox/` e
+  `site-packages/`). Um link em arquivo de config do runner, ou para pasta fora do repositório, tira o alvo da vista do juiz
+  (troque-o por cópia); link para pasta dentro do repositório e outro link (`CLAUDE.md -> AGENTS.md`) não contam. Fora de um
+  repositório git ou sem `git` no PATH o gate falha de propósito (CI em Docker com `.git` no `.dockerignore` cai aqui).
   **Protegidos** (o juiz recusa por substring a tentativa que muda um arquivo que o texto do gate cita): o `gate.sh` e as
-  configs puras do runner depois do `#` (`jest.config.*`, `vitest.config.*`, `vite.config.*`, `vitest.workspace.*`,
-  `pytest.ini`, `tox.ini`). **Só inspecionados** pelo `gate.sh`, nunca citados no texto: os manifestos (`package.json`,
-  `pyproject.toml`, `setup.cfg`, `conftest.py`, `Package.swift`), para que uma tarefa que muda dependência, script, fixture
-  ou target continue possível. Depois do `#`: pode as configs puras citadas que não existem no projeto e **acrescente toda
-  config pura do runner que existe** no projeto e falta no texto (ex.: `vite.config.ts`, `vitest.workspace.ts`); o doutor
+  configs puras do runner depois do `#` (`jest.config.*`, `vitest.config.*`, `vitest.workspace.*`, `pytest.ini`).
+  **Só inspecionados** pelo `gate.sh`, nunca citados no texto: os manifestos (`package.json`, `pyproject.toml`, `setup.cfg`,
+  `conftest.py`, `Package.swift`) e as configs que não são só do runner (`vite.config.*`, com o build; `tox.ini`, com
+  dependências e `[flake8]`), para que uma tarefa que muda dependência, script, build, fixture ou target continue possível. Depois do `#`: pode as configs puras citadas que não existem no projeto e **acrescente toda
+  config pura do runner que existe** no projeto e falta no texto (ex.: `jest.config.ts`, `vitest.workspace.ts`); o doutor
   avisa de uma citada que não existe. Se o projeto ganhar outra depois, acrescente-a ao texto.
   Limite que fica: o gate não enxerga binários em pastas ignoradas como node_modules/.bin ou .venv.
   Node: o runner é fixo, gravado por você em `gate.sh` e `check-feature.sh` a partir do `tools.node.testRunner` do detector:
@@ -64,8 +66,9 @@ Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
   em tempo de execução e sem fallback. **Recuse runner que passe por script do `package.json`** (`npm test`, `yarn test`,
   `pnpm run test:x`): o agente edita esse script. Se o detector só achou `<gerenciador> test`, pergunte ao dono qual binário o
   script chama e grave esse binário com `npx --no-install`; sem binário de teste direto, não há gate.
-  Python: o gate e o `check-feature.sh` rodam `python3 -P -m pytest` com Python 3.11+ e `python3 -m pytest` abaixo disso
-  (o gate recusa `pytest.py`/`pytest/` na raiz). Layout plano (código na raiz, sem `conftest.py` na raiz): com `-P` a raiz
+  Python: o gate e o `check-feature.sh` rodam `python3 -P -m pytest` com Python 3.11+ e `python3 -I -m pytest` abaixo disso
+  (a raiz nunca entra no `sys.path`: `pluggy.py` ou `_pytest/` ali não substituem o pytest; com `-I` o pytest vem do venv ou
+  do sistema, nunca do site do usuário); o gate recusa `pytest.py`/`pytest/` na raiz. Layout plano (código na raiz, sem `conftest.py` na raiz): com `-P` a raiz
   sai do `sys.path`; acrescente `pythonpath = ["."]` em `[tool.pytest.ini_options]` do `pyproject.toml` (com o dono de acordo).
 - `scripts/check-feature.sh` (e um `scripts/check-<tipo>.sh` por tipo de tarefa que o dono citar), executável.
 - `docs/fabrica/personas/*.md`: copie as personas padrão; os nomes vão em `factory.review.personas`. O dono pode editar.

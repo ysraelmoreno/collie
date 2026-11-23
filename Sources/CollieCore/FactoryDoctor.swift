@@ -182,9 +182,9 @@ public enum FactoryDoctor {
     }
 
     /// F6b (n2): a pure config of a test runner (`jest.config.js`, `vitest.config.ts`, `vite.config.ts`, `vitest.workspace.ts`,
-    /// `pytest.ini`, `tox.ini`), never a manifest (`package.json`, `pyproject.toml`, `Package.swift`).
+    /// `pytest.ini`, `tox.ini`; F7b: `jest.config.json`, `vitest.workspace.json`), never a manifest (`package.json`, `pyproject.toml`, `Package.swift`).
     public static func isRunnerConfig(_ w: String) -> Bool {
-        w.range(of: #"^((jest|vitest|vite)\.config|vitest\.workspace)\.[cm]?[jt]s$|^(pytest|tox)\.ini$"#, options: .regularExpression) != nil
+        w.range(of: #"^((jest|vitest|vite)\.config|vitest\.workspace)\.([cm]?[jt]s|json)$|^(pytest|tox)\.ini$"#, options: .regularExpression) != nil
     }
 
     /// `npm test`, `npm t`, `npm -s test`, `yarn run test`, `pnpm test:ci`, `bun run test`, `npm run-script test`...: the runner

@@ -112,7 +112,8 @@ import CollieProtocol
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.loop?.stopReason == nil && w.loop?.autoLand?.after == nil)
-        #expect(await r.host.lands.isEmpty && (await r.host.ownerNotices).count == 1)
+        let notices = await r.host.ownerNotices
+        #expect(await r.host.lands.isEmpty && notices.count == 1)
     }
 
     @Test func refusals() throws {

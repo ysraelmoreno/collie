@@ -717,7 +717,8 @@ extension CommandRouter {
         guard base.status == 0 else { throw ProtocolError(code: .invalidArgs, message: "base branch '\(f.baseBranch)' not found") }
         do {
             let res = try await landPaddock(&f, mode: .merge, message: message)
-            return (base.stdout.trimmingCharacters(in: .whitespacesAndNewlines), res.commit)
+            guard let after = res.commit else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
+            return (base.stdout.trimmingCharacters(in: .whitespacesAndNewlines), after)
         } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
     }
 

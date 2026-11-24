@@ -724,9 +724,7 @@ actor CommandRouter {
         case "admin.spawn":
             let name = try need("name")
             try reserve(name); defer { launching.remove(name.lowercased()) }
-            guard let preset = Preset(rawValue: try need("preset")) else {
-                throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-            }
+            let preset = try Preset.parse(try need("preset"))
             var fl: Paddock?
             if let f = str(r, "paddock") { fl = try findPaddock(f) }
             let sandbox: TerminalSandbox   // the only path to a free terminal: the user, in the app
@@ -794,12 +792,7 @@ actor CommandRouter {
             case .string("false")?: t.isShepherd = false
             default: throw ProtocolError(code: .invalidArgs, message: "shepherd must be true or false")
             }
-            if let ps = str(r, "preset") {
-                guard let preset = Preset(rawValue: ps) else {
-                    throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-                }
-                t.preset = preset
-            }
+            if let ps = str(r, "preset") { t.preset = try Preset.parse(ps) }
             if let c = str(r, "command") { t.command = c.isEmpty ? nil : c }   // ponytail: empty clears
             if let c = str(r, "cwd") {
                 guard t.paddockId == nil else {

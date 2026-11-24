@@ -64,7 +64,7 @@ extension CommandRouter {
         guard dirty.isEmpty else { throw invalid("tracked files are dirty in paddock '\(paddock.name)'; commit or discard them first:\n\(dirty.prefix(500))") }
 
         // the summon's own checks run again per attempt; these only save three failed attempts
-        if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
+        if let p = str(r, "preset") { _ = try Preset.parse(p) }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
         let gateFlag = str(r, "gate")

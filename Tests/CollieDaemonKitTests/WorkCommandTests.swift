@@ -608,4 +608,9 @@ extension WorkCommandTests {
     }
 }
 
+@Test func presetParseIsTheOneValidation() throws {
+    #expect(try Preset.parse("claude") == .claude)
+    #expect(throws: ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")) { try Preset.parse("nope") }
+}
+
 private extension CommandRouter { func f4AddPaddock(_ p: Paddock) { ws.paddocks.append(p) }; func f4AddTerminal(_ t: TerminalRecord) { ws.terminals.append(t) } }

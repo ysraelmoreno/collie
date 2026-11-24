@@ -801,7 +801,7 @@ actor MemoryService {
         guard !ids.isEmpty else { return }
         var e = MemoryEvent(type: .used, terminal: terminal, session: s, ids: [], hits: ids.count)
         if correction { e.reason = "correction" } else {
-            let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+            let key = UseKey(day: LifecycleRules.dayFormatter.string(from: now), session: s)
             let taken = await lifecycle.addUse(ids, key: key, now: now)
             e.ids = taken
             let ev = await lifecycle.addEvidence(taken.filter { named[$0] != nil }, key: key, now: now)   // shadow: no rule reads it
@@ -822,7 +822,7 @@ actor MemoryService {
     /// A use and its evidence `kind` (flag) now, logged as its own `used` with `where` = `kind` (not a prompt's: the v1
     /// precision leaves it out). An id this session flagged wrong/outdated takes neither.
     private func useWithEvidence(_ kind: String, _ ids: [UUID], session s: String, terminal: UUID?, now: Date) async {
-        let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+        let key = UseKey(day: LifecycleRules.dayFormatter.string(from: now), session: s)
         let taken = await lifecycle.addUse(ids, key: key, now: now)
         let ev = await lifecycle.addEvidence(taken, key: key, now: now)
         guard !ev.isEmpty else { return }
@@ -846,7 +846,7 @@ actor MemoryService {
                    terminal: UUID? = nil, now: Date = Date()) async throws(ProtocolError) -> (contested: Bool, queued: Bool) {
         let live = record.map { LifecycleRules.eligible($0) } ?? false
         let sticky = record.map { $0.pinned || $0.reviewed } ?? false
-        let day = Self.dayFormatter.string(from: now)
+        let day = LifecycleRules.dayFormatter.string(from: now)
         if verdict == .useful {
             if live { await useWithEvidence("flag", [id], session: session, terminal: terminal, now: now) }
             noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue, terminal: terminal)
@@ -881,7 +881,7 @@ actor MemoryService {
 
     /// The promotion gate (≤ 3 queued a UTC day, counted in `lifecycle.json`: a restart doesn't reset it).
     func enqueuePromotion(_ id: UUID, now: Date = Date()) async -> Bool {
-        let day = Self.dayFormatter.string(from: now)
+        let day = LifecycleRules.dayFormatter.string(from: now)
         guard await lifecycle.takeGate(day: day, max: LifecycleRules.maxGatesPerDay) else { return false }
         if await verifier?(id, .verifyPromotion) == true { return true }
         await lifecycle.releaseGate(day: day)
@@ -944,10 +944,6 @@ actor MemoryService {
         }
         return nil
     }
-
-    nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
-    }()
 
     // MARK: procedures as skills
 

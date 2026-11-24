@@ -90,7 +90,7 @@ unsafe-concurrency Sources/CollieDaemonKit/Memory/LifecycleRules.swift 1
 unsafe-concurrency Sources/CollieDaemonKit/Memory/MemoryEmbedder.swift 1
 unsafe-concurrency Sources/CollieDaemonKit/Memory/MemoryEvents.swift 1
 unsafe-concurrency Sources/CollieDaemonKit/Memory/MemoryProvenance.swift 1
-unsafe-concurrency Sources/CollieDaemonKit/Memory/MemoryService.swift 3
+unsafe-concurrency Sources/CollieDaemonKit/Memory/MemoryService.swift 2
 unsafe-concurrency Sources/CollieDaemonKit/Memory/ProcedureSkills.swift 1
 unsafe-concurrency Sources/CollieDaemonKit/PaddockApps.swift 1
 unsafe-concurrency Sources/CollieDaemonKit/Remote/RemoteAddress.swift 2

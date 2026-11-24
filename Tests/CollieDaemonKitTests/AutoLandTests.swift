@@ -335,10 +335,10 @@ import CollieProtocol
             $0.loop = l; $0.closedAt = nil; $0.tasks[0].state = .open
         }
         #expect(try await r.get().loop?.events?.contains { $0.kind == .landed } != true)
-        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a2.swift", "let a = 2\n", in: $0) }))
+        await r.host.set("w-task-a-t2", LoopScript(act: { try await commit("a2.swift", "let a = 2\n", in: $0) }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
-        #expect(w.loop?.stopReason?.code == .landDailyCap && w.loop?.stopReason?.detail == "1 de 1 em 24 h", "\(String(describing: w.loop?.stopReason))")
+        #expect(w.loop?.stopReason?.code == .landDailyCap && w.loop?.stopReason?.detail == "1 de 1 em 24 h", "\(String(describing: w.loop?.stopReason)) \(w.tasks) \(w.notes.suffix(4).map(\.text))")
         #expect(await r.host.lands == [.merge])
     }
 

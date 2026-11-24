@@ -63,6 +63,25 @@ private let profile = #"""
         #expect(ReviewVerdict.aggregate([blocker], threshold: "blocker").approved == false)
     }
 
+    @Test func theCardTellsTheReviewAsItRuns() throws {
+        let w = Work(title: "W", terminalId: UUID()), t = [WorkTask(id: "a", title: "A", check: "true")]
+        var l = WorkLoopState(max: 3, tasks: ["a"]); l.review = true; l.reviewOnly = ["testes"]; l.reviewThreshold = "blocker"
+        let card = try #require(CommandRouter.loopCardText(w, t, l, paddock: "p"))
+        #expect(card.contains("revisão por personas: auto (só «testes»), veto só por blocker (collie-work.json)"), "\(card)")
+        let trusted = WorkStatusText.loopTrusted(paddock: "p", t, l)
+        #expect(trusted.contains("(só «testes»)") && trusted.contains("veto só por blocker"), "\(trusted)")
+        let off = WorkLoopState(max: 3, tasks: ["a"])
+        #expect(CommandRouter.loopCardText(w, t, off, paddock: "p", profileReviewOff: true)?.contains("sem revisão: --no-review desliga a do perfil") == true)
+        #expect(WorkStatusText.loopTrusted(paddock: "p", t, off, profileReviewOff: true).contains("sem revisão: --no-review desliga a do perfil"))
+        #expect(CommandRouter.loopCardText(w, t, off, paddock: "p")?.contains("revisão") == false)
+    }
+
+    @Test func theBudgetCutIsToldInStatus() {
+        var w = Work(title: "W", terminalId: UUID())
+        w.loop = WorkLoopState(max: 3, budget: 43_200, tasks: ["a"]); w.loop?.origins = ["budget": "perfil", "budgetCut": "86400"]
+        #expect(WorkStatusText.originLines(w).contains("orçamento do perfil (86400 s) cortado para 43200 s, o teto do laço"))
+    }
+
     @Test func statusLinesComeOnlyWithAProfile() {
         var w = Work(title: "W", terminalId: UUID())
         w.loop = WorkLoopState(max: 3, tasks: ["a"])
@@ -147,7 +166,7 @@ private let profile = #"""
             #expect(l.review == nil && l.reviewOnly == nil && l.reviewThreshold == nil, "\(l)")
             #expect(l.tries == 5 && l.budget == 900, "\(l)")
             #expect(l.origins == ["review": "flag", "budget": "perfil", "tries": "flag"], "\(String(describing: l.origins))")
-            #expect(status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), "\(status)")
+            #expect(status.contains("revisão: desligada") && !status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), "\(status)")
             let both = try await call(d, p, x.s, "work.run", ["max": .number(3), "review": .bool(true), "no-review": .bool(true)])
             #expect(both.error?.code == .invalidArgs, "\(both)")
         }
@@ -163,6 +182,47 @@ private let profile = #"""
             let l = try #require(loop)
             #expect(l.review == nil && l.tries == 3, "\(l)")
             #expect(l.origins == ["review": "padrão", "budget": "padrão", "tries": "padrão"], "\(String(describing: l.origins))")
+        }
+    }
+
+    @Test func anIgnoredFileWarnsEvenWithEveryFlag() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "gate": 3 }"#, in: x.dir)
+            let (r, loop, _) = try await runAndRead(d, p, x, ["gate": .string("true"), "precheck": .string("true")])
+            let w = try #require(warningOf(r), "\(r)")
+            #expect(w.contains("ignorado") && w.contains("revisão, orçamento nem tentativas"), "\(w)")
+            #expect(loop?.review == nil)
+        }
+    }
+
+    @Test func theProfilesPersonasAreCheckedAndItsRefusalNamesTheProfile() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["segurança"] } } }"#, in: x.dir)
+            let r = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.review.personas") == true
+                    && r.error?.message.contains("testes") == true, "\(r)")
+            #expect(await !d.router.appCards.contains { $0.app == "work-loop" })
+            // no catalog at HEAD, the profile turning the review on: the refusal says it is the profile's
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": {} } }"#, in: x.dir)
+            let git = try await GitRunner.run(["rm", "-q", "-r", CommandRouter.personasDir], in: x.dir, timeout: .seconds(30))
+            #expect(git.status == 0)
+            _ = try await GitRunner.run(["commit", "-q", "-m", "no personas"], in: x.dir, timeout: .seconds(30))
+            let none = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            #expect(none.error?.message.contains("factory.review do collie-work.json liga a revisão, mas não há personas em HEAD") == true, "\(none)")
+        }
+    }
+
+    @Test func landFactoryPaddockInAMarkedPaddockSaysA4() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "guardrails": { "land": "factory-paddock" } } }"#, in: x.dir)
+            let id = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
+            _ = try await d.router.setFactory(id, true)
+            let (r, _, _) = try await runAndRead(d, p, x, [:])
+            #expect(warningOf(r)?.contains("auto-land ainda não existe (A4); segue manual") == true, "\(r)")
+            #expect(warningOf(r)?.contains("não tem a marca") == false, "\(r)")
         }
     }
 

@@ -68,6 +68,16 @@ private func collieProfile(_ dir: URL, land: String = "manual") throws {
     @Test func humanLineShowsFabricaBesideTheName() {
         #expect(PaddockText.line(["name": .string("k"), "status": .string("working"), "factory": .bool(true), "branch": .string("collie/k")]) == "k (fábrica)\tworking\tcollie/k")
         #expect(PaddockText.line(["name": .string("k"), "status": .string("idle"), "factory": .bool(false), "branch": .string("")]) == "k\tidle")
+        // B1: the path too (docs/referencia.md: list and status bring the paths)
+        #expect(PaddockText.line(["name": .string("k"), "status": .string("idle"), "branch": .string("collie/k"), "path": .string("/r/k")]) == "k\tidle\tcollie/k\t/r/k")
+    }
+
+    @Test func mcpNeverCreatesAMarkedPaddock() throws {
+        let tool = try #require(MCPSchema.tools(shepherd: true).first { if case .object(let o) = $0 { o["name"] == .string("paddock_create") } else { false } })
+        guard case .object(let o) = tool, case .object(let schema)? = o["inputSchema"], case .object(let props)? = schema["properties"] else { Issue.record("\(tool)"); return }
+        #expect(props["factory"] == nil && props["name"] != nil, "\(props)")
+        #expect(MCPSchema.refusal(command: "paddock.create", args: ["name": .string("k"), "factory": .bool(true)])?.contains("never by MCP") == true)
+        #expect(MCPSchema.refusal(command: "paddock.create", args: ["name": .string("k")]) == nil)
     }
 
     @Test func doctorLines() {
@@ -173,6 +183,20 @@ private func collieProfile(_ dir: URL, land: String = "manual") throws {
                 try collieProfile(dir)
                 #expect(try await on().ok)
             }
+        }
+    }
+
+    /// B1: on reads the profile the loop reads (HEAD): a good profile only in the tree, HEAD without it, refuses.
+    @Test func onRefusesAProfileThatIsNotHEADs() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            #expect(try await call(d, p, nil, "paddock.create", ["name": .string("k"), "repo": .string(repo.path)]).ok)
+            let dir = repo.appendingPathComponent(".collie/paddocks/k")
+            try collieProfile(dir)
+            let on = try await call(d, p, nil, "paddock.factory", ["name": .string("k"), "state": .string("on")])
+            #expect(on.error?.code == .invalidArgs && on.error?.message.contains("difere do commit HEAD") == true
+                    && on.error?.message.contains("\n") == false, "\(on)")
+            #expect(await d.router.ws.paddocks.first { $0.name == "k" }?.factory == false)
         }
     }
 

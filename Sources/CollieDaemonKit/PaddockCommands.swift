@@ -171,8 +171,12 @@ extension CommandRouter {
     static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
 
     /// B1: why the worktree's `collie-work.json` is not HEAD's, in one line; nil: it is (or git says so).
+    /// C1 (B1-b): an ignored file is no change to `git status`, yet HEAD may lack it or hold another: refused.
     static func factoryDirty(_ dir: URL) async -> String? {
         let name = ProjectWorkConfig.fileName
+        if let ig = try? await GitRunner.run(["check-ignore", "-q", "--", name], in: dir, timeout: .seconds(30)), ig.status == 0 {
+            return "o perfil está no .gitignore: o motor lê o commit base, não a árvore"
+        }
         guard let st = try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", name], in: dir, timeout: .seconds(30)),
               st.status == 0 else { return "\(name) não pôde ser comparado com o commit HEAD (git status falhou)" }
         return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil

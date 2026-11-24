@@ -485,13 +485,27 @@ extension WorkLoop {
     /// is the router's error, cleaned like any journal detail (`eventDetail`). An unreadable answer keeps `ReviewVerdict.parse`'s own reason.
     enum ReviewMuteCause: Sendable, Equatable {
         case summonRefused(String), terminalGone, timedOut(Int), emptyText
+        /// C1 (P1-a): the prompt never reached the reviewer (`AskCoordinator.promptNotDelivered`), not a turn past its time.
+        case promptNotDelivered
+        /// C1 (P1-a): the reviewer's terminal sat in an approval or dialog nobody answered, so the prompt was refused.
+        case awaitingApproval
         var text: String {
             switch self {
             case .summonRefused(let why): "summon recusado: " + WorkLoop.eventDetail(why)
             case .terminalGone: "terminal sumiu"
             case .timedOut(let s): "passou do tempo do turno (\(s) s)"
             case .emptyText: "texto vazio"
+            case .promptNotDelivered: "prompt não entregue"
+            case .awaitingApproval: "terminal esperando aprovação"
             }
+        }
+
+        /// C1 (P1-a): the cause of an ask that failed, by the error's code first, its text only to split them apart.
+        static func of(_ e: ProtocolError, turn: Int) -> ReviewMuteCause {
+            if AskCoordinator.promptNotDelivered(e) { return .promptNotDelivered }
+            if e.code == .timeout { return .timedOut(turn) }
+            if e.code == .unavailable, e.message.contains("approval") { return .awaitingApproval }
+            return .terminalGone
         }
     }
 
@@ -640,7 +654,7 @@ extension WorkLoop {
                             id = t
                             let text: String
                             do throws(ProtocolError) { text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn)) } catch {
-                                verdict = Self.mute(p.name, error.code == .timeout ? .timedOut(turn) : .terminalGone); throw error
+                                verdict = Self.mute(p.name, .of(error, turn: turn)); throw error
                             }
                             if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = Self.mute(p.name, .emptyText) }
                             else { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce, lineCounts: lineCounts) }

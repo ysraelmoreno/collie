@@ -195,6 +195,26 @@ import CollieProtocol
         #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
     }
 
+    /// C1 (P1-a): the router's error decides the cause, never the text alone: "not accepting input" is a prompt not
+    /// delivered (not a turn past its time), an approval nobody answered is no terminal gone.
+    @Test(arguments: [
+        (ProtocolError(code: .timeout, message: "target 'x' is not accepting input"), "prompt não entregue"),
+        (ProtocolError(code: .timeout, message: "'x' is still busy with an earlier turn; prompt not delivered"), "prompt não entregue"),
+        (ProtocolError(code: .timeout, message: "No reply from 'x' within 5s"), "passou do tempo do turno ("),
+        (ProtocolError(code: .unavailable, message: "'x' is waiting for an approval; prompt not delivered"), "terminal esperando aprovação"),
+        (ProtocolError(code: .unavailable, message: "'x' shows a dialog or approval; it must be answered first"), "terminal esperando aprovação"),
+        (ProtocolError(code: .notRunning, message: "Terminal 'x' is not accepting input"), "terminal sumiu"),
+        (ProtocolError(code: .notRunning, message: "Terminal 'x' exited"), "terminal sumiu"),
+    ]) func muteCauseComesFromTheError(_ e: ProtocolError, _ cause: String) async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await Self.works(r, 1)
+        await r.host.setReviewError("testes", e)
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(Self.said(w, "revisor testes sem resposta (causa: \(cause)"), "\(e): \(w.notes.map(\.text))")
+        #expect(Self.journal(w, .reviewerMute).contains { $0.contains("revisor testes sem resposta (causa: \(cause)") }, "\(e)")
+    }
+
     /// P1: every persona mute runs the review once more with fresh reviewers; the retry's answer counts (here a veto).
     @Test func allMuteRetriesOnceAndTheRetryCounts() async throws {
         let r = try await Self.rig(tries: 2); defer { r.cleanup() }

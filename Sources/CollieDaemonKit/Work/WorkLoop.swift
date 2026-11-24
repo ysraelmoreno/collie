@@ -17,6 +17,8 @@ protocol LoopHost: Sendable {
     func usageLimit(_ terminal: UUID) async -> String?
     /// P2: the last lines of the terminal's screen (what `usageLimit` reads), raw. nil: none. Read only.
     func screen(_ terminal: UUID) async -> [String]?
+    /// C1 (P2-d): the daemon's live tokens (`AuthRegistry.secrets`), hidden in what of a screen goes to a note.
+    func secrets() async -> Set<String>
     func dismiss(_ terminal: UUID) async
     /// F2 Z3b: `dismiss`, then every process still in the terminal's process group killed (`WorkLoop.reapGroup`).
     func dismissReaping(_ terminal: UUID) async
@@ -94,6 +96,7 @@ extension LoopHost {
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func usageLimit(_ terminal: UUID) async -> String? { nil }
     func screen(_ terminal: UUID) async -> [String]? { nil }
+    func secrets() async -> Set<String> { [] }
     func tokens(_ terminal: UUID) async -> TokenCount? { nil }
     /// A host with no processes (the tests' fakes).
     func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
@@ -385,6 +388,8 @@ actor WorkLoop {
         /// F2 V1: when the last turn (the attempt's or its nudge's) began, and what the loop saw at its end: how long it
         /// lasted and whether the agent was still working (the `turnEnded` event's detail).
         var turnAt: Date?, looked: (secs: Int, busy: Bool)?
+        /// C1 (P2-c): the agent's screen (`screenTail`) when its prompt was not delivered, for the retry's note.
+        var lostScreen = ""
         /// The branch and the untracked files (the owner's and the agent's) before the check: what `settle` puts back.
         var on: String, loose: Set<String> = []
         var output = ""
@@ -449,6 +454,10 @@ actor WorkLoop {
         }
     }
 
+    /// C1 (P2-a): the least of the budget (seconds, or the turn's timeout when shorter) a retried prompt needs: with
+    /// less, the loop stops on the budget instead of spending its free retries on turns too short to be any.
+    static let promptRetryMinTurn = 20
+
     /// F2 V1: a turn's end before this many seconds, with its agent busy and no commit, leaves a note when no commit comes.
     static let shortTurn = 60
 
@@ -502,10 +511,17 @@ actor WorkLoop {
             for m in Self.featureMaps where map == nil { if await host.exists(m, in: dir) { map = m } }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
-            r.deadline = r.started + Double(turn); r.turnAt = host.now()
-            let ended = await talk(agent, prompt, .seconds(turn))
+            // C1 (P2-b): from now, not from the attempt's start: a retried attempt's turn is what the budget has left
+            r.deadline = host.now() + Double(turn); r.turnAt = host.now()
+            var ended = await talk(agent, prompt, .seconds(turn))
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
+            // C1 (P2-a/c): the screen before the dismiss, and whether the budget holds a retry after its back-off
+            if case .promptNotDelivered(let message, let load, _) = ended {
+                r.lostScreen = if let lines = await host.screen(agent) { Self.screenTail(lines, secrets: await host.secrets()) } else { "" }
+                let rest = await left(id, r.loop, since: r.started) - Int(promptRetryWait.components.seconds)
+                ended = .promptNotDelivered(message, load: load, fits: rest >= Swift.min(r.loop.timeout, Self.promptRetryMinTurn))
+            }
             return ended
         case .nudge:
             // not when the turn's time is over, the loop is stopping or the daemon is: straight to the check, as before
@@ -527,6 +543,8 @@ actor WorkLoop {
         case .promptRetry(let used):
             // P2: the task's count, not the attempt's (it crosses attempts); the note is the summary's line of it
             let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))"
+                + (r.lostScreen.isEmpty ? "" : "\ntela do agente:\n" + r.lostScreen)
+            r.lostScreen = ""
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].promptRetries = (x.tasks[i].promptRetries ?? 0) + 1 }
                 x.notes.append(WorkNote(at: at, text: text))
@@ -555,7 +573,7 @@ actor WorkLoop {
             guard await committed(before: before, branch: branch, dir) else {
                 if let looked, looked.busy, looked.secs < Self.shortTurn {
                     // P2: what the agent's screen showed, read before the dismiss
-                    let screen = if let agent = r.agent, let lines = await host.screen(agent) { Self.screenTail(lines) } else { "" }
+                    let screen = if let agent = r.agent, let lines = await host.screen(agent) { Self.screenTail(lines, secrets: await host.secrets()) } else { "" }
                     let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))"
                         + (screen.isEmpty ? "" : "\ntela do agente:\n" + screen)
                     await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
@@ -959,11 +977,13 @@ actor WorkLoop {
     }
 
     /// P2: the end of an agent's screen for a note: its last `screenLines` lines, clean (as an event's detail, secrets
-    /// hidden), at most `screenChars` characters.
-    static let screenLines = 20, screenChars = 800
-    static func screenTail(_ lines: [String]) -> String {
-        let clean = lines.suffix(screenLines).map { LotBoards.scrub(RerailText.plain(ANSI.strip($0))).trimmingCharacters(in: .whitespaces) }
-        return String(clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).suffix(screenChars))
+    /// hidden), at most `screenChars` characters. C1 (P2-d): `secrets` (the host's live ones) hidden too, and every
+    /// line starts with `screenMark`, so none reads as a `[collie]` line to the Shepherd (the mark adds 2 per line to the cap).
+    static let screenLines = 20, screenChars = 800, screenMark = "│ "
+    static func screenTail(_ lines: [String], secrets: Set<String> = []) -> String {
+        let clean = lines.suffix(screenLines).map { LotBoards.scrub(RerailText.plain(ANSI.strip($0)), secrets: secrets).trimmingCharacters(in: .whitespaces) }
+        let text = String(clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).suffix(screenChars))
+        return text.isEmpty ? "" : text.split(separator: "\n", omittingEmptySubsequences: false).map { screenMark + $0 }.joined(separator: "\n")
     }
 
     /// M2.2a: a 40-character lowercase hex sha, as `git rev-parse HEAD` prints one. `resumeFrom` comes from the work's

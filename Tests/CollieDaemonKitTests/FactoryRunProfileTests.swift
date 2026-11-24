@@ -214,6 +214,19 @@ private let profile = #"""
         }
     }
 
+    /// C1 (B1-a): the profile's personas are checked even with the review off: an unknown one warns, in the reply
+    /// and in `work status`, and refuses nothing.
+    @Test func anUnknownProfilePersonaWarnsWithTheReviewOff() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["testes", "seguranca"] } } }"#, in: x.dir)
+            let (r, loop, status) = try await runAndRead(d, p, x, ["no-review": .bool(true)])
+            #expect(r.ok && warningOf(r)?.contains("persona desconhecida em HEAD: seguranca") == true, "\(r)")
+            #expect(loop?.review == nil && loop?.origins?["unknownPersonas"] == "seguranca", "\(String(describing: loop))")
+            #expect(status.contains("persona desconhecida em HEAD: seguranca"), "\(status)")
+        }
+    }
+
     @Test func landFactoryPaddockInAMarkedPaddockSaysA4() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)

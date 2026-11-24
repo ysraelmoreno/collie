@@ -121,6 +121,16 @@ extension CommandRouter {
             loop.origins = ["review": origin(reviewFlag || noReview, file.reviewPresent), "budget": origin(budgetFlag != nil, profileBudget != nil),
                             "tries": origin(triesFlag != nil, factory.maxTries != nil)]
             if review.on, file.reviewPresent, review.personas == nil, !factory.personas.isEmpty { loop.reviewOnly = factory.personas }
+            // C1 (B1-a): the profile's persona names are checked whenever it is read, not only when they pick the review
+            // (`loopReview` refuses those): an unknown one off the review is a warning, here and in `work status`
+            if !fromProfile, !factory.personas.isEmpty {
+                let known = await Self.committedPersonas(dir), bad = factory.personas.filter { !known.contains($0) }
+                if !bad.isEmpty {
+                    let names = bad.map { RerailText.clean($0, max: 60) }.joined(separator: ", ")
+                    loop.origins?["unknownPersonas"] = names
+                    warning = [warning, WorkStatusText.unknownPersonasLine(names)].compactMap { $0 }.joined(separator: "; ")
+                }
+            }
             if review.on, file.reviewPresent { loop.reviewThreshold = factory.threshold.rawValue }
             if !factory.destructive.isEmpty { loop.destructive = factory.destructive.count }
             // nit (B1): the engine's ceiling cuts the profile's budget; `work status` says so
@@ -858,6 +868,7 @@ struct RouterLoopHost: LoopHost {
         return UsageLimit.detect(s.lines, quiet: s.quiet)
     }
     func screen(_ terminal: UUID) async -> [String]? { await router.asks.screen(terminal, quiet: .seconds(10))?.lines }
+    func secrets() async -> Set<String> { await router.auth.secrets() }
     func tokens(_ terminal: UUID) async -> TokenCount? { await router.attemptTokens(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
     func anyoneWorking() async -> String? { await router.loopAnyoneWorking(paddock: paddock, starter: starter, work: work, dir: dir) }

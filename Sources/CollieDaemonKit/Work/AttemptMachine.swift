@@ -24,7 +24,8 @@ enum AttemptMachine {
         case turnEnded(source: AskResult.Source), turnTimedOut(String), turnFailed(String)
         /// P2: the ask timed out before its prompt reached the agent (`AskCoordinator.promptNotDelivered`): the message,
         /// and the machine's load average then (for the owner's note when the free retries are spent).
-        case promptNotDelivered(String, load: Double)
+        /// C1 (P2-a): `fits`: what is left of the budget holds another try of the same attempt (the interpreter's sum).
+        case promptNotDelivered(String, load: Double, fits: Bool = true)
         /// M5.3: the agent sits in the model's usage-limit dialog (its text, short: `UsageLimit.excerpt`).
         case usageLimit(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
@@ -172,15 +173,22 @@ enum AttemptMachine {
         // P2: the attempt's INITIAL prompt never reached the agent: nothing was tried, so the agent goes and the same
         // attempt starts over with a new one, not counted, at most `maxPromptRetries` times per task. A nudge's prompt
         // not delivered is not this: its agent already worked a turn, the check decides as for any timeout
-        case (.turn, .promptNotDelivered(let message, let load)) where s.agent != nil && !s.nudged && !s.prechecked:
+        case (.turn, .promptNotDelivered(let message, let load, let fits)) where s.agent != nil && !s.nudged && !s.prechecked:
             guard s.promptRetries < maxPromptRetries else {
                 s.phase = .waitingCommit
                 return (s, [.journal(.turnEnded, timeoutDetail(message)), .note(overloadNote(s, load)), .lookForCommit])
             }
+            // C1 (P2-a): a free retry with no budget to run in is no retry: the loop stops on the budget, the attempt
+            // not counted, the free retries kept and the load not blamed
+            guard fits else {
+                s.agent = nil; s.phase = .finished
+                return (s, [.journal(.turnEnded, timeoutDetail(message)), .dismiss, .journal(.agentDismissed, nil), .uncount,
+                            .note(promptRetryBudgetNote(s)), .stopLoop(.init(.budgetSpent))])
+            }
             s.promptRetries += 1; s.agent = nil; s.phase = .summoning
             return (s, [.journal(.turnEnded, timeoutDetail(message)), .dismiss, .journal(.agentDismissed, nil),
                         .journal(.promptRetry, "\(s.promptRetries)/\(maxPromptRetries)"), .promptRetry("\(s.promptRetries)/\(maxPromptRetries)"), .summon])
-        case (.turn, .promptNotDelivered(let message, _)):
+        case (.turn, .promptNotDelivered(let message, _, _)):
             s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, timeoutDetail(message)), .lookForCommit])
         // M5.3: the turn would only end at its timeout and the next attempts would hit the same limit: not counted,
@@ -310,6 +318,11 @@ enum AttemptMachine {
     /// P2: the journal's `turnEnded` detail of a timeout: its message, clean, at most 120 characters.
     static func timeoutDetail(_ message: String) -> String {
         message.isEmpty ? "timeout" : "timeout: " + String(WorkLoop.eventDetail(message).prefix(120))
+    }
+
+    /// C1 (P2-a): the prompt was not delivered and the budget left holds no other try.
+    static func promptRetryBudgetNote(_ s: State) -> String {
+        "[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue e o orçamento de tempo que resta não cabe outra tentativa: tentativa não contada; laço parado"
     }
 
     /// P2: the task spent its free retries and its prompt was not delivered again: load is the likely cause.

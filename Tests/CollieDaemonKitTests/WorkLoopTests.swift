@@ -121,6 +121,9 @@ actor LoopFakeHost: LoopHost {
     /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
     var reviewTimeouts: Set<String> = []
     func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    /// C1 (P1-a): reviewers (by name or persona) whose ask throws this error, as the router's would.
+    var reviewErrors: [String: ProtocolError] = [:]
+    func setReviewError(_ who: String, _ e: ProtocolError) { reviewErrors[who] = e }
     /// P1: answers (by name or persona) taken one per ask, before `reviewAnswers` (a retried review gets the next one).
     var reviewAnswerQueue: [String: [String?]] = [:]
     func queueReviewAnswers(_ who: String, _ texts: [String?]) { reviewAnswerQueue[who] = texts }
@@ -157,6 +160,7 @@ actor LoopFakeHost: LoopHost {
             snapshotFiles[name] = files
         }
         if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
+        if let e = reviewErrors[name] ?? reviewErrors[persona] { throw e }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
         let nonce = Self.nonce(in: prompt)
         let queued = reviewAnswerQueue[name] != nil ? name : persona
@@ -194,7 +198,7 @@ actor LoopFakeHost: LoopHost {
             return s.source
         }
         // P2: an ask that never reached the agent (one per ask, before the script; the name is the same after a retry)
-        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); throw e }
+        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); advance(askErrorAdvance); throw e }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -209,6 +213,13 @@ actor LoopFakeHost: LoopHost {
     /// P2: errors the attempt's ask throws (by name, one per ask) before its script runs, and who got one.
     var askErrors: [String: [ProtocolError]] = [:], notDelivered: [String] = []
     func queueAskErrors(_ name: String, _ e: [ProtocolError]) { askErrors[name] = e }
+    /// C1 (P2-a/b): seconds the fake clock moves on at each queued ask error (a prompt not delivered after a long wait).
+    var askErrorAdvance: TimeInterval = 0
+    func setAskErrorAdvance(_ s: TimeInterval) { askErrorAdvance = s }
+    /// C1 (P2-d): the daemon's live tokens, as `secrets` reads them.
+    var liveSecrets: Set<String> = []
+    func setSecrets(_ s: Set<String>) { liveSecrets = s }
+    func secrets() async -> Set<String> { liveSecrets }
     /// P2: each agent's screen (by name), as `screen` reads it.
     var screens: [String: [String]] = [:]
     func setScreen(_ name: String, _ lines: [String]) { screens[name] = lines }

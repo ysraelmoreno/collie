@@ -164,8 +164,11 @@ actor LotBoards {
     /// ponytail: known shapes only; an arbitrary bare secret with no marker passes.
     /// The leading group makes the first regex linear: a match starts only at the head of an alphanumeric run (the greedy prefix
     /// covers every later start), so a long run is scanned once, not once per character (Swift regex has no lookbehind).
+    /// C1 (P2-d): also `NAME=value` for names ending in `url`/`password` (`DATABASE_URL=…`) and a URL's
+    /// `user:password@` (`postgres://u:senha@h` keeps `postgres://[hidden]@h`).
     static func scrub(_ s: String, secrets: Set<String> = []) -> String {
-        DesignService.scrub(s, secrets).replacing(/(?i)(^|[^A-Za-z0-9_])[A-Za-z0-9_]*(?:token|secret|key|edit)=[^\s&"'`<>)]*/) { $0.1 + "[hidden]" }
+        DesignService.scrub(s, secrets).replacing(/(?i)(^|[^A-Za-z0-9_])[A-Za-z0-9_]*(?:token|secret|key|edit|url|password)=[^\s&"'`<>)]*/) { $0.1 + "[hidden]" }
+            .replacing(/:\/\/[^\s\/:@]+:[^\s\/@]+@/, with: "://[hidden]@")
             .replacing(/(?i)\b(?:password|passwd|pwd)\s*[=:]\s*[^\s&"'`<>)]+/, with: "[hidden]")
             .replacing(/(?i)\bBearer\s+[A-Za-z0-9._~+\/=-]+/, with: "Bearer [hidden]")
             .replacing(/\bsk-[A-Za-z0-9_-]{8,}/, with: "[hidden]")

@@ -151,7 +151,12 @@ public enum WorkStatusText {
             if k == "review", o[k] == "flag", l.review != true { return "revisão: desligada (--no-review)" }
             return o[k].map { "origem \(label): " + RerailText.clean($0, max: 10) }
         } + (o["budgetCut"].map { ["orçamento do perfil (\(RerailText.clean($0, max: 10)) s) cortado para \(l.budget ?? 0) s, o teto do laço"] } ?? [])
+            + (o["unknownPersonas"].map { [unknownPersonasLine(RerailText.clean($0, max: 200))] } ?? [])
         return lines + (l.destructive.map { ["aviso: factory.guardrails.destructive tem \($0) padrão(ões); ainda não bloqueia comando"] } ?? [])
+    }
+    /// C1 (B1-a): profile persona names (already clean) that are no persona at HEAD, in a loop they do not review.
+    static func unknownPersonasLine(_ names: String) -> String {
+        "aviso: factory.review.personas do \(ProjectWorkConfig.fileName) tem persona desconhecida em HEAD: \(names)"
     }
     /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
     public static func workerLabel(_ t: WorkTask) -> String {

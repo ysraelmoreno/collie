@@ -104,6 +104,11 @@ actor LoopFakeHost: LoopHost {
         return (Self.landedBefore, Self.landedAfter)
     }
     func notifyOwner(_ line: String) async { ownerNotices.append(line) }
+    /// A5: why the paddock's factory doctor no longer passes (nil: it passes).
+    var doctorWhy: String?, doctorProbe: (@Sendable () async -> Void)?
+    /// `probe` runs inside the doctor's read (a `work stop` that lands during it).
+    func setDoctor(_ why: String?, probe: (@Sendable () async -> Void)? = nil) { doctorWhy = why; doctorProbe = probe }
+    func doctorRefusal() async -> String? { await doctorProbe?(); return doctorWhy }
     /// M3.8: names a live terminal already has (the attempt's agent takes another).
     var taken: Set<String> = []
     func setTaken(_ n: Set<String>) { taken = n }

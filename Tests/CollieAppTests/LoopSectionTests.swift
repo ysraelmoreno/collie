@@ -73,6 +73,16 @@ struct HistoryRowTests {
         #expect(row(HistoryEntry(id: "1", title: "", closedAt: t, done: 4, total: 6, deferred: 1)).resultText == "4/6 feitas · 1 adiada")
         #expect(row(HistoryEntry(id: "1", title: "", closedAt: t, done: 3, total: 6, deferred: 2)).resultText == "3/6 feitas · 2 adiadas")
     }
+    /// A5: the engine's one rule (`Stop.finishes`): a chain's `maxReached` (with its detail), `queueEmpty` and `landed`
+    /// are complete; the attempts' `maxReached` (no detail) and `budgetSpent` stopped.
+    @Test func theEnginesFinishedRuleColoursTheRow() {
+        func o(_ code: String, _ detail: String? = nil) -> HistoryRow.Outcome {
+            row(HistoryEntry(id: "1", title: "", closedAt: t, stopReason: code, done: 1, total: 1, stopDetail: detail)).outcome
+        }
+        #expect(o("maxReached", "1 de --auto-land-max 1 integrado(s); 1 na fila") == .complete)
+        #expect(o("queueEmpty") == .complete && o("landed") == .complete)
+        #expect(o("maxReached") == .stopped && o("budgetSpent") == .stopped)
+    }
     @Test func stoppedByBudgetAndUnknownReason() {
         #expect(row(HistoryEntry(id: "1", title: "", closedAt: t, stopReason: "budgetSpent")).stopText == "orçamento esgotado")
         #expect(row(HistoryEntry(id: "1", title: "", closedAt: t, stopReason: "algoDeUmDaemonNovo")).stopText == "motivo desconhecido")

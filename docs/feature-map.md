@@ -277,6 +277,21 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   base antes e depois na nota. Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
   (`autoLand`), `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`loopAutoLand`, `loopLand`); testes em
   `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
+- **Fila do auto-land (A5, `--auto-land-max <N>`, `--queue`):** `work run --auto-land --queue` leva o trabalho ao cartão
+  do dono (tarefas, checks, portão e limites, como sempre) e, aprovado, ele espera na fila do cercado (estado do laço
+  `queued`; nada roda; o land do cercado não o fecha). Depois de um `landed`, se a execução ainda não integrou `N`
+  trabalhos (padrão 1, no máximo 5), o laço escolhe o trabalho aprovado mais antigo da fila e segue, com o mesmo `--budget`
+  (o que sobrou) e o mesmo starter: o motor só escolhe; o router (`chainLoop`) registra o motor novo em `workLoops` e só
+  então passa o trabalho de `queued` a `running` (`WorkLoop.activate`), na mesma reserva do cercado, antes do aviso ao
+  starter; não começou ⇒ segue `queued`. Um `work stop` (também depois do fim do motor) para a corrente: `requested`. Antes de ativar: o teto diário (`factory.guardrails.autoLandPerDay`, 1 a 20, padrão 3,
+  contado pelos eventos `landed` do cercado nas últimas 24 h; também checado antes de cada land) e o `factory doctor` do
+  cercado (static e judge ≥ 1). Desfechos: `landed` (N integrados e fila vazia: com N=1 e fila vazia o fim é `landed`),
+  `queueEmpty` (menos de N integrados e a fila acabou, não é erro), `maxReached` com detalhe (teto `N` com trabalhos
+  esperando); os três "terminam" pela mesma regra `WorkLoopState.Stop.finishes(code:detail:)`, que o histórico do app
+  (`stopDetail`) também usa; `landDailyCap`, `landDoctorRegressed`; qualquer falha de A4 no trabalho seguinte para a
+  corrente. O laço nunca aprova nada: só entra trabalho `queued` com auto-land aprovado. Arquivos:
+  `Sources/CollieDaemonKit/Work/WorkLoop.swift` (`afterLand`, `landsToday`), `Sources/CollieDaemonKit/WorkLoopCommands.swift`
+  (`chainLoop`); testes em `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos

@@ -147,7 +147,9 @@ struct HistoryRow: Equatable, Identifiable {
 
     init(_ e: HistoryEntry, timeZone: TimeZone = .current) {
         id = e.id; title = e.title
-        outcome = !(e.stopReason ?? "").isEmpty && e.stopReason != "landed" ? .stopped : e.deferred > 0 ? .withDeferred : .complete
+        // A5: the engine's one rule of "finished" (`Stop.finishes`), never a list of its own
+        let stopped = !(e.stopReason ?? "").isEmpty && !WorkLoopState.Stop.finishes(code: e.stopReason, detail: e.stopDetail)
+        outcome = stopped ? .stopped : e.deferred > 0 ? .withDeferred : .complete
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = "dd/MM HH:mm"
         whenText = f.string(from: e.closedAt)
         resultText = "\(e.done)/\(e.total) feitas" + (e.deferred > 0 ? " · \(e.deferred) " + (e.deferred == 1 ? "adiada" : "adiadas") : "")
@@ -178,6 +180,9 @@ struct HistoryRow: Equatable, Identifiable {
         case .landDirty?: return "auto-land: árvore suja"
         case .landConflict?: return "auto-land: land falhou"
         case .landNotFactory?: return "auto-land: cercado não é fábrica"
+        case .queueEmpty?: return "auto-land: fila vazia"
+        case .landDailyCap?: return "auto-land: teto diário"
+        case .landDoctorRegressed?: return "auto-land: doctor regrediu"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

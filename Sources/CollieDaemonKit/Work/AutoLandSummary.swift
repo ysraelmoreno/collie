@@ -36,7 +36,8 @@ enum AutoLandSummary {
         func c(_ s: String, _ max: Int = 200) -> String { RerailText.clean(s, max: max) }
         let iso = ISO8601DateFormatter()
         let al = w.loop?.autoLand
-        let landed = stop?.code == .landed
+        // A5: a land made, whatever ended the chain after it (`queueEmpty`, `maxReached`, the daily cap...)
+        let landed = al?.after != nil
         var l = ["# Auto-land: \(c(w.title, 120))", "",
                  "- início: \(iso.string(from: started)) · fim: \(iso.string(from: ended)) · duração: \(duration(max(0, Int(ended.timeIntervalSince(started).rounded()))))",
                  "- stopReason: " + (stop.map { "\($0.code.rawValue) (\(c($0.label, 300)))" } ?? "nenhum (laço terminou sem integrar)")]
@@ -104,8 +105,10 @@ enum AutoLandSummary {
     }
 
     /// The owner's one line at the end.
-    static func ownerLine(title: String, stop: WorkLoopState.Stop?, left: Int, path: String?, error: String?) -> String {
-        let what = stop?.code == .landed ? "integrou 1 trabalho"
+    /// A5: `landed`, the works the chain landed in all (this one's land included).
+    static func ownerLine(title: String, stop: WorkLoopState.Stop?, left: Int, path: String?, error: String?, landed: Int = 0) -> String {
+        let what = landed > 0 ? (landed == 1 ? "integrou 1 trabalho" : "integrou \(landed) trabalhos")
+                + (stop.map { $0.code == .landed ? "" : $0.finishes ? " (\($0.label))" : "; parou em \($0.label)" } ?? "")
             : stop.map { "parou em \($0.label)" } ?? "integrou 0 trabalhos (\(left) tarefa(s) não feitas)"
         let at = path.map { "Resumo: \($0)" } ?? "resumo não gravado (\(error ?? "?"))"
         return "Collie: laço \"\(title)\": \(what). \(at). Veja: \(WorkLoop.autoLandHint)"
@@ -114,8 +117,9 @@ enum AutoLandSummary {
 
 extension WorkLoop {
     /// A6: the run of `work` with `--auto-land` ended (`stop`, nil: finished with no land): its summary written once,
-    /// its path on the loop, and one line to the owner. A loop stopped from outside keeps the reason it was given.
-    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL) async {
+    /// its path on the loop, and one line to the owner (A5: `notify` false, a work the chain goes on from: none; the
+    /// chain's last work tells, counting every land). A loop stopped from outside keeps the reason it was given.
+    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL, notify: Bool = true) async {
         guard let w = try? await store.get(id), w.loop?.autoLand != nil else { return }
         let why = w.loop?.state == .running ? stop : (w.loop?.stopReason ?? stop)
         let ended = host.now()
@@ -135,7 +139,10 @@ extension WorkLoop {
         } catch { failure = "\(error)" }
         if let path { try? await store.update(id) { $0.loop?.autoLand?.summary = path } }
         else { await note(id, "[loop] auto-land: resumo não gravado (\(failure ?? "?"))") }
+        guard notify else { return }
         let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }.count
-        await host.notifyOwner(AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: why, left: left, path: path, error: failure))
+        let landed = (w.loop?.autoLand?.chained ?? 0) + (w.loop?.autoLand?.after != nil ? 1 : 0)
+        await host.notifyOwner(AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: why, left: left, path: path, error: failure,
+                                                         landed: landed))
     }
 }

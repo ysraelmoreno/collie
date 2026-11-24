@@ -454,6 +454,8 @@ public enum Commands {
                              ParamSpec("personas", .string, help: "With --review: auto (default, the router picks) or persona names, comma-separated"),
                              ParamSpec("reviewer-model", .string, help: "With --review: the model of every persona (default: each persona's, else the loop's)"),
                              ParamSpec("auto-land", .flag, help: "Only in a factory paddock, with the committed profile's gate and the review on: once every task is done, the gate, a clean review of each task, the local CI and a clean tree, then paddock land by merge (never a push nor a PR); any failure stops the loop and calls the owner"),
+                             ParamSpec("auto-land-max", .int, help: "With --auto-land: how many works this execution may land (default 1, at most 5); after a land the paddock's next work the owner already approved (--queue) runs, within factory.guardrails.autoLandPerDay lands in 24 h (default 3) and the same --budget. Ends: stopReason landed when N works were landed and none waits (so 1 with an empty queue is landed), queueEmpty when fewer than N were landed and the queue ran out, maxReached when N were landed and approved works still wait"),
+                             ParamSpec("queue", .flag, help: "With --auto-land: the owner approves this work on the card now and it waits in the paddock's queue; an auto-land chain runs it after a land"),
                              ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)")],
                     timeoutSeconds: 60, shepherdOnly: true),
         CommandSpec(name: "work.stop", summary: "Stop the active work's loop after the current attempt's verdict",

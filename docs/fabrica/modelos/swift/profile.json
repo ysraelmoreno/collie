@@ -14,6 +14,6 @@
       ]
     },
     "review": { "personas": ["correcao", "testes", "simplicidade", "seguranca"], "threshold": "major", "callOwner": true },
-    "guardrails": { "budgetSeconds": 1800, "maxTries": 3, "destructive": ["rm -rf", "git push --force", "git reset --hard"], "land": "manual" }
+    "guardrails": { "budgetSeconds": 1800, "maxTries": 3, "destructive": ["rm -rf", "git push --force", "git reset --hard"], "land": "manual", "autoLandPerDay": 3 }
   }
 }

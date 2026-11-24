@@ -86,6 +86,7 @@ public enum WorkStatusText {
                 + (l.phase == .agent && agents.count == 1 ? " · terminal \(RerailText.clean(agents[0].id))" : "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
+        case .queued: return "na fila do auto-land (aprovado pelo dono; entra depois do próximo land do cercado)"
         }
     }
 

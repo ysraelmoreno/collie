@@ -25,4 +25,4 @@ Personas: `docs/fabrica/personas/` deste repositório (as mesmas que o `--review
 - Limite: o gate não enxerga binários em pastas ignoradas como node_modules/.bin ou .venv (nem .build; o `git diff` não os lista); um runner trocado ali passa. Quem pega é o revisor ou o CI, que instala do zero.
 - Limite: dos arquivos ignorados (inclusive por `.git/info/exclude`) o gate só vê os que têm nome de config do runner e estão fora de venv, `node_modules/`, `.tox/` e `site-packages/`; um binário em pasta ignorada segue fora.
 - Fora de um repositório git, ou sem `git` no PATH, o gate falha de propósito (ele olha o que o git vê). CI em Docker com `.git` no `.dockerignore` cai aqui: copie o `.git` para a imagem ou rode o gate fora do contêiner.
-- `destructive`, `budgetSeconds`, `maxTries` e `land` vêm da entrevista; os valores daqui são o ponto de partida.
+- `destructive`, `budgetSeconds`, `maxTries`, `land` e `autoLandPerDay` (A5: quantos auto-lands o cercado pode fazer em 24 h, de 1 a 20; padrão 3) vêm da entrevista; os valores daqui são o ponto de partida.

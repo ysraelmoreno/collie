@@ -180,7 +180,9 @@ public struct LoopEvent: Codable, Sendable, Equatable {
 /// later waits for the next run; nil: every open task); `gate`: a command run after every task's check, in the same
 /// conditions, that must also exit 0 (nil: none).
 public struct WorkLoopState: Codable, Sendable, Equatable {
-    public enum State: String, Codable, Sendable { case running, stopped, finished }
+    /// A5: `queued`, a `work run --auto-land --queue` the owner approved on the card (its tasks, checks, gate and limits)
+    /// that waits in its paddock's queue: no engine runs it until an auto-land chain activates it (`running`).
+    public enum State: String, Codable, Sendable { case running, stopped, finished, queued }
     public var state: State
     public var task: String?
     public var attempt: Int
@@ -238,6 +240,11 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// local CI red, a dirty tree or another agent busy, the land refused (a conflict or any failure), the
                 /// paddock no longer a factory's.
                 case landed, landGateRed, landReviewVeto, landCiRed, landDirty, landConflict, landNotFactory
+                /// A5, after a land: no approved work left in the paddock's queue (no error: the loop finished); the
+                /// paddock's lands in the last 24 h reached `factory.guardrails.autoLandPerDay`; the factory doctor of
+                /// the paddock no longer passes the minimum (static and judge at least 1). `maxReached` with a detail:
+                /// `--auto-land-max` lands made while approved works still wait.
+                case queueEmpty, landDailyCap, landDoctorRegressed
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -248,7 +255,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .requested: "pedido pelo dono (work stop)"
             case .workGone: "trabalho fechado ou parado por fora"
             case .starterGone: "o Pastor que iniciou sumiu"
-            case .maxReached: "limite de tentativas (--max) atingido"
+            case .maxReached: detail.map { "teto do auto-land atingido (\($0))" } ?? "limite de tentativas (--max) atingido"
             case .budgetSpent: "orçamento de tempo esgotado"
             case .gitFailed: "git falhou"
             case .dirtyTree: "arquivos rastreados modificados fora do laço"
@@ -265,11 +272,26 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landDirty: "auto-land: árvore suja ou outro agente trabalhando (\(detail ?? "cercado")); nada integrado"
             case .landConflict: "auto-land: o land (merge) falhou (\(detail ?? "conflito")); nada integrado"
             case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
+            case .queueEmpty: "auto-land: nenhum outro trabalho aprovado na fila do cercado"
+            case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
+            case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"
             }
         }
         /// The note every stopped loop leaves (A4: a landed one is no stop).
-        public var note: String { code == .landed ? "[loop] laço terminou: \(label)" : "[loop] laço parado: \(label)" }
+        /// A5: nor is the end of a chain (`queueEmpty`, `maxReached` of the auto-land).
+        public var note: String { finishes ? "[loop] laço terminou: \(label)" : "[loop] laço parado: \(label)" }
+        /// A4/A5: the codes a loop `finished` with (a land made, nothing failed).
+        public var finishes: Bool { Self.finishes(code: code.rawValue, detail: detail) }
+        /// The one rule of "finished" over a stop's two raw fields (the app's history rows have only those): `landed`,
+        /// `queueEmpty`, and `maxReached` with a detail (only the auto-land's chain gives it one).
+        public static func finishes(code: String?, detail: String?) -> Bool {
+            switch code.flatMap(Code.init(rawValue:)) {
+            case .landed?, .queueEmpty?: true
+            case .maxReached?: detail != nil
+            default: false
+            }
+        }
     }
     /// Set when the loop ends `stopped`; nil while it runs and when it `finished`.
     public var stopReason: Stop?
@@ -283,7 +305,13 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// A6: the absolute path of the run's summary (`<daemon root>/work-loops/<work>/autoland/<stamp>.md`, 0444);
         /// nil: none written yet.
         public var summary: String?
-        public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout) { self.gate = gate; self.ci = ci; self.timeout = timeout }
+        /// A5: `--auto-land-max` (nil: 1, at most `maxMax`), `factory.guardrails.autoLandPerDay` (nil: 3) and the lands
+        /// earlier works of the same execution made (nil: none; carried to the next work the chain activates).
+        public static let maxMax = 5, defaultPerDay = 3
+        public var max: Int?, perDay: Int?, chained: Int?
+        public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout, max: Int? = nil, perDay: Int? = nil) {
+            self.gate = gate; self.ci = ci; self.timeout = timeout; self.max = max; self.perDay = perDay
+        }
     }
     public var autoLand: AutoLand?
     /// The loop's journal, oldest first: a ring of the `eventsMax` newest (`record`). nil: none yet, or a loop written

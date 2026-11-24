@@ -6,7 +6,7 @@ import Foundation
 public struct FactoryProfile: Sendable, Equatable {
     public static let maxArchitecture = 50, maxRatchets = 50, maxScenarios = 100, maxPersonas = 20
     public static let maxDestructive = 50, maxDestructiveText = 200, maxTraps = 200, maxBaseline = 200
-    public static let budgetRange = 60...86400, triesRange = 1...10
+    public static let budgetRange = 60...86400, triesRange = 1...10, autoLandPerDayRange = 1...20
 
     public struct Ratchet: Sendable, Equatable {
         public var name: String, measure: String, baseline: String?
@@ -29,6 +29,8 @@ public struct FactoryProfile: Sendable, Equatable {
     // guardrails: nil = the engine's default
     public var budgetSeconds: Int?, maxTries: Int?
     public var destructive: [String] = [], land: Land = .manual
+    /// A5: how many auto-lands the paddock may make in 24 h (nil: the engine's 3).
+    public var autoLandPerDay: Int?
     // A4, `autoland`: the local CI the auto-land runs (nil: `scripts/ci/run-tests.sh`) and its timeout (nil: 1800 s)
     public var autolandCI: String?, autolandTimeout: Int?
     // prose
@@ -132,7 +134,7 @@ public struct FactoryProfile: Sendable, Equatable {
             }
         }
         if let g = f["guardrails"] {
-            let g = try object(g, "factory.guardrails", known: ["budgetSeconds", "maxTries", "destructive", "land"])
+            let g = try object(g, "factory.guardrails", known: ["budgetSeconds", "maxTries", "destructive", "land", "autoLandPerDay"])
             if let b = g["budgetSeconds"] { p.budgetSeconds = try integer(b, "factory.guardrails.budgetSeconds", budgetRange) }
             if let t = g["maxTries"] { p.maxTries = try integer(t, "factory.guardrails.maxTries", triesRange) }
             if let d = g["destructive"] {
@@ -145,6 +147,7 @@ public struct FactoryProfile: Sendable, Equatable {
                 }
             }
             if let l = g["land"] { p.land = try choice(l, "factory.guardrails.land") }
+            if let n = g["autoLandPerDay"] { p.autoLandPerDay = try integer(n, "factory.guardrails.autoLandPerDay", autoLandPerDayRange) }
         }
         if let a = f["autoland"] {
             let a = try object(a, "factory.autoland", known: ["ci", "timeoutSeconds"])

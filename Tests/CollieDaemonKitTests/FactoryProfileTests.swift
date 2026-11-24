@@ -104,6 +104,12 @@ private let full = """
         #expect(error(#"{"version": 1, "guardrails": {"budgetSeconds": 86401}}"#) == .outOfRange(path: "factory.guardrails.budgetSeconds", value: 86401, range: 60...86400))
         #expect(error(#"{"version": 1, "guardrails": {"maxTries": 11}}"#) == .outOfRange(path: "factory.guardrails.maxTries", value: 11, range: 1...10))
         #expect(error(#"{"version": 1, "guardrails": {"budgetSeconds": 60, "maxTries": 10}}"#) == nil)
+        // A5: autoLandPerDay, an integer 1 to 20 (absent: nil, the engine's 3)
+        #expect(error(#"{"version": 1, "guardrails": {"autoLandPerDay": 0}}"#) == .outOfRange(path: "factory.guardrails.autoLandPerDay", value: 0, range: 1...20))
+        #expect(error(#"{"version": 1, "guardrails": {"autoLandPerDay": 21}}"#) == .outOfRange(path: "factory.guardrails.autoLandPerDay", value: 21, range: 1...20))
+        #expect(error(#"{"version": 1, "guardrails": {"autoLandPerDay": 2.5}}"#) == .wrongType(path: "factory.guardrails.autoLandPerDay", expected: "número inteiro"))
+        #expect((try? profile(#"{"version": 1, "guardrails": {"autoLandPerDay": 20}}"#).get())?.autoLandPerDay == 20)
+        #expect((try? profile(#"{"version": 1}"#).get())?.autoLandPerDay == nil)
         #expect(error(#"{"version": 1, "guardrails": {"destructive": ["a\tb"]}}"#) == .badText(path: "factory.guardrails.destructive[0]"))
         #expect(error(#"{"version": 1, "review": {"threshold": "minor"}}"#)?.message == "'factory.review.threshold' é 'minor'; use 'blocker' ou 'major'")
     }

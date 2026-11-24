@@ -95,6 +95,9 @@ protocol LoopHost: Sendable {
     func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String)
     /// A4: one line for the owner (`notify`).
     func notifyOwner(_ line: String) async
+    /// A5: why the paddock's `factory doctor` no longer passes the minimum (static and judge at least 1), read now;
+    /// nil: it passes.
+    func doctorRefusal() async -> String?
 }
 
 extension LoopHost {
@@ -139,6 +142,7 @@ extension LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host lands nothing")
     }
     func notifyOwner(_ line: String) async {}
+    func doctorRefusal() async -> String? { nil }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -210,6 +214,9 @@ actor WorkLoop {
     let slot: Int?
     /// M3.5, a lane's engine: the attempt that passed in the lane, until it is integrated (or not).
     var passed: Passed?
+    /// A5: the queued work an auto-land chain goes on to after a work's land, by that work (`takeNext`); the router
+    /// activates it (`activate`) only once its engine is registered.
+    var chainNext: [UUID: Chain] = [:]
     /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
     var lanes: [UUID: Lanes] = [:]
     /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
@@ -273,8 +280,13 @@ actor WorkLoop {
         }
         // A4: the run finished with `--auto-land`: the land's conditions, then the land, or a stop of its own
         if end == .finished, !stopping.contains(id), let al = (try? await store.get(id))?.loop?.autoLand { (end, stop) = await autoLand(work: id, al, dir: dir) }
-        // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line
-        await autoLandSummary(work: id, started: started, stop: stop, dir: dir)
+        // A5: landed: the chain's next approved work, or why it ends here (a `work stop` meanwhile: `requested`)
+        if stop?.code == .landed, let al = (try? await store.get(id))?.loop?.autoLand, let s = await afterLand(id, al) {
+            stop = s; end = s.finishes ? .finished : .stopped
+        }
+        // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line (A5: a
+        // work the chain goes on from tells nothing: the chain's last work tells once)
+        await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil)
         stopping.remove(id)
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
@@ -285,7 +297,9 @@ actor WorkLoop {
             // always one summary note, after the path's own longer one (if any)
             if outside == nil, let why {
                 w.notes.append(WorkNote(at: now, text: why.note))
-                w.record(LoopEvent(at: now, kind: why.code == .landed ? .landed : .stopped, detail: Self.eventDetail(why.code == .landed ? why.detail ?? "" : why.label)))
+                // A5: the `landed` event is recorded by the land itself (the daily cap counts it at once); a chain's end
+                // (`queueEmpty`, `maxReached` of the auto-land) is a normal end: no `stopped`
+                if !why.finishes { w.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label))) }
             }
         }
         return end
@@ -1262,6 +1276,9 @@ extension WorkLoop {
             return .init(code, detail: Self.eventDetail(why))
         }
         guard await host.factoryPaddock() else { return .init(.landNotFactory) }
+        // A5: the paddock's daily cap, before any land (the first of a run too)
+        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday(w.paddockId)
+        if today >= perDay { return await failed(.landDailyCap, "teto diário atingido", "\(today) de \(perDay) em 24 h") }
         guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
         await phase(id, .gate)
         if let why = await run(al.gate, checkTimeout) { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
@@ -1287,6 +1304,7 @@ extension WorkLoop {
             let at = host.now()
             try? await store.update(id) { x in
                 x.loop?.autoLand?.before = before; x.loop?.autoLand?.after = after
+                x.record(LoopEvent(at: at, kind: .landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))"))
                 x.notes.append(WorkNote(at: at, text: "[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
                     + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))", decision: true))
             }
@@ -1294,5 +1312,75 @@ extension WorkLoop {
         } catch {
             return await failed(.landConflict, "o land (merge) falhou", error.message)
         }
+    }
+}
+
+/// A5: after a land, the paddock's next work the owner already approved on its card (`queued`, oldest approval first,
+/// with its own auto-land) is picked, carrying the chain: `--auto-land-max`, the daily cap and what is left of the
+/// budget (the budget is the whole execution's). Before it, in order: the max not reached, the daily cap, the paddock's
+/// factory doctor still passing the minimum, budget left. The loop never approves anything: a work with no approval
+/// (no `queued` loop) never enters. The engine only picks: the router moves it `queued` → `running` (`activate`) once
+/// its engine is registered, so no `running` work is ever left with no engine.
+extension WorkLoop {
+    /// The chain's next work and what it carries.
+    struct Chain: Sendable, Equatable {
+        var next: UUID
+        /// `--auto-land-max` and `factory.guardrails.autoLandPerDay` of the chain's first work; `chained` the lands so far.
+        var max: Int?, perDay: Int?, chained: Int
+        /// What is left of the execution's budget (seconds); nil: no budget.
+        var budget: Int?
+        /// The title of the work whose land it follows (its note).
+        var after: String
+    }
+
+    /// The chain the engine picked after `id`'s land (once): the caller activates and runs it.
+    func takeNext(after id: UUID) -> Chain? { chainNext.removeValue(forKey: id) }
+
+    /// `x` from `queued` to `running` with the chain's limits; false (nothing changed): no longer a queued work of the
+    /// chain's (closed, run or stopped meanwhile, its auto-land gone).
+    static func activate(_ x: inout Work, _ c: Chain, at: Date) -> Bool {
+        guard x.closedAt == nil, var l = x.loop, l.state == .queued, l.autoLand != nil else { return false }
+        l.state = .running; l.startedAt = at
+        if let left = c.budget { l.budget = Swift.min(l.budget ?? left, left) }
+        l.autoLand?.max = c.max; l.autoLand?.perDay = c.perDay; l.autoLand?.chained = c.chained
+        x.loop = l
+        x.notes.append(WorkNote(at: at, text: "[loop] auto-land: ativado pela corrente após o land de \"\(c.after)\" (\(c.chained + 1) de \(c.max ?? 1))"))
+        return true
+    }
+
+    /// The lands of the paddock's loops in the last 24 h (by the host's clock), from their journals.
+    func landsToday(_ paddock: UUID?) async -> Int {
+        guard let paddock, let all = try? await store.list(includeClosed: true) else { return 0 }
+        let since = host.now().addingTimeInterval(-86_400)
+        return all.filter { $0.paddockId == paddock }.reduce(0) { n, w in n + (w.loop?.events ?? []).filter { $0.kind == .landed && $0.at > since }.count }
+    }
+
+    /// nil: the chain ends as `landed` (the max reached with nothing approved waiting, or the next work picked in
+    /// `chainNext`); else why it ends here. A `work stop` (or the daemon's cancel) before or between its awaits:
+    /// `requested` (`cancelled`), nothing picked.
+    func afterLand(_ id: UUID, _ al: WorkLoopState.AutoLand) async -> WorkLoopState.Stop? {
+        func halted() -> WorkLoopState.Stop? { stopping.contains(id) ? .init(.requested) : Task.isCancelled ? .init(.cancelled) : nil }
+        if let h = halted() { return h }
+        guard let w = try? await store.get(id), let pid = w.paddockId, let loop = w.loop else { return halted() }
+        let done = (al.chained ?? 0) + 1, max = al.max ?? 1
+        let all = (try? await store.list(includeClosed: false)) ?? []
+        if let h = halted() { return h }
+        let queue = all.filter { $0.id != id && $0.paddockId == pid && $0.loop?.state == .queued && $0.loop?.autoLand != nil }
+            .sorted { ($0.loop!.startedAt, $0.openedAt) < ($1.loop!.startedAt, $1.openedAt) }
+        // N=1 with an empty queue is `landed` (the max reached); `queueEmpty` only with room left
+        if queue.isEmpty { return done < max ? .init(.queueEmpty) : nil }
+        if done >= max { return .init(.maxReached, detail: "\(done) de --auto-land-max \(max) integrado(s); \(queue.count) na fila") }
+        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday(pid)
+        if let h = halted() { return h }
+        if today >= perDay { return .init(.landDailyCap, detail: "\(today) de \(perDay) em 24 h") }
+        let doctor = await host.doctorRefusal()
+        if let h = halted() { return h }
+        if let why = doctor { return .init(.landDoctorRegressed, detail: Self.eventDetail(why)) }
+        let left = loop.budget.map { $0 - (loop.spent ?? 0) }
+        if let left, left <= 0 { return .init(.budgetSpent) }
+        let next = queue[0]
+        chainNext[id] = Chain(next: next.id, max: al.max, perDay: al.perDay, chained: done, budget: left, after: RerailText.clean(w.title, max: 80))
+        await note(id, "[loop] auto-land: próximo trabalho da fila: \"\(RerailText.clean(next.title, max: 80))\" (\(done + 1) de \(max))")
+        return nil
     }
 }

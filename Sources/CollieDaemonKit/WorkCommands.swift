@@ -456,6 +456,7 @@ extension CommandRouter {
                 if let d = a.openedAt { o["openedAt"] = .string(iso.string(from: d)) }
                 if let d = a.closedAt { o["closedAt"] = .string(iso.string(from: d)) }
                 if let s = a.stopReason { o["stopReason"] = .string(s) }
+                if let s = a.stopDetail { o["stopDetail"] = .string(s) }   // A5: `Stop.finishes` reads it
                 if a.reconstructed { o["reconstructed"] = .bool(true) }
                 return .object(o)
             }), "output": .string(rows.isEmpty ? "Nenhum trabalho fechado neste cercado." : rows.map { a in
@@ -628,7 +629,8 @@ extension CommandRouter {
     /// Never fails the land.
     func closeMerged(_ f: Paddock) async {
         do {
-            for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.gitBranch) {
+            // A5: a queued work (approved, waiting for an auto-land chain) stays open across the land
+            for w in try await work.list(includeClosed: false) where w.loop?.state != .queued && (w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.gitBranch)) {
                 let lot = ws.lot(of: w.terminalId)?.id
                 try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge"; $0.lotId = lot } }
             }

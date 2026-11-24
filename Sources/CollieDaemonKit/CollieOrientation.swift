@@ -89,6 +89,9 @@ enum CollieOrientation {
         // ponytail: no warning line for a Shepherd: at the 1500 cap already, its ask line teaches --no-wait
         if !peers.isEmpty && !isShepherd && !tight { lines[1] += " Don't block-ask one who may wait on you: --no-wait or lot post." }
         if agent == "cursor" {
+            // A6: Cursor's MCP client drops a blocking call near 60 s, so the detached form comes first
+            lines[1] = "- Leashed agents (\(peers.isEmpty ? "none yet" : names(peers))): collie list / check <name> / ask <name> \"<prompt>\" --no-wait"
+                + (tight ? "." : " (reply comes back as a message; collie ask result <id>); a blocking ask can time out.")
             if tight { lines[1] += " Asked: collie reply." } else { lines.insert("- Asked by an agent? End with collie reply \"<short answer>\".", at: 2) }
         }
         if let lot {

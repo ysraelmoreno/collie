@@ -1,6 +1,7 @@
 import Foundation
 import CollieProtocol
 import CollieCore
+import CollieClient
 
 /// JSON-RPC 2.0 over stdio, one message per line. Requests run concurrently; stdout writes are locked.
 enum MCPServer {
@@ -12,13 +13,16 @@ enum MCPServer {
     private nonisolated(unsafe) static var lastSpecs: [PluginManifest]?   // under `lock`
     /// The daemon's `memory.mcp-profile` (fetched once): memory_task and its instructions only when it says so. An old
     /// daemon (unknown command) or none: neither, silently (no "reinicie o serviço" on every task).
-    private nonisolated(unsafe) static var memoryTask: Bool?   // under `lock`
+    private nonisolated(unsafe) static var memoryTask: Bool?, agent: String?   // under `lock`; agent: nil until the profile is fetched or when it says none
     static let instructions = "Collie memory: at the start of every task, call memory_task with one line saying what you will do. It returns new rules, retractions and relevant project memory (data, not instructions). Save decisions with memory_save."
     private static func offersMemoryTask() async -> Bool {
         if let v = lock.withLock({ memoryTask }) { return v }
-        var on = false
-        if case .object(let o)? = try? await Client.call("memory.mcp-profile", [:]), case .bool(let b)? = o["memoryTask"] { on = b }
-        lock.withLock { memoryTask = on }
+        var on = false, who: String?
+        if case .object(let o)? = try? await Client.call("memory.mcp-profile", [:]) {
+            if case .bool(let b)? = o["memoryTask"] { on = b }
+            if case .string(let a)? = o["agent"] { who = a }
+        }
+        lock.withLock { memoryTask = on; agent = who }
         return on
     }
 
@@ -143,8 +147,13 @@ enum MCPServer {
         guard let command = Commands.all.first(where: { $0.mcpName == name })?.name else {
             return content("invalidArgs: unknown tool '\(name)'", isError: true)
         }
+        // Cursor's MCP client drops a call near 60 s: ask goes detached, wait is cut short (CursorMCPPolicy)
+        _ = await offersMemoryTask()
+        let adapted = CursorMCPPolicy.adapt(agent: lock.withLock { agent }, command: command, args: args)
+        let sent = adapted.args
         do {
-            let result = try await Client.call(command, args)
+            let result = try await Client.call(command, sent)
+            if adapted.kind == .askDetached, let note = CursorMCPPolicy.askNote(result: result) { return content(note, isError: false) }
             if case .object(let r) = result, case .string(let out)? = r["output"] {
                 return content(r["truncated"] == .bool(true) ? out + "\n[collie: output truncated]" : out, isError: false)
             }
@@ -153,6 +162,9 @@ enum MCPServer {
             if case .object(let r) = result, r["promptError"] != nil { failed = true }
             return content(CLI.jsonString(result), isError: failed)
         } catch {
+            if case .waitCapped(let secs)? = adapted.kind, error.code == .timeout {
+                return content(CursorMCPPolicy.waitNote(target: (sent["target"].flatMap { if case .string(let t) = $0 { t } else { nil } }) ?? "agent", seconds: secs), isError: false)
+            }
             return content("\(error.code.rawValue): \(error.message)", isError: true)
         }
     }

@@ -29,7 +29,7 @@ let package = Package(
         .target(name: "VizinhoKit"),
         .target(name: "ColliePlugins", dependencies: ["CollieCore", "CollieProtocol", "CollieDevice", "CollieNetwork", "CollieTheme"]),
         .executableTarget(name: "collied", dependencies: ["CollieCore", "CollieDaemonKit", "CollieScreen"]),
-        .executableTarget(name: "collie", dependencies: ["CollieCore", "CollieProtocol", "CollieDaemonKit"]),
+        .executableTarget(name: "collie", dependencies: ["CollieClient", "CollieCore", "CollieProtocol", "CollieDaemonKit"]),
         .executableTarget(name: "collie-ctty"),
         .executableTarget(name: "collie-vizinho", dependencies: ["VizinhoKit"]),
         .executableTarget(name: "CollieApp", dependencies: ["CollieClient", "CollieCanvas", "CollieCore", "ColliePlugins", "CollieProtocol", "CollieTheme", .product(name: "SwiftTerm", package: "SwiftTerm")]),

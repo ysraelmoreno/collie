@@ -192,3 +192,19 @@ typed `/colli` in a TUI running it: the menu listed `/collie:loop` with the desc
 - Print mode (`-p "/collie:loop …"`) returned nothing in 70 s, and `collie ask` refuses to send a slash command, so only
   a person in the TUI can check it.
 - The probe (`.collie/loop-probe`, terminal `cur-probe`) is gone.
+
+## 10. MCP tool-call timeout (2026-11-24, `cursor-agent` 2026.11.22-e9042b2)
+
+Test MCP (stdio, one tool `sleep(seconds)`, in a scratch folder outside the repo, via `.cursor/mcp.json`), run with
+`cursor-agent -p --force --approve-mcps --trust` and the prompt "call sleep once with seconds=N":
+
+| N | result |
+|---|---|
+| 30 s | returns `slept 30 done` |
+| 50 s | returns `slept 50 done` |
+| 60 s | `MCP error -32001: Request timed out` |
+| 120 s | `MCP error -32001: Request timed out` |
+
+Measured timeout: **60 s** (50 s passes, 60 s fails; the MCP server keeps sleeping after the client gives up). A6 uses
+`callTimeoutSeconds = 60` and caps `wait` at 60 − 10 = **50 s** (`CursorMCPPolicy`); a blocking `ask` through the MCP of
+a Cursor terminal becomes `ask --no-wait`.

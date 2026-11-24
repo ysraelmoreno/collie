@@ -199,7 +199,7 @@ private let profile = #"""
     @Test func theProfilesPersonasAreCheckedAndItsRefusalNamesTheProfile() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["segurança"] } } }"#, in: x.dir)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["seguranca"] } } }"#, in: x.dir)
             let r = try await call(d, p, x.s, "work.run", ["max": .number(3)])
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.review.personas") == true
                     && r.error?.message.contains("testes") == true, "\(r)")

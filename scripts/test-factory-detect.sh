@@ -105,5 +105,44 @@ echo '{"name": "x", "scripts": {"test": "  echo \"Error: no test specified\"  &&
 check "$tmp/init" node None
 
 scripts/factory-detect.sh "$tmp/nao-existe" >/dev/null 2>&1 && { echo "FAIL: diretório ausente devia falhar"; fail=1; }
+
+# C2: the user's site never reaches the detector (-I): a usercustomize.py there neither runs nor breaks the JSON
+u="$tmp/userbase"
+usite=$(PYTHONUSERBASE="$u" python3 -c 'import site; print(site.getusersitepackages())')
+mkdir -p "$usite"; echo 'print("USERSITE-RAN")' > "$usite/usercustomize.py"
+us=$(PYTHONUSERBASE="$u" scripts/factory-detect.sh $fx/python 2>&1)
+case "$us" in *USERSITE-RAN*) echo "FAIL detector leu o site do usuário"; fail=1 ;; esac
+[ "$(field "$us" "d['stack']")" = python ] || { echo "FAIL detector com site do usuário: $us"; fail=1; }
+rm -f "$usite/usercustomize.py"
+
+# C2: the python model's gate (docs/fabrica/modelos/python/scripts/gate.sh), in a git repo of its own; `stub` swaps python3
+# pygate <name> <stub: yes|no> <file=body>...: prints the gate's output and its exit as the last line
+pygate() {
+  local d="$tmp/gate-$1" stub=$2 kv; shift 2
+  rm -rf "$d"; mkdir -p "$d/scripts" "$d/stub"
+  cp docs/fabrica/modelos/python/scripts/gate.sh "$d/scripts/"
+  for kv in "$@"; do mkdir -p "$d/$(dirname "${kv%%=*}")"; printf '%b' "${kv#*=}" > "$d/${kv%%=*}"; done
+  printf '#!/bin/bash\necho "stub python3 $*"\n' > "$d/stub/python3"; chmod +x "$d/stub/python3"
+  (cd "$d" && git init -q && git add scripts)
+  local path=$PATH; [ "$stub" = yes ] && path="$d/stub:$PATH"
+  (cd "$d" && PATH="$path" bash scripts/gate.sh 2>&1; echo "exit $?")
+}
+# a `#` in the middle of an ini/cfg line is the value's (pytest passes it on): forced
+o=$(pygate ini yes 'pytest.ini=[pytest]\naddopts = -q # --co\n')
+case "$o" in *"força sucesso"*) ;; *) echo "FAIL gate: '#' no meio da linha do pytest.ini virou comentário: $o"; fail=1 ;; esac
+o=$(pygate cfg yes 'setup.cfg=[tool:pytest]\naddopts = -q # --collect-only\n')
+case "$o" in *"força sucesso"*) ;; *) echo "FAIL gate: '#' no meio da linha do setup.cfg virou comentário: $o"; fail=1 ;; esac
+o=$(pygate inicomment yes 'pytest.ini=[pytest]\n# addopts = --co\n; addopts = --co\n')
+case "$o" in *"stub python3 -I -m pytest -q"*"exit 0") ;; *) echo "FAIL gate: linha de comentário do ini contou: $o"; fail=1 ;; esac
+# site-packages is pruned from every untracked file, ignored or not (a third party's config there is not the project's)
+o=$(pygate site yes 'lib/site-packages/pkg/setup.cfg=[tool:pytest]\naddopts = --co\n')
+case "$o" in *"stub python3 -I -m pytest -q"*"exit 0") ;; *) echo "FAIL gate: site-packages não podado: $o"; fail=1 ;; esac
+o=$(pygate venv yes 'v/pyvenv.cfg=home = /x\n' 'v/lib/conftest.py=session.exitstatus = 0\n')
+case "$o" in *"exit 0") ;; *) echo "FAIL gate: venv não versionado e não ignorado não podado: $o"; fail=1 ;; esac
+# the gate runs pytest with -I: a fake pytest in the user's site never stands in (with -P alone it did)
+mkdir -p "$usite/pytest"; : > "$usite/pytest/__init__.py"; printf 'print("FAKE-PYTEST")\n' > "$usite/pytest/__main__.py"
+o=$(PYTHONUSERBASE="$u" pygate user no)
+case "$o" in *FAKE-PYTEST*) echo "FAIL gate: pytest falso do site do usuário rodou: $o"; fail=1 ;; esac
+rm -rf "$usite/pytest"
 [ $fail = 0 ] && echo "test-factory-detect: tudo ok"
 exit $fail

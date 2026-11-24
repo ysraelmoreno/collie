@@ -60,9 +60,10 @@ enum AutoLandSummary {
             for v in vetoes { l.append("  - vetou: \(c(v, vetoMax))") }
         }
         l += ["", "## Não feito", ""]
-        if landed, let before = al?.before {
+        // C2: a land with no `before` recorded still landed: no push, and the revert line says it does not know the commit
+        if landed {
             l.append("- sem push; pronto para você revisar e dar push")
-            l.append("- para reverter (texto, nunca executado): `git -C \(base ?? "<base>") reset --hard \(before)`")
+            l.append("- para reverter (texto, nunca executado): `git -C \(base ?? "<base>") reset --hard \(al?.before ?? "?")`")
         } else {
             l.append("- nada integrado; sem push")
             if let stop {
@@ -74,23 +75,53 @@ enum AutoLandSummary {
                     l.append("- parou antes do land: \(c(stop.label, 300))")
                 }
             }
-            let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }
+            let left = w.tasks.filter { $0.state != .done }   // C2: a dropped task is not done (it lands nothing)
             if !left.isEmpty { l.append("- tarefas não feitas: " + left.map { c($0.title, 80) }.joined(separator: "; ")) }
         }
         return l.joined(separator: "\n") + "\n"
     }
 
-    /// `text` written as `dir/<name>`: `O_EXCL` (an existing file is never replaced: throws) and 0444.
+    /// C2: a name taken gets `-1`, `-2` ... up to this suffix before the write gives up.
+    static let maxSuffix = 20
+
+    /// `text` written as `dir/<name>`: `O_EXCL` (an existing file is never replaced; C2: a name taken is tried again as
+    /// `<stem>-1.md` ... `<stem>-20.md`, then it throws) and 0444. C2: whole or not at all: every byte is written (a short
+    /// write goes on, `EINTR` is retried) and a write that fails unlinks the partial file before throwing. `put` is
+    /// `write(2)` (the tests' fakes fail it).
     @discardableResult
-    static func write(_ text: String, in dir: URL, name: String) throws -> URL {
+    static func write(_ text: String, in dir: URL, name: String,
+                      put: (Int32, UnsafeRawPointer, Int) -> Int = { Darwin.write($0, $1, $2) }) throws -> URL {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent(name)
-        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o444)
-        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        fchmod(fd, 0o444)   // the umask cannot widen it, but make it exact
-        try h.write(contentsOf: Data(text.utf8))
-        return url
+        let stem = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
+        let bytes = Array(text.utf8)
+        for n in 0...maxSuffix {
+            let url = dir.appendingPathComponent(n == 0 ? name : "\(stem)-\(n)" + (ext.isEmpty ? "" : ".\(ext)"))
+            let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o444)
+            guard fd >= 0 else {
+                let e = errno
+                if e == EEXIST { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: e) ?? .EIO)
+            }
+            defer { close(fd) }
+            fchmod(fd, 0o444)   // the umask cannot widen it, but make it exact
+            var off = 0, failure: Int32 = 0
+            while off < bytes.count {
+                let r = bytes.withUnsafeBytes { put(fd, $0.baseAddress! + off, bytes.count - off) }
+                if r < 0 {
+                    let e = errno
+                    if e == EINTR { continue }
+                    failure = e; break
+                }
+                if r == 0 { failure = EIO; break }
+                off += r
+            }
+            guard off == bytes.count else {
+                unlink(url.path)
+                throw POSIXError(POSIXErrorCode(rawValue: failure) ?? .EIO)
+            }
+            return url
+        }
+        throw POSIXError(.EEXIST)
     }
 
     /// The file at `path` (a regular file, never through a link), its first `max` characters; nil: not readable.
@@ -106,12 +137,23 @@ enum AutoLandSummary {
 
     /// The owner's one line at the end.
     /// A5: `landed`, the works the chain landed in all (this one's land included).
-    static func ownerLine(title: String, stop: WorkLoopState.Stop?, left: Int, path: String?, error: String?, landed: Int = 0) -> String {
+    /// C2: each stop named by its label and its code (`[maxReached]`), and the line goes through `LotBoards.scrub` with
+    /// `secrets` (a stop's detail may carry a check's output).
+    static func ownerLine(title: String, stop: WorkLoopState.Stop?, left: Int, path: String?, error: String?, landed: Int = 0,
+                          secrets: Set<String> = []) -> String {
+        func why(_ s: WorkLoopState.Stop) -> String { "\(s.label) [\(s.code.rawValue)]" }
         let what = landed > 0 ? (landed == 1 ? "integrou 1 trabalho" : "integrou \(landed) trabalhos")
-                + (stop.map { $0.code == .landed ? "" : $0.finishes ? " (\($0.label))" : "; parou em \($0.label)" } ?? "")
-            : stop.map { "parou em \($0.label)" } ?? "integrou 0 trabalhos (\(left) tarefa(s) não feitas)"
+                + (stop.map { $0.code == .landed ? "" : $0.finishes ? " (\(why($0)))" : "; parou em \(why($0))" } ?? "")
+            : stop.map { "parou em \(why($0))" } ?? "integrou 0 trabalhos (\(left) tarefa(s) não feitas)"
         let at = path.map { "Resumo: \($0)" } ?? "resumo não gravado (\(error ?? "?"))"
-        return "Collie: laço \"\(title)\": \(what). \(at). Veja: \(WorkLoop.autoLandHint)"
+        return LotBoards.scrub("Collie: laço \"\(title)\": \(what). \(at). Veja: \(WorkLoop.autoLandHint)", secrets: secrets)
+    }
+
+    /// C2: the owner's line when the registry could not be read at the end (no title, no tasks): the work's id and the stop.
+    static func minimalOwnerLine(work: UUID, stop: WorkLoopState.Stop?, error: String, secrets: Set<String> = []) -> String {
+        let what = stop.map { "parou em \($0.label) [\($0.code.rawValue)]" } ?? "terminou"
+        return LotBoards.scrub("Collie: laço do trabalho \(work.uuidString.prefix(8).lowercased()): \(what). Resumo não gravado "
+            + "(o registro não foi lido: \(RerailText.clean(error, max: 200))). Veja: \(WorkLoop.autoLandHint)", secrets: secrets)
     }
 }
 
@@ -119,8 +161,15 @@ extension WorkLoop {
     /// A6: the run of `work` with `--auto-land` ended (`stop`, nil: finished with no land): its summary written once,
     /// its path on the loop, and one line to the owner (A5: `notify` false, a work the chain goes on from: none; the
     /// chain's last work tells, counting every land). A loop stopped from outside keeps the reason it was given.
-    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL, notify: Bool = true) async {
-        guard let w = try? await store.get(id), w.loop?.autoLand != nil else { return }
+    /// C2: `landing`, the run started with `--auto-land`: a registry that cannot be read at the end still tells the owner
+    /// (`minimalOwnerLine`), since no summary can be written.
+    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL, notify: Bool = true, landing: Bool = false) async {
+        let read: Work?
+        do { read = try await store.get(id) } catch {
+            if notify && landing { await host.notifyOwner(AutoLandSummary.minimalOwnerLine(work: id, stop: stop, error: "\(error)", secrets: await host.secrets())) }
+            return
+        }
+        guard let w = read, w.loop?.autoLand != nil else { return }
         let why = w.loop?.state == .running ? stop : (w.loop?.stopReason ?? stop)
         let ended = host.now()
         // ponytail: the base checkout is the main worktree (the common git dir's parent); a bare base would name its .git
@@ -131,8 +180,9 @@ extension WorkLoop {
         case .success(let s): FactoryDoctor.score(s).layers.map { "\($0.layer.rawValue) \($0.score)/3" }.joined(separator: ", ")
         case .failure(let e): "não leu (\(e.message))"
         }
+        let secrets = await host.secrets()
         let text = LotBoards.scrub(AutoLandSummary.text(w, started: started, ended: ended, stop: why, base: base, doctor: doctor),
-                                   secrets: await host.secrets())
+                                   secrets: secrets)
         var path: String?, failure: String?
         do {
             path = try AutoLandSummary.write(text, in: host.patchDir(id).appendingPathComponent(AutoLandSummary.folder),
@@ -141,9 +191,9 @@ extension WorkLoop {
         if let path { try? await store.update(id) { $0.loop?.autoLand?.summary = path } }
         else { await note(id, "[loop] auto-land: resumo não gravado (\(failure ?? "?"))") }
         guard notify else { return }
-        let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }.count
+        let left = w.tasks.filter { $0.state != .done }.count
         let landed = (w.loop?.autoLand?.chained ?? 0) + (w.loop?.autoLand?.after != nil ? 1 : 0)
         await host.notifyOwner(AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: why, left: left, path: path, error: failure,
-                                                         landed: landed))
+                                                         landed: landed, secrets: secrets))
     }
 }

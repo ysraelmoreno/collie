@@ -53,14 +53,81 @@ import CollieProtocol
         #expect(await r.host.ownerNotices[0].contains("integrou 1 trabalho"))
     }
 
-    @Test func aSecondWriteWithTheSameNameFailsAndKeepsTheFirst() throws {
+    /// C2: a name taken is never replaced (`O_EXCL`): the next write takes `-1`, `-2` ... up to `-20`, then it throws.
+    @Test func aTakenNameGetsASuffixAndKeepsTheFirst() throws {
         let dir = URL(fileURLWithPath: "/tmp/collie-a6-\(UUID().uuidString.prefix(8))")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let url = try AutoLandSummary.write("primeiro\n", in: dir, name: "2026-11-24-101010.md")
-        #expect(throws: (any Error).self) { try AutoLandSummary.write("segundo\n", in: dir, name: "2026-11-24-101010.md") }
-        #expect(try String(contentsOf: url, encoding: .utf8) == "primeiro\n")
+        let name = "2026-11-24-101010.md"
+        let url = try AutoLandSummary.write("primeiro\n", in: dir, name: name)
+        let second = try AutoLandSummary.write("segundo\n", in: dir, name: name)
+        #expect(second.lastPathComponent == "2026-11-24-101010-1.md")
+        #expect(try String(contentsOf: url, encoding: .utf8) == "primeiro\n" && (try String(contentsOf: second, encoding: .utf8)) == "segundo\n")
         #expect((try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) == 0o444)
+        #expect((try FileManager.default.attributesOfItem(atPath: second.path)[.posixPermissions] as? Int) == 0o444)
+        for n in 2...AutoLandSummary.maxSuffix {
+            #expect(try AutoLandSummary.write("\(n)\n", in: dir, name: name).lastPathComponent == "2026-11-24-101010-\(n).md")
+        }
+        #expect(throws: (any Error).self) { try AutoLandSummary.write("demais\n", in: dir, name: name) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == AutoLandSummary.maxSuffix + 1)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "primeiro\n")
         #expect(AutoLandSummary.fileName(Date()).range(of: #"^\d{4}-\d{2}-\d{2}-\d{6}\.md$"#, options: .regularExpression) != nil)
+    }
+
+    /// C2: every byte is written (short writes go on, `EINTR` is retried); a write that fails leaves no partial file.
+    @Test func theWriteIsWholeOrNothing() throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-c2-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var calls = 0
+        let url = try AutoLandSummary.write("abcdef\n", in: dir, name: "s.md") { fd, p, n in
+            calls += 1
+            if calls == 2 { errno = EINTR; return -1 }
+            return Darwin.write(fd, p, min(n, 2))   // two bytes at a time
+        }
+        #expect(try String(contentsOf: url, encoding: .utf8) == "abcdef\n" && calls > 4)
+        var sent = 0
+        #expect(throws: (any Error).self) {
+            try AutoLandSummary.write("abcdef\n", in: dir, name: "f.md") { fd, p, n in
+                if sent > 0 { errno = ENOSPC; return -1 }
+                sent = Darwin.write(fd, p, 3); return sent
+            }
+        }
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("f.md").path), "the partial file is unlinked")
+    }
+
+    /// C2: the owner's line goes through the scrub and names the stop's code.
+    @Test func theOwnersLineIsScrubbedAndNamesTheCode() {
+        let line = AutoLandSummary.ownerLine(title: "W vivo-xyz-987", stop: .init(.landCiRed, detail: "token=abc123segredo"), left: 0,
+                                             path: "/r/s.md", error: nil, secrets: ["vivo-xyz-987"])
+        #expect(!line.contains("vivo-xyz-987") && !line.contains("abc123segredo") && line.contains("[hidden]"), "\(line)")
+        #expect(line.contains("[landCiRed]") && line.contains("parou em "), "\(line)")
+        let landed = AutoLandSummary.ownerLine(title: "W", stop: .init(.maxReached), left: 0, path: nil, error: "x", landed: 2)
+        #expect(landed.contains("integrou 2 trabalhos") && landed.contains("[maxReached]"), "\(landed)")
+    }
+
+    /// C2: a land whose `before` was not recorded still landed: "sem push" and the revert line with `?`, never "nada integrado".
+    @Test func aLandWithNoBeforeStillSaysNoPush() {
+        var w = Work(title: "W", terminalId: UUID(), branch: "main")
+        w.tasks = [WorkTask(id: "a", title: "Task a", state: .done, tries: 1)]
+        var loop = WorkLoopState(tries: 1, timeout: 60)
+        loop.autoLand = WorkLoopState.AutoLand(gate: "true"); loop.autoLand?.after = "af"
+        w.loop = loop
+        let text = AutoLandSummary.text(w, started: Date(), ended: Date(), stop: .init(.landed), base: "/repo", doctor: nil)
+        #expect(text.contains("sem push; pronto para você revisar e dar push") && text.contains("`git -C /repo reset --hard ?`"), "\(text)")
+        #expect(!text.contains("nada integrado"))
+    }
+
+    /// C2: the registry unreadable at the end: no summary, but the owner still gets one (scrubbed) line.
+    @Test func anUnreadableRegistryStillTellsTheOwner() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await r.host.setSecrets(["vivo-xyz-987"])
+        try Data("{ quebrado".utf8).write(to: r.storeDir.appendingPathComponent("work.json"))
+        await r.loop.autoLandSummary(work: r.work, started: Date(), stop: .init(.landCiRed, detail: "vivo-xyz-987"), dir: r.repo, landing: true)
+        let notices = await r.host.ownerNotices
+        #expect(notices.count == 1 && notices[0].contains("Resumo não gravado") && notices[0].contains("[landCiRed]"), "\(notices)")
+        #expect(notices[0].contains(r.work.uuidString.prefix(8).lowercased()) && !notices[0].contains("vivo-xyz-987"), "\(notices)")
+        // a run that was no auto-land's tells nothing
+        await r.loop.autoLandSummary(work: r.work, started: Date(), stop: nil, dir: r.repo)
+        #expect(await r.host.ownerNotices.count == 1)
     }
 
     @Test func aRedCISaysWhichConditionsPassedAndWhichStopped() async throws {

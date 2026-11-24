@@ -100,7 +100,9 @@ public enum FactoryDoctor {
         var out: [String] = tests(command) ? ["\"\(command)\""] : []
         for p in citedPaths(command) {
             guard let text = scripts[p] else { continue }
-            out += text.split(separator: "\n").filter { tests(String($0)) }.map { "\(p): \($0.trimmingCharacters(in: .whitespaces))" }
+            // C2: a comment line (`# swift test` once) runs nothing
+            out += text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.hasPrefix("#") && tests($0) }.map { "\(p): \($0)" }
         }
         return out
     }

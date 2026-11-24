@@ -107,6 +107,9 @@ enum PaddockManager {
 
         switch mode {
         case .merge:
+            // C2: `--no-ff` always makes a merge commit (two parents) when the paddock has commits the base lacks, a fast
+            // forward included: `after` is never the paddock's own tip, and `before` (read above) is its first parent. With
+            // nothing new ("Already up to date") no commit is made: before == after, which the auto-land stops as `landNothing`
             try await run(["merge", "--no-ff", "--no-edit", "-m", msg, fl.branch], in: pasture, abort: ["merge", "--abort"])
         case .squash:
             // a squash leaves no MERGE_HEAD; reset restores the clean pasture

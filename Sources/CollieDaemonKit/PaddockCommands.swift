@@ -204,15 +204,30 @@ extension CommandRouter {
     /// `paddock land` once the caller may: claimed, landed (`PaddockManager.land`), saved, its apps' approvals ended and
     /// its works closed by merge. A4: also the loop's `--auto-land` (`loopLand`), always `.merge`.
     func landPaddock(_ f: inout Paddock, mode: LandMode, message: String?) async throws -> LandResult {
+        let (res, late) = try await landPaddockKeepingLate(&f, mode: mode, message: message, stopAtLate: true)
+        if let late { throw late }
+        return res
+    }
+
+    /// C2: `landPaddock`, with a failure AFTER the merge (the save) given back as `late` instead of thrown: the base moved
+    /// and the caller (`loopLand`) records it. `stopAtLate`: as `landPaddock` always did, nothing more runs after it.
+    func landPaddockKeepingLate(_ f: inout Paddock, mode: LandMode, message: String?, stopAtLate: Bool = false) async throws -> (LandResult, (any Error)?) {
         try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
         let res = try await PaddockManager.land(&f, mode: mode, message: message)
         let id = f.id, i = ws.paddocks.firstIndex { $0.id == id }
         let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
         if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
-        try await save(f)
+        var late: (any Error)?
+        do { try await saveAfterLand(f) } catch { late = error; if stopAtLate { return (res, late) } }
         if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
         if apps { await publishPlugins() }
-        return res
+        return (res, late)
+    }
+
+    /// C2: the save after a land; the tests' seam (`landSaveFails`) fails it, as a full disk would.
+    private func saveAfterLand(_ f: Paddock) async throws {
+        if landSaveFails { throw ProtocolError(code: .internal, message: "a gravação do cercado falhou (teste)") }
+        try await save(f)
     }
 
     func claim(_ name: String) throws(ProtocolError) {

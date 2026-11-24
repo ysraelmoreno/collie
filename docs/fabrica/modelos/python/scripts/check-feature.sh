@@ -5,7 +5,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || { echo "uso: scripts/check-feature.sh <teste>" >&2; exit 2; }
-# the root never goes on sys.path (a pluggy.py or _pytest/ there cannot stand in): -P from Python 3.11, -I below it. The same
-# choice, line for line, as scripts/gate.sh
-if python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then exec python3 -P -m pytest -q "$@"; fi
+# the root never goes on sys.path (a pluggy.py or _pytest/ there cannot stand in) and the user's site is never read: -I in
+# every Python. The same line as scripts/gate.sh
 exec python3 -I -m pytest -q "$@"

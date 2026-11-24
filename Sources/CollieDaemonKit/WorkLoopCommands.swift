@@ -511,7 +511,9 @@ extension CommandRouter {
             try? await work.update(id) { $0.notes.append(WorkNote(at: Date(), text: "[loop] auto-land: \(why); \"\(title)\" segue na fila")) }
             let line = AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: halted ? .init(.requested) : w.loop?.stopReason,
                                                  left: 0, path: w.loop?.autoLand?.summary, error: nil, landed: next.chained)
-            await hub.emit(.notify(starter, message: String((line + " Próximo da fila: \"\(title)\" não começou (\(why)) e segue na fila.").prefix(2000))))
+            // C2: the whole line through the scrub, as the engine's own (`AutoLandSummary.ownerLine`)
+            let all = LotBoards.scrub(line + " Próximo da fila: \"\(title)\" não começou (\(why)) e segue na fila.", secrets: await auth.secrets())
+            await hub.emit(.notify(starter, message: String(all.prefix(2000))))
         }
         if let w = try? await work.get(id) {
             await removeLanes(of: w)
@@ -790,12 +792,13 @@ extension CommandRouter {
 
     /// A4, `work run --auto-land`: `paddock land` of the loop's paddock by the command's own path (`landPaddock`), only
     /// `merge` (never a push nor a PR), only while it is a factory's. The base branch's commit before and after.
-    func loopLand(_ paddock: UUID, mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+    func loopLand(_ paddock: UUID, mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
         guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
         guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
         guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
         do {
-            let res = try await landPaddock(&f, mode: .merge, message: message)
+            // C2: a failure after the merge (the save) comes back as `late`, never as a throw: the base moved
+            let (res, late) = try await landPaddockKeepingLate(&f, mode: .merge, message: message)
             // C3a: `before` is the base's HEAD read under the land's claim right before the merge (another paddock landing
             // on the same base before it is in it); equal to `after`: the merge made no commit, nothing is counted
             guard let after = res.commit, let before = res.before else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
@@ -804,7 +807,7 @@ extension CommandRouter {
                 ws.paddocks[i].autoLands = (ws.paddocks[i].autoLands ?? []).filter { $0 > now.addingTimeInterval(-86_400) } + [now]
                 try? await persist()
             }
-            return (before, after)
+            return (before, after, late.map { ($0 as? ProtocolError)?.message ?? "\($0)" })
         } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
     }
 
@@ -997,7 +1000,7 @@ struct RouterLoopHost: LoopHost {
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
     func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
         try await router.loopLand(paddock, mode: mode, message: message)
     }
     func notifyOwner(_ line: String) async { await router.hub.emit(.notify(starter, message: String(line.prefix(2000)))) }

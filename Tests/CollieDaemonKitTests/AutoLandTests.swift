@@ -154,6 +154,47 @@ import CollieProtocol
         #expect(ok == WorkLoopState.AutoLand(gate: "scripts/ci/lint.sh", ci: "scripts/ci/run-tests.sh", timeout: 1800))
     }
 
+    /// C2: only `.done` counts as finished for the land: a task dropped (`abandoned`) lands nothing.
+    @Test func anAbandonedTaskLandsNothing() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) {
+            $0.tasks.append(WorkTask(id: "b", title: "Task b", state: .abandoned, check: "true"))
+            $0.loop?.tasks = ["a", "b"]
+        }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.loop?.autoLand?.after == nil && w.loop?.stopReason == nil)
+        #expect(await r.host.lands.isEmpty)
+        #expect(w.notes.contains { $0.text.contains("1 tarefa(s) não terminaram feitas") }, "\(w.notes.map(\.text))")
+    }
+
+    /// C2: a failure after the merge (the save) is no conflict: both commits recorded, the land counted, and a note that
+    /// the base changed.
+    @Test func aFailureAfterTheMergeIsNoConflict() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await r.host.setLandLate("a gravação do cercado falhou")
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landed, "\(String(describing: w.loop?.stopReason))")
+        #expect(w.loop?.autoLand?.before == LoopFakeHost.landedBefore && w.loop?.autoLand?.after == LoopFakeHost.landedAfter)
+        #expect(w.notes.contains { $0.text.contains("a base MUDOU") && $0.text.contains("a gravação do cercado falhou") }, "\(w.notes.map(\.text))")
+        #expect(w.loop?.stopReason?.detail?.contains("depois do merge falhou") == true)
+    }
+
+    /// C2: the land by merge always makes a merge commit when the paddock has commits the base lacks, a fast-forward
+    /// included (`--no-ff`): two parents, the first one the base before.
+    @Test func theMergeLandAlwaysMakesAMergeCommit() async throws {
+        let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+        var k = try await PaddockManager.create(name: "ff", repoRoot: repo, createdBy: nil)
+        try await commit("novo.swift", "let n = 1\n", in: URL(fileURLWithPath: k.path))   // the base could fast-forward
+        let res = try await PaddockManager.land(&k, mode: .merge, message: "land ff")
+        let parents = try await GitRunner.run(["rev-list", "--parents", "-n", "1", "HEAD"], in: repo).stdout
+            .trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
+        #expect(parents.count == 3 && parents[0] == res.commit && parents[1] == res.before, "\(parents)")
+        let tip = try await GitRunner.run(["rev-parse", k.branch], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(res.commit != tip && parents[2] == tip)
+    }
+
     @Test func theProfileSetsTheCIAndItsTimeout() throws {
         let f: [String: Any] = ["version": 1, "autoland": ["ci": "make ci", "timeoutSeconds": 600]]
         let p = try FactoryProfile.parse(f).get()
@@ -463,6 +504,7 @@ private extension CommandRouter {
     }
     func addPaddock(_ p: Paddock) { ws.paddocks.append(p) }
     func setFactoryMark(_ id: UUID, _ on: Bool) { if let i = ws.paddocks.firstIndex(where: { $0.id == id }) { ws.paddocks[i].factory = on } }
+    func setLandSaveFails(_ on: Bool) { landSaveFails = on }
     /// The first work's engine as it is once `engine.run` returned, before `loopEnded` (`stopping`: a `work stop` came then).
     func plantEnded(_ id: UUID, _ engine: WorkLoop, stopping: Bool) { workLoops[id] = (engine, Task {}, stopping) }
     func reserved(_ p: UUID) -> Bool { loopPaddocks.contains(p) }
@@ -609,6 +651,25 @@ private extension CommandRouter {
         }
     }
 
+    /// C2: `loopLand` with real git and the save after the merge failing: the land is no throw (the base moved), its
+    /// commits come back with `late`, and it is counted.
+    @Test func loopLandGivesBackAFailureAfterTheMerge() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            var k = try await PaddockManager.create(name: "late", repoRoot: repo, createdBy: nil)
+            k.factory = true
+            await d.router.addPaddock(k)
+            try await commit("novo.swift", "let n = 1\n", in: URL(fileURLWithPath: k.path))
+            await d.router.setLandSaveFails(true)
+            let r = try await d.router.loopLand(k.id, mode: .merge, message: "land late")
+            await d.router.setLandSaveFails(false)
+            #expect(r.before != r.after && r.late?.contains("gravação do cercado falhou") == true, "\(r)")
+            let head = try await GitRunner.run(["rev-parse", "HEAD"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(head == r.after)
+            #expect(await d.router.loopAutoLands(k.id).count == 1)
+        }
+    }
+
     @Test func aWorkThatCannotStartStaysQueued() async throws {
         try await withDaemon { d, _ in
             let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
@@ -619,6 +680,54 @@ private extension CommandRouter {
             #expect(b.loop?.state == .queued && b.loop?.stopReason == nil, "never stopped by a chain that did not start")
             #expect(await d.router.loopTask(r.b) == nil)
             #expect(await !d.router.reserved(r.paddock))
+        }
+    }
+}
+
+/// C2: `work run --auto-land` through the daemon's handler: refused in a paddock with no factory mark, with no gate in the
+/// committed profile, and with `--no-review`; nothing runs (no card, no loop).
+@Suite(.serialized, .timeLimit(.minutes(5))) struct AutoLandTestsHandler {
+    private struct Term { var id: String; var token: String }
+
+    private func spawn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL? = nil, paddock: String? = nil) async throws -> Term {
+        var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "shepherd": .bool(true)]
+        if let paddock { args["paddock"] = .string(paddock) } else if let cwd { args["cwd"] = .string(cwd.path) }
+        let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
+        guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+        return Term(id: id, token: try await tokenOf(d, id))
+    }
+    private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
+        try await send(p, Request(id: "w", terminalId: t.id, token: t.token, command: cmd, args: args), timeoutSeconds: 60)
+    }
+
+    @Test func refusesNoFactoryNoGateAndNoReview() async throws {
+        try await withDaemon { d, p in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let m = try await spawn(d, p, "M", cwd: repo)
+            #expect(try await call(p, m, "paddock.create", ["name": .string("fab")]).ok)
+            let s = try await spawn(d, p, "S", paddock: "fab")
+            #expect(try await call(p, s, "work.start", ["title": .string("Auto")]).ok)
+            #expect(try await call(p, s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            let dir = repo.appendingPathComponent(".collie/paddocks/fab")
+            try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
+            try await commit(CommandRouter.personasDir + "correcao.md", "x\n", in: dir)
+            func run(_ extra: [String: JSONValue] = [:]) async throws -> Response {
+                try await call(p, s, "work.run", ["max": .number(3), "auto-land": .bool(true), "review": .bool(true)].merging(extra) { $1 })
+            }
+            // the paddock has no factory mark
+            let notFactory = try await run()
+            #expect(!notFactory.ok && notFactory.error?.message.contains("fábrica") == true, "\(notFactory)")
+            // marked, but the committed profile has no gate
+            let pid = try #require(await d.router.ws.paddocks.first { $0.name == "fab" }?.id)
+            await d.router.setFactoryMark(pid, true)
+            let noGate = try await run()
+            #expect(!noGate.ok && noGate.error?.message.contains("'gate'") == true, "\(noGate)")
+            // a gate, and --no-review
+            try await commit("collie-work.json", #"{"gate": "true"}"#, in: dir)
+            let noReview = try await run(["review": .bool(false), "no-review": .bool(true)])
+            #expect(!noReview.ok && noReview.error?.message.contains("exige revisão") == true, "\(noReview)")
+            #expect(await d.router.appCards.isEmpty, "no approval card for a refused run")
+            #expect(await d.router.loopPaddocks.isEmpty, "the paddock is not left reserved")
         }
     }
 }

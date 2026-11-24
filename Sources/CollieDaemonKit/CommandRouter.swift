@@ -23,6 +23,8 @@ actor CommandRouter {
     var previewsOpening: [UUID: Set<UUID>] = [:]
     /// Paddock names (lowercased) with a create/land/delete in flight; git awaits let other callers in.
     var paddockBusy: Set<String> = []
+    /// C2: the tests' seam: the save after a land's merge fails (`landPaddockKeepingLate`), as a full disk would.
+    var landSaveFails = false
     /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).
     var paddockDeleting: Set<UUID> = []
     /// Each paddock's last computed status (PaddockAutoStatus); in memory: after a restart the first computation applies.

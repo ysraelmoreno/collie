@@ -92,7 +92,9 @@ protocol LoopHost: Sendable {
     func factoryPaddock() async -> Bool
     /// A4: `paddock land` of the loop's paddock by the command's own path (`PaddockManager.land`): the base branch's
     /// commit before and after. The engine only ever asks `.merge`: it never pushes nor opens a PR.
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String)
+    /// C2: `late`, what failed AFTER the merge (saving the paddock): the base moved all the same; nil: nothing did.
+    /// A throw is a land that never merged.
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?)
     /// A4: one line for the owner (`notify`).
     func notifyOwner(_ line: String) async
     /// A5: why the paddock's `factory doctor` no longer passes the minimum (static and judge at least 1), read now;
@@ -141,7 +143,7 @@ extension LoopHost {
     func startedOpen(_ agent: UUID) async -> Bool { false }
     /// A host with no paddock to land (the tests' fakes): never a factory's, and its land refuses.
     func factoryPaddock() async -> Bool { false }
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
         throw ProtocolError(code: .unavailable, message: "this host lands nothing")
     }
     func notifyOwner(_ line: String) async {}
@@ -251,7 +253,9 @@ actor WorkLoop {
         // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
         // F2 U1: reviewLoopConfigBase, `~/.claude.json` before the run's first judged agent: one base for every attempt
         // F2 V3: the reviewers' folder trusted first, so the write never counts as "changed during the attempt"
-        let review = (try? await store.get(id))?.loop?.review == true
+        let first = try? await store.get(id)
+        let review = first?.loop?.review == true
+        let landing = first?.loop?.autoLand != nil   // C2: the end tells the owner even if the registry is unreadable then
         if review, let text = await host.trustReviewers() { await note(id, text) }
         let base = review ? await reviewLoopConfigBase() : nil
         try? await store.update(id) { w in
@@ -290,7 +294,7 @@ actor WorkLoop {
         }
         // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line (A5: a
         // work the chain goes on from tells nothing: the chain's last work tells once)
-        await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil)
+        await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil, landing: landing)
         stopping.remove(id)
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
@@ -1250,8 +1254,9 @@ extension WorkLoop {
 
     func autoLand(work id: UUID, _ al: WorkLoopState.AutoLand, dir: URL) async -> (WorkLoopState.State, WorkLoopState.Stop?) {
         guard let w = try? await store.get(id) else { return (.stopped, .init(.workGone)) }
-        // ponytail: a task deferred (or still open) is no land and no stop: the loop finished as always, the owner is told
-        let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }
+        // ponytail: a task deferred (or still open) is no land and no stop: the loop finished as always, the owner is told.
+        // C2: only `.done` counts: a task dropped (`abandoned`) is work not done, and lands nothing either
+        let left = w.tasks.filter { $0.state != .done }
         guard left.isEmpty else {
             await note(id, "[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado")
             return (.finished, nil)
@@ -1307,7 +1312,7 @@ extension WorkLoop {
         guard let now = try? await store.get(id), now.closedAt == nil, now.loop?.state == .running else { return .init(.workGone) }
         guard await host.starterAlive() else { return .init(.starterGone) }
         do {
-            let (before, after) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
+            let (before, after, late) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
             // C3a: no commit made (nothing new, or integrated already): no land, no undo line, not counted anywhere
             if before == after {
                 await note(id, "[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))")
@@ -1320,7 +1325,12 @@ extension WorkLoop {
                 x.notes.append(WorkNote(at: at, text: "[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
                     + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))", decision: true))
             }
-            return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))")
+            // C2: a failure after the merge is no conflict: the base changed, and both commits are recorded above
+            if let late {
+                await note(id, LotBoards.scrub(String("[loop] auto-land: a base MUDOU (merge feito, \(before.prefix(12)) -> \(after.prefix(12))), "
+                    + "mas o passo depois do merge falhou: \(late)".prefix(Self.noteChars))))
+            }
+            return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))" + (late.map { "; depois do merge falhou: \(Self.eventDetail($0))" } ?? ""))
         } catch {
             return await failed(.landConflict, "o land (merge) falhou", error.message)
         }

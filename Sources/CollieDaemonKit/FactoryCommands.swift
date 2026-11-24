@@ -15,7 +15,7 @@ enum FactoryDoctorReader {
         case .failure(let e): return .failure(e)
         case .success(let c): config = c
         }
-        let paths = listPaths(root)
+        let paths = Array(Set(listPaths(root) + personaPaths(root))).sorted()
         var s = FactoryDoctor.Snapshot(config: config, paths: paths, gitignore: text(root, ".gitignore") ?? "")
         let cmds = [config?.gate, config?.precheck, config?.smoke].compactMap { $0 } + (config?.areas.keys.sorted().compactMap { config?.areas[$0] } ?? [])
         var wanted = cmds.flatMap(FactoryDoctor.citedPaths).filter { !FactoryDoctor.outsideRepo($0) }
@@ -61,6 +61,9 @@ enum FactoryDoctorReader {
     /// part of HEAD, and HEAD's listing is the one scored.
     /// ponytail: the whole HEAD is exported on each read (a land, a chain step); a big repository wants `ls-tree` + `cat-file` of only those files
     static func headSnapshot(dir: URL) async -> Result<FactoryDoctor.Snapshot, ProtocolError> {
+        // C2: a folder with no `.git` (a folder paddock, a subfolder) has no HEAD of its own: say so, not git's own error
+        // (or a parent repository's HEAD read in its place)
+        if !hasGit(dir) { return .failure(ProtocolError(code: .invalidArgs, message: noGitHead(dir))) }
         if let why = await CommandRouter.factoryDirty(dir) { return .failure(ProtocolError(code: .invalidArgs, message: why)) }
         let tmp = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory)).appendingPathComponent("collie-doctor-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tmp) }
@@ -78,6 +81,22 @@ enum FactoryDoctorReader {
         guard case .success(var t) = snapshot(root: dir) else { return .failure(ProtocolError(code: .invalidArgs, message: treeNotHead)) }
         t.paths = h.paths
         return t == h ? head : .failure(ProtocolError(code: .invalidArgs, message: treeNotHead))
+    }
+
+    /// C2: `dir` holds a `.git` entry of its own (a folder, or a worktree's file), by lstat.
+    static func hasGit(_ dir: URL) -> Bool {
+        var st = stat()
+        return lstat(dir.appendingPathComponent(".git").path, &st) == 0
+    }
+
+    static func noGitHead(_ dir: URL) -> String {
+        "\(dir.path) não é um repositório git (sem .git): o doctor do laço lê o commit HEAD, e aqui não há; use um cercado de worktree git"
+    }
+
+    /// C2: `factory doctor`'s line over a root with no `.git` (a folder paddock, or a folder outside any repository).
+    static func noGitLine(_ root: URL, folder: Bool) -> String {
+        "aviso: \(root.path) não tem .git (\(folder ? "cercado de pasta" : "pasta fora de um repositório git")): o doctor lê só os "
+            + "arquivos desta pasta; o laço (work run) e o auto-land exigem um cercado de worktree git"
     }
 
     private static func refusal(_ snapshot: Result<FactoryDoctor.Snapshot, ProtocolError>) -> String? {
@@ -158,6 +177,22 @@ enum FactoryDoctorReader {
         }
         return out.sorted()
     }
+
+    /// C2: the persona folders the review layer looks for, read directly (never through the walk, which stops at
+    /// `maxPaths`): `docs/fabrica/personas/` and `personas/`, their own entries only, links listed but never followed.
+    static let personaDirs = ["docs/fabrica/personas", "personas"]
+    static func personaPaths(_ root: URL) -> [String] {
+        var out: [String] = []
+        for d in personaDirs {
+            let dir = root.appendingPathComponent(d)
+            var st = stat()
+            // the folder itself (and every folder on the way) must not be a link: one would lead out of the project
+            guard lstat(dir.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR, ProjectRoot.contains(dir.path, root: root),
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { continue }
+            out += names.prefix(maxScripts * 10).map { "\(d)/\($0)" }
+        }
+        return out.sorted()
+    }
 }
 
 extension CommandRouter {
@@ -177,7 +212,9 @@ extension CommandRouter {
         }
         let report = (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(r))) ?? .null
         let paddock = ws.paddocks.first { $0.id == t.paddockId }
-        let mark = FactoryDoctorReader.factoryPaddockLines(paddock, land: snap.config?.factory?.land)
+        // C2: a root with no `.git` is no error: the doctor reads its files and says, in one clear line, what that means
+        let git = FactoryDoctorReader.hasGit(root) ? [] : [RerailText.clean(FactoryDoctorReader.noGitLine(root, folder: paddock?.isFolder == true), max: 400)]
+        let mark = git + FactoryDoctorReader.factoryPaddockLines(paddock, land: snap.config?.factory?.land)
         return .object(["output": .string(FactoryDoctor.text(r, min: min) + "\n" + mark.joined(separator: "\n")), "report": report,
                         "passed": .bool(r.passes(min: min)), "min": .number(Double(min)), "factoryPaddock": .bool(paddock?.factory == true)])
     }

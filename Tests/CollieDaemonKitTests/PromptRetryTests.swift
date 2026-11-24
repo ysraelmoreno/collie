@@ -111,7 +111,8 @@ extension WorkLoopTests {
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit" && w.tasks[0].promptRetries == nil)
-        #expect(await r.host.summoned == ["w-task-a-t1"] && r.host.nudges.count == 1)
+        #expect(await r.host.summoned == ["w-task-a-t1"])
+        #expect(await r.host.nudges.count == 1)
         #expect(!(w.loop?.events ?? []).contains { $0.kind == .promptRetry })
     }
 

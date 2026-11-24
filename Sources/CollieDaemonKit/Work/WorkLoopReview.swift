@@ -555,7 +555,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers') and again once the commit's copy is made (T1 f2fix8: nor is the copy's).
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: @Sendable () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))

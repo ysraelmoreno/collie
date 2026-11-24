@@ -191,7 +191,7 @@ import CollieProtocol
         #expect(Self.journal(w, .reviewerMute).contains { $0.contains("revisor testes sem resposta (causa: \(cause)") }, "\(how): \(w.loop?.events ?? [])")
         #expect(!Self.journal(w, .reviewerMute).contains { $0.contains("\u{1b}") })   // the router's text cleaned
         #expect(Self.journal(w, .reviewRetried).isEmpty && !Self.said(w, "1ª rodada"))
-        #expect(await r.host.reviewers.filter { $0.hasPrefix("w-task-a-t1-") }.count == (how == "summon" ? 1 : 2), "\(await r.host.reviewers)")
+        #expect(await r.host.reviewers.filter { $0.hasPrefix("w-task-a-t1-") }.count == (how == "summon" ? 1 : 2), "\(how)")
         #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
     }
 
@@ -205,7 +205,7 @@ import CollieProtocol
         let w = try await r.get()
         #expect(w.tasks[0].tries == 2, "\(w.notes.map(\.text))")   // the retry's veto failed attempt 1
         let first = w.notes.first { $0.text.hasPrefix("[loop] parecer de \"Task a\", tentativa 1") }?.text ?? ""
-        #expect(first.contains("parecer: veto") && first.contains("1ª rodada") && first.contains("terminal sumiu") && first.contains("texto vazio"), first)
+        #expect(first.contains("parecer: veto") && first.contains("1ª rodada") && first.contains("terminal sumiu") && first.contains("texto vazio"), "\(first)")
         #expect(Self.journal(w, .reviewRetried).count == 1, "\(w.loop?.events ?? [])")
         #expect(await r.host.reviewers.filter { $0.hasPrefix("w-task-a-t1-") }.count == 4)
         #expect(await r.host.liveReviewers.isEmpty)
@@ -222,7 +222,7 @@ import CollieProtocol
         #expect(w.tasks[0].state == .done && w.tasks[0].reviewRejects == 0)
         #expect(w.tasks[0].review?.hasPrefix("parecer: sem parecer") == true, "\(w.tasks[0].review ?? "-")")
         let note = w.notes.first { $0.text.hasPrefix("[loop] parecer de") }?.text ?? ""
-        #expect(note.contains("revisor testes sem resposta (causa: texto vazio)") && note.contains("revisor testes sem resposta (causa: terminal sumiu)"), note)
+        #expect(note.contains("revisor testes sem resposta (causa: texto vazio)") && note.contains("revisor testes sem resposta (causa: terminal sumiu)"), "\(note)")
         #expect(Self.journal(w, .reviewRetried).count == 1 && Self.journal(w, .reviewerMute).count == 4, "\(w.loop?.events ?? [])")
         #expect(WorkStatusText.events(w.loop!, last: 100).contains("reviewRetried"))
         #expect(await r.host.reviewers.count == 4)

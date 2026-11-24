@@ -105,7 +105,7 @@ private let profile = #"""
             let l = try #require(loop)
             #expect(l.review == nil && l.tries == 3 && l.budget == Int(CommandRouter.loopBudgetDefault), "\(l)")
             #expect(l.origins == nil && l.reviewOnly == nil && l.reviewThreshold == nil && l.destructive == nil)
-            #expect(!status.contains("origem") && !status.contains("destructive"), status)
+            #expect(!status.contains("origem") && !status.contains("destructive"), "\(status)")
         }
     }
 
@@ -136,7 +136,7 @@ private let profile = #"""
             #expect(l.review == nil && l.reviewOnly == nil && l.reviewThreshold == nil, "\(l)")
             #expect(l.tries == 5 && l.budget == 900, "\(l)")
             #expect(l.origins == ["review": "flag", "budget": "perfil", "tries": "flag"], "\(String(describing: l.origins))")
-            #expect(status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), status)
+            #expect(status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), "\(status)")
             let both = try await call(d, p, x.s, "work.run", ["max": .number(3), "review": .bool(true), "no-review": .bool(true)])
             #expect(both.error?.code == .invalidArgs, "\(both)")
         }

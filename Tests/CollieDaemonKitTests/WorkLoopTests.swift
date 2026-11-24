@@ -712,7 +712,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     }
 
     @Test func gateTimeoutFails() async throws {
-        let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 5", checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 30", checkTimeout: .seconds(3)); defer { r.cleanup() }
         await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].lastFailure == "gate timed out")

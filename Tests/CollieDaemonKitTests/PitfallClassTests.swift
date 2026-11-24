@@ -143,7 +143,7 @@ private func klass(_ title: String, subject: String, hits: Int, examples: [Strin
             let j = try #require(await d.router.curator.queued(kind: .pitfall).first)
             let pl = try CommandRouter.pitfallPayload(j)
             #expect(j.store == lot.key && pl.family == lot.key && pl.classes.map(\.id) == [lc.id], "\(pl)")
-            #expect(CommandRouter.pitfallScope(pl).scopes == [.lot] && !CommandRouter.pitfallScope(pl).ids.contains(pc.id))
+            #expect(CommandRouter.pitfallScope(pl).scopes == [.lot, .project] && !CommandRouter.pitfallScope(pl).ids.contains(pc.id))
         }
     }
 

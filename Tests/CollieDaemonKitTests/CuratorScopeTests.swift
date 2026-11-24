@@ -69,4 +69,54 @@ private func apply(_ d: Daemon, _ p: CorrectionPayload, _ op: [String: JSONValue
             #expect(other?.status == .active)
         }
     }
+
+    private func pitfallJob(_ p: PitfallPayload) throws -> CuratorJob {
+        CuratorJob(id: UUID(), kind: .pitfall, store: p.family,
+                   payload: try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)), dedupe: "", createdAt: Date(), attempts: 0)
+    }
+
+    private func pitfallOp(scope: MemoryScope, body: String) -> CuratorOp {
+        .create(CuratorNew(kind: .pitfall, scope: scope, subject: "slug ascii", title: "Slug por regex ASCII apaga letras não decompostas por NFD",
+                           body: body, why: "", howToApply: ""))
+    }
+
+    /// The real case (A7884AFE): a pitfall about `.collie/cursor-test/slug.py`, origin `curador`, from `applyPitfallOps`.
+    @Test func scratchPitfallIsProposed() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            let pl = PitfallPayload(family: store.key, scope: .project, instance: nil, review: nil, classes: [])
+            let j = try pitfallJob(pl)
+            let rows = try await d.router.applyPitfallOps([pitfallOp(scope: .project, body: "A regex em .collie/cursor-test/slug.py apaga Straße.")],
+                                                          pl, job: j, store: store)
+            let r = try #require(try await store.run { $0.store.all().records.first { $0.kind == .pitfall } })
+            #expect(r.status == .proposed && r.origin == "curador", "\(r)")
+            #expect(rows.contains { $0.reason.contains(".collie/") })
+            // tracked code next to it: active
+            let pl2 = PitfallPayload(family: store.key, scope: .project, instance: nil, review: nil, classes: [])
+            _ = try await d.router.applyPitfallOps([pitfallOp(scope: .project, body: "Veja .collie/a/b.py e Sources/Slug.swift.")],
+                                                   pl2, job: try pitfallJob(pl2), store: store)
+            let live = try await store.run { $0.store.all().records.filter { $0.kind == .pitfall && $0.status == .active } }
+            #expect(live.count == 1)
+        }
+    }
+
+    /// A lot job asking `project`: allowed by the scope, written as the lot's, with a diary row.
+    @Test func pitfallProjectInLotBecomesLot() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let lot = UUID()
+            let store = await d.router.memory.lotStore(lot)
+            let pl = PitfallPayload(family: store.key, scope: .lot, instance: nil, review: nil, classes: [])
+            let ops = CuratorOps.validate(.object(["ops": .array([.object([
+                "op": .string("create"), "kind": .string("pitfall"), "scope": .string("project"), "subject": .string("slug ascii"),
+                "title": .string("Slug por regex ASCII"), "body": .string("Evite."), "why": .string(""), "howToApply": .string("")])])]),
+                                          scope: CommandRouter.pitfallScope(pl)).ops
+            let rows = try await d.router.applyPitfallOps(ops, pl, job: try pitfallJob(pl), store: store)
+            let recs = try await store.run { $0.store.all().records.filter { $0.kind == .pitfall } }
+            #expect(recs.count == 1 && recs[0].scope == .lot && recs[0].lotId == lot && recs[0].status == .active, "\(recs)")
+            #expect(rows.contains { $0.reason.contains("lote") })
+        }
+    }
 }
+

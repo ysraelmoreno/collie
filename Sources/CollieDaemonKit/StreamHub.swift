@@ -25,8 +25,8 @@ final class Fanout: @unchecked Sendable {
     /// The user's keys, told at once (ApprovalTracker.input): a hop through the hub would let a dialog drawn meanwhile
     /// be raised and then cleared by the late input.
     private let onInput: @Sendable () -> Void
-    init(_ process: PTYProcess, preset: Preset, onInput: @escaping @Sendable () -> Void = {}) {
-        self.process = process; self.onInput = onInput; quiet = QuietDetector(preset: preset)
+    init(_ process: PTYProcess, preset: Preset, agent: String? = nil, onInput: @escaping @Sendable () -> Void = {}) {
+        self.process = process; self.onInput = onInput; quiet = QuietDetector(preset: preset, agent: agent)
         (signals, signalSink) = AsyncStream.makeStream(of: Signal.self, bufferingPolicy: .unbounded)
     }
     func finishSignals() { signalSink.finish() }
@@ -172,7 +172,7 @@ actor StreamHub {
     /// `onInput`: the terminal's ApprovalTracker, told of the user's keys synchronously.
     func track(_ rec: TerminalRecord, process: PTYProcess, scrollback: ScrollbackBuffer, onInput: @escaping @Sendable () -> Void = {}) {
         let id = rec.id
-        let fan = Fanout(process, preset: rec.preset, onInput: onInput)
+        let fan = Fanout(process, preset: rec.preset, agent: CommandRouter.agentName(rec), onInput: onInput)
         Task { [weak self] in
             for await sig in fan.signals {
                 switch sig {

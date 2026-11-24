@@ -57,10 +57,10 @@ final class ApprovalTracker: @unchecked Sendable {
     private var restorable: Approval?   // cleared by input: back if the keys drew no reaction (window end)
     private var inputs = 0         // counts inputs: a re-raise only if none came since the answer
     /// `now`: tests drive the clock.
-    init(terminalId: UUID, name: String, preset: Preset, scrollback: ScrollbackBuffer,
+    init(terminalId: UUID, name: String, preset: Preset, agent: String? = nil, scrollback: ScrollbackBuffer,
          now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }, onEvent: @escaping @Sendable (ApprovalEvent) -> Void) {
         self.terminalId = terminalId; self.name = name; self.scrollback = scrollback; self.onEvent = onEvent
-        quiet = QuietDetector(preset: preset, now: now)
+        quiet = QuietDetector(preset: preset, agent: agent, now: now)
     }
     var pending: Approval? { lock.withLock { _pending } }
     /// Output since the last input is not scanned yet (its window is open, or over and not scanned): a prompt may be
@@ -398,7 +398,7 @@ public actor AskCoordinator {
     /// Registers a spawned terminal. Wires output (paste-mode tracking) and exit (fails its asks).
     public func attach(_ rec: TerminalRecord, process: PTYProcess, scrollback: ScrollbackBuffer) {
         let sink = approvalSink, paste = PasteModeTracker()
-        let approval = ApprovalTracker(terminalId: rec.id, name: rec.name, preset: rec.preset, scrollback: scrollback) { sink.yield($0) }
+        let approval = ApprovalTracker(terminalId: rec.id, name: rec.name, preset: rec.preset, agent: CommandRouter.agentName(rec), scrollback: scrollback) { sink.yield($0) }
         // ponytail: output read between spawn and this assignment isn't scanned; an agent enabling
         // bracketed paste within those microseconds would get plain input. Hook it in PTYProcess.init if seen.
         process.onOutput = { paste.feed($0); approval.feed($0) }
@@ -409,7 +409,7 @@ public actor AskCoordinator {
         targets[rec.id] = Target(name: rec.name, preset: rec.preset, process: process, scrollback: scrollback, paste: paste,
                                  approval: approval)
         targets[rec.id]?.claudeTUI = rec.command == nil && rec.preset == .claude
-        targets[rec.id]?.cursorTUI = rec.preset == .cursor || rec.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent"
+        targets[rec.id]?.cursorTUI = CommandRouter.agentName(rec) == "cursor"
         let id = rec.id, me = ObjectIdentifier(process)
         // replays if already exited; ignored once the terminal was replaced by a new launch with the same id
         let prevExit = process.onExit
@@ -438,7 +438,7 @@ public actor AskCoordinator {
         // the name is the registry's, never the asker's text; --raw and a dialog's answer (`ask B y`) stay exact
         let sender = !raw && from != to && prompt.count > Self.dialogAnswerMax ? targets[from]?.name : nil
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
-                                  senderName: sender, askId: askId, replyHint: sender != nil && t.preset == .cursor,
+                                  senderName: sender, askId: askId, replyHint: sender != nil && t.cursorTUI,
                                   onDelivered: onDelivered, cont: nil), timeout: timeout)
     }
 

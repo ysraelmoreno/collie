@@ -1070,3 +1070,60 @@ extension AskTests {
     }
 }
 }
+
+// MARK: - A1: a Cursor launched by a custom command is Cursor everywhere
+
+/// A `cursor-agent` program on disk (prints its token, then swallows input): the command's first word names the agent.
+private func fakeCursorCommand() throws -> String {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("a1-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let exe = dir.appendingPathComponent("cursor-agent")
+    try "#!/bin/sh\necho T=$COLLIE_TOKEN\nexec cat >/dev/null\n".write(to: exe, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+    return exe.path + " --model composer-2.5"
+}
+
+extension AskTests {
+@Suite(.serialized) struct CustomCursor {
+    /// The ask prompt to a custom Cursor carries the `collie reply` line, as it does for the preset.
+    @Test func replyHintForCustomCursor() async throws {
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("a1-hint-\(UUID().uuidString)").path
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A")
+        let rec = TerminalRecord(id: UUID(), name: "B", preset: .custom, command: "cursor-agent --model composer-2.5", cwd: "/tmp",
+                                 isShepherd: false, paddockId: nil, projectRoot: nil)
+        let sb = ScrollbackBuffer(spillURL: nil)
+        let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", "printf ready; exec cat >'\(out)'"], environment: [:], cwd: "/tmp"), scrollback: sb)
+        await asks.attach(rec, process: p, scrollback: sb)
+        let t = Task { try await asks.ask(from: a, to: rec.id, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await waitFor(5) { (try? String(contentsOfFile: out, encoding: .utf8))?.contains("collie reply") == true })
+    }
+
+    /// `ask --no-wait` from a custom Cursor: the reply notice is typed into it.
+    @Test func noWaitReplyTypedIntoCustomCursor() async throws {
+        let cmd = try fakeCursorCommand()
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "custom", command: cmd)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { await d.scrollbackText(UUID(uuidString: a.id)!).contains("[collie] Reply from B (ask \(id)") })
+        }
+    }
+
+    /// A custom command that is no agent stays outside: nothing is typed into it.
+    @Test func noWaitNotTypedIntoPlainCustom() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "custom", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            try await Task.sleep(for: .seconds(1))
+            #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!).contains("Reply from B (ask \(id)")))
+        }
+    }
+}
+}

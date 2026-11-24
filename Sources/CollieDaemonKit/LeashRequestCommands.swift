@@ -36,7 +36,7 @@ extension CommandRouter {
         if allow, let from, let to { try await leash(from, to) }
         leashRequests.removeAll { $0.id == id }
         await hub.emit(.leashRequestRemoved(id))
-        if let from, let to, [.claude, .codex, .cursor].contains(from.preset) {
+        if let from, let to, CommandRouter.isAgent(from) {
             let m = allow ? "[collie] The user leashed you to \(to.name)." : "[collie] The user declined your leash to \(to.name)."
             let asks = asks
             Task { try? await asks.inject(to: from.id, prompt: m, hold: .seconds(1800), afterQuiet: true) }

@@ -559,7 +559,7 @@ actor CommandRouter {
         let busy = await targetBusy(t.id)
         let id = await inbox.open(from: from, target: t.name, targetBusy: busy)
         let asks = asks, inbox = inbox, target = t.id
-        let typed = ws.terminals.first { $0.id == from }.map { [.claude, .codex, .cursor].contains($0.preset) } ?? false
+        let typed = ws.terminals.first { $0.id == from }.map { Self.isAgent($0) } ?? false
         Task {
             let r: Result<AskResult, ProtocolError>
             do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id,
@@ -622,7 +622,7 @@ actor CommandRouter {
         let summary = flat.isEmpty ? "(no message)" : flat.count <= 200 ? flat : String(flat.prefix(200)) + "…"
         let line = "[collie] \(me.name) ended its turn: \(summary) (collie check \(me.name))"
         for s in ConnectionGraph.reachable(from: tid, in: ws)
-        where s.isShepherd && s.id != asker && [.claude, .codex, .cursor].contains(s.preset) {
+        where s.isShepherd && s.id != asker && Self.isAgent(s) {
             turnNotices[s.id, default: []].append(line)
             if turnNotices[s.id]?.count == 1 { Task { await flushTurnNotices(s.id) } }
         }

@@ -766,6 +766,9 @@ extension CommandRouter {
         return "other"
     }
 
+    /// `t` runs an agent: by preset, or (`custom`) by the program its command starts.
+    static func isAgent(_ t: TerminalRecord) -> Bool { [.claude, .codex, .cursor].contains(t.preset) || agentName(t) != "other" }
+
     /// Cursor's sessionStart (spec 2026-11-17 cursor memory §1–2): the whole text, the focus block's bytes and memories.
     static let cursorCap = 9_000, focusBudget = 2_500, focusMax = 8
     static let hourMinute: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "HH:mm"; return f }()

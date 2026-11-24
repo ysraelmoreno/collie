@@ -616,7 +616,10 @@ bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda cons
   de abrir).
 - **Cursor** (`cursor-agent`): instale e faça login pelo próprio CLI (`curl https://cursor.com/install -fsS | bash`,
   `cursor-agent login`); usa o plano do Cursor do usuário, e o Collie não vê nem guarda credencial. Sem `cursor-agent` no
-  `PATH`, criar ou convocar falha na hora, sem terminal criado. Não há hook de fim de turno por terminal (o `--plugin-dir`
+  `PATH`, criar ou convocar falha na hora, sem terminal criado. `summon --model <m>` vale também para o Cursor (preset ou
+  comando `cursor-agent`) e vira `--model '<m>'` no comando, sem duplicar um `--model` que o comando já tenha. Sob o sandbox
+  do Collie o preset (e um `cursor-agent` custom) leva `--trust`, para o Cursor não parar em "Workspace Trust Required"; num
+  terminal livre o diálogo continua aparecendo: confiar no repositório ali é decisão do usuário. Não há hook de fim de turno por terminal (o `--plugin-dir`
   só dispara `sessionStart` na versão 2026.10.22), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
   chegar, o terminal passa a esperar só hook. Pedidos de permissão (`Run this command?`, `Write to this file?`…) viram
   atenção e são respondidos com `y`/`n`; a tela de login (`Press any key to log in`) também vira atenção, mas o Collie nunca

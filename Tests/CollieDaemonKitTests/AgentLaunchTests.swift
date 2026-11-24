@@ -157,11 +157,33 @@ import CollieProtocol
         let s = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh")
         #expect(s.arguments == ["-lc", "exec cursor-agent --plugin-dir \(plugin(r))"])
         let sb = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
-        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --plugin-dir \(plugin(r))"])
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --trust --plugin-dir \(plugin(r))"])
         // its own command (no PATH check: the command picks its program): the plugin right after the program
         let c = rec(.cursor, "env A=1 cursor-agent --model x")
         let cs = try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
         #expect(cs.arguments == ["-lc", "env A=1 cursor-agent --plugin-dir \(plugin(c)) --model x"])
+    }
+    /// A2: the preset takes `--model`; `--trust` only under the Collie sandbox (free terminal keeps the dialog); no duplicate flags.
+    @Test func cursorModelAndTrust() throws {
+        let path = try cursorPath()
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        func plugin(_ r: TerminalRecord) -> String { AgentLaunch.quote(AgentLaunch.cursorPluginDir(r.id, in: dir).path) }
+        var r = rec(.cursor); r.model = "composer-2.5"
+        let sb = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --trust --plugin-dir \(plugin(r)) --model 'composer-2.5'"])
+        let free = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(free.arguments == ["-lc", "exec cursor-agent --plugin-dir \(plugin(r)) --model 'composer-2.5'"])
+        #expect(!free.arguments.joined().contains("--trust"))
+        // a custom cursor-agent: --trust added under the sandbox, but never a second --model/--trust
+        var c = rec(.custom, "cursor-agent --model a --trust"); c.model = "b"
+        let cs = try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        let line = cs.arguments[1]
+        #expect(line.components(separatedBy: "--trust").count == 2 && line.components(separatedBy: "--model").count == 2, "\(line)")
+        let c2 = rec(.custom, "cursor-agent")
+        #expect(try AgentLaunch.launchSpec(for: c2, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+            .arguments[1].contains(" --trust"))
+        #expect(AgentLaunch.isCursor(rec(.cursor)) && AgentLaunch.isCursor(rec(.custom, "env A=1 cursor-agent -x")))
+        #expect(!AgentLaunch.isCursor(rec(.codex)) && !AgentLaunch.isCursor(rec(.custom, "codex")))
     }
     /// Cursor gets Collie's orientation (sessionStart → additional_context) and the collie MCP server through a
     /// per-terminal `--plugin-dir` in Collie's data; the MCP env carries names only (cursor gives a stdio MCP child

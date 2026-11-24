@@ -61,6 +61,15 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
         }
     }
 
+    @Test func summonModelStillRefusedForCodex() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let r = try await call(p, m, "summon", ["name": "X", "preset": "codex", "model": "y"])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("--model is for claude") == true, "\(r)")
+            #expect(try await names(p, m) == [])
+        }
+    }
+
     /// Paddocks can't be created yet (Task 4): seed one, and a Shepherd standing on it, into workspace.json.
     @Test func summonPaddockSetsPaddockAndCwd() async throws {
         let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))

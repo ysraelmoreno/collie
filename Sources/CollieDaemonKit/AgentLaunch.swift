@@ -96,6 +96,12 @@ public enum AgentLaunch {
         return (rec.preset == .claude || rec.preset == .custom) && EssentialPaths.commandAgent(c)?.name == "claude"
     }
 
+    /// The preset `cursor`, or a custom command whose program is `cursor-agent`.
+    static func isCursor(_ rec: TerminalRecord) -> Bool {
+        guard let c = rec.command else { return rec.preset == .cursor }
+        return (rec.preset == .cursor || rec.preset == .custom) && EssentialPaths.commandAgent(c)?.name == "cursor-agent"
+    }
+
     /// `env` is used verbatim as the child environment; hooks are wired by flag only (no global config touched).
     /// `codexMCP`: also give Codex the collie MCP server (opt-in, `COLLIE_CODEX_MCP=1` in the daemon env: its `env_vars` key is
     /// unverified against an installed codex, and an unknown key could stop Codex from launching).
@@ -153,7 +159,12 @@ public enum AgentLaunch {
             // a custom codex/cursor-agent command: the same inner-sandbox switch, unless it picks a sandbox itself
             var flags = innerSandboxOff && !c.contains("--sandbox")
                 ? ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][agent.name] ?? "" : ""
-            if agent.name == "cursor-agent" { flags += " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path) }
+            if agent.name == "cursor-agent" {
+                // --trust only under Collie's sandbox (a free terminal keeps the dialog); never a second --model/--trust
+                if innerSandboxOff && !c.contains("--trust") { flags += " --trust" }
+                flags += " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)
+                if let m = rec.model, !c.contains("--model") { flags += " --model " + quote(m) }
+            }
             return spec(["-lc", String(c[..<agent.end]) + flags + c[agent.end...]])
         }
         switch rec.preset {
@@ -174,8 +185,9 @@ public enum AgentLaunch {
             guard (env["PATH"] ?? "").split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/cursor-agent") }) else {
                 throw ProtocolError(code: .invalidArgs, message: "cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)")
             }
-            return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled" : "")
-                         + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)])
+            return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled --trust" : "")
+                         + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)
+                         + (rec.model.map { " --model " + quote($0) } ?? "")])
         case .custom: throw ProtocolError(code: .invalidArgs, message: "custom preset needs a command")
         }
     }

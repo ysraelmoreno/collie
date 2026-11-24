@@ -605,7 +605,8 @@ actor CommandRouter {
             return .object(o)
         }
         let ends = turnEnds[t.id] ?? 0, deadline = ContinuousClock.now + timeout
-        if let b = await hub.currentBadges[t.id], b != .working { return reply(idle: true, b) }
+        // A3: a Cursor whose prompt is queued or not yet confirmed is not idle, whatever its badge says
+        if let b = await hub.currentBadges[t.id], b != .working, !(await asks.cursorUnsent(t.id)) { return reply(idle: true, b) }
         let edge = try await asks.beginWait(from: from, to: t.id)
         var done: JSONValue?
         // ponytail: 200 ms polling of the turn count and the hub's badge (itself polled 4/s)
@@ -613,7 +614,8 @@ actor CommandRouter {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { break }
             let b = await hub.currentBadges[t.id]
-            if (turnEnds[t.id] ?? 0) != ends || b != .working { done = reply(idle: false, b); break }
+            let unsent = await asks.cursorUnsent(t.id)
+            if (turnEnds[t.id] ?? 0) != ends || (b != .working && !unsent) { done = reply(idle: false, b); break }
         }
         await asks.endWait(edge)
         if let done { return done }

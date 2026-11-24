@@ -810,7 +810,8 @@ public actor AskCoordinator {
         targets[to]?.swallowedFor = nil
         targets[to]?.typed = true
         // a dialog's answer and these never raise UserPromptSubmit
-        let confirm = t.claudeTUI && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
+        // A3: Cursor too (no hook: its working footer is the confirmation)
+        let confirm = (t.claudeTUI || t.cursorTUI) && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
         let submits = t.submits, raw = w.raw, busy = t.inTurn, ends = t.turnEnds
         if confirm { targets[to]?.awaitingSubmit = id }
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
@@ -965,6 +966,12 @@ public actor AskCoordinator {
         delivered(id)
     }
 
+    /// A3: a Cursor's prompt is queued, or written and not yet confirmed by its working footer: `wait` is not idle.
+    func cursorUnsent(_ terminal: UUID) -> Bool {
+        guard let t = targets[terminal], t.cursorTUI else { return false }
+        return !t.queue.isEmpty || t.inflight.map { t.awaitingSubmit == $0.id } == true
+    }
+
     /// M2.0: a prompt written to `terminal` had its Enter sent again (the loop's journal).
     func submitRetried(_ terminal: UUID) -> Bool { targets[terminal]?.submitRetried ?? false }
 
@@ -992,13 +999,15 @@ public actor AskCoordinator {
         while true {
             try? await Task.sleep(for: .milliseconds(100))
             guard let t = targets[to], t.inflight?.id == id else { return }   // its turn ended, or it failed
-            if t.submits > submits { submitted(id, to); return }
+            if t.cursorTUI ? Self.cursorIsWorking(t.scrollback) : t.submits > submits { submitted(id, to); return }
             let now = ContinuousClock.now
             if busy && t.turnEnds == ends { start = now; continue }   // ponytail: bounded by the waiter's own timeout
-            guard now - start >= submitConfirm else { continue }
+            // Cursor's footer shows within about a second of a taken Enter: no reason to wait the Claude hook's time
+            guard now - start >= (t.cursorTUI ? min(submitConfirm, .seconds(3)) : submitConfirm) else { continue }
             let printing = t.process.lastOutputAt.map { now - $0 < StreamHub.workingWindow } ?? false
             if printing && now - start < Self.submitConfirmMax { continue }
-            if printing || !t.sessionHooked || t.approval.pending != nil { submitted(id, to); return }
+            // Cursor has no SessionStart to wait for: its footer (above) is the only proof
+            if printing || (!t.cursorTUI && !t.sessionHooked) || t.approval.pending != nil { submitted(id, to); return }
             if !resent {
                 // counted as input in one step with the check, as the prompt's own write: an Enter into a dialog
                 // would answer it. Output not scanned yet may hold one: looked at again on the next poll.
@@ -1022,6 +1031,8 @@ public actor AskCoordinator {
                 start = .now
                 continue
             }
+            // Cursor: no footer is no proof (a fast turn ends before a poll sees it): idle/reply decide from here
+            if t.cursorTUI { submitted(id, to); return }
             finish(id, .failure(ProtocolError(code: .unavailable, message:
                 "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
             return
@@ -1031,6 +1042,10 @@ public actor AskCoordinator {
     /// Idle fallback; returns false once `id` is no longer in flight (stops the poller).
     /// cursor-agent's right footer placeholder while it works (spike REPORT §4).
     static let cursorWorking = "ctrl+c to stop"
+    /// ponytail: "latest frame" = last 10 non-empty lines, since scrollback appends every repaint (spike REPORT §4).
+    static func cursorIsWorking(_ sb: ScrollbackBuffer) -> Bool {
+        ApprovalTracker.lines(sb, 10).contains { $0.contains(cursorWorking) }
+    }
 
     private func pollIdle(_ to: UUID, _ id: UUID) -> Bool {
         guard let t = targets[to], let (cur, mark) = t.inflight, cur == id, !t.hookCapable else { return false }
@@ -1039,7 +1054,8 @@ public actor AskCoordinator {
         // Cursor has no turn hook: its working footer on the latest frame means the turn is still running (the
         // waiter's timeout still caps it). ponytail: "latest frame" = last 10 non-empty lines, since scrollback
         // appends every repaint; a taller footer redraw would need a screen grid (spike REPORT §4).
-        if t.cursorTUI, ApprovalTracker.lines(t.scrollback, 10).contains(where: { $0.contains(Self.cursorWorking) }) { return true }
+        if t.cursorTUI, Self.cursorIsWorking(t.scrollback) { return true }
+        if t.cursorTUI, t.awaitingSubmit == id { return true }   // A3: written, not confirmed: its echo is not a finished turn
         let s = t.scrollback.text(since: mark)
         targets[to]?.idleOwed = true   // never consumed if the target really has no hook
         targets[to]?.owedText = String(s.text.suffix(64 * 1024))

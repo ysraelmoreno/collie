@@ -43,7 +43,7 @@ private let paths: [Path] = [
         Step(.waitExpired, .waitingCommit, toCheck),
     ]),
     Path(name: "turn past its timeout: no nudge", steps: summoned + [
-        Step(.turnTimedOut, .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
+        Step(.turnTimedOut(""), .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
         Step(.waitExpired, .waitingCommit, toCheck),
     ]),
     Path(name: "ask failed: no nudge", steps: summoned + [
@@ -61,7 +61,7 @@ private let paths: [Path] = [
         Step(.waitExpired, .waitingCommit, toCheck),
     ]),
     Path(name: "the nudge's turn times out: the check", steps: nudged + [
-        Step(.turnTimedOut, .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
+        Step(.turnTimedOut(""), .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
         Step(.waitExpired, .waitingCommit, toCheck),
     ]),
 ]

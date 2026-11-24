@@ -193,6 +193,8 @@ actor LoopFakeHost: LoopHost {
             do { try await s.prechecked(dir) } catch { Issue.record("prechecked \(name): \(error)") }
             return s.source
         }
+        // P2: an ask that never reached the agent (one per ask, before the script; the name is the same after a retry)
+        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); throw e }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -204,6 +206,13 @@ actor LoopFakeHost: LoopHost {
         return s.source
     }
     var nudges: [(name: String, prompt: String, timeout: Duration)] = []
+    /// P2: errors the attempt's ask throws (by name, one per ask) before its script runs, and who got one.
+    var askErrors: [String: [ProtocolError]] = [:], notDelivered: [String] = []
+    func queueAskErrors(_ name: String, _ e: [ProtocolError]) { askErrors[name] = e }
+    /// P2: each agent's screen (by name), as `screen` reads it.
+    var screens: [String: [String]] = [:]
+    func setScreen(_ name: String, _ lines: [String]) { screens[name] = lines }
+    func screen(_ terminal: UUID) async -> [String]? { screens[names[terminal] ?? ""] }
     var precheckNudges: [(name: String, prompt: String)] = []
     /// M2.0: the agents (by name) whose prompt had its Enter sent again.
     var resubmits: Set<String> = []
@@ -338,7 +347,7 @@ struct LoopRig {
         try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
-                        notices: LoopNotices(window: noticeWindow))
+                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }

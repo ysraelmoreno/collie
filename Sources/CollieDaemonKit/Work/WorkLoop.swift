@@ -15,6 +15,8 @@ protocol LoopHost: Sendable {
     /// M5.3: the terminal sits in the model's usage-limit dialog, printing nothing (`UsageLimit.detect` on its screen):
     /// the dialog's text, short. nil: not in it. Read only, never typed into.
     func usageLimit(_ terminal: UUID) async -> String?
+    /// P2: the last lines of the terminal's screen (what `usageLimit` reads), raw. nil: none. Read only.
+    func screen(_ terminal: UUID) async -> [String]?
     func dismiss(_ terminal: UUID) async
     /// F2 Z3b: `dismiss`, then every process still in the terminal's process group killed (`WorkLoop.reapGroup`).
     func dismissReaping(_ terminal: UUID) async
@@ -91,6 +93,7 @@ extension LoopHost {
     func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func usageLimit(_ terminal: UUID) async -> String? { nil }
+    func screen(_ terminal: UUID) async -> [String]? { nil }
     func tokens(_ terminal: UUID) async -> TokenCount? { nil }
     /// A host with no processes (the tests' fakes).
     func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
@@ -195,12 +198,14 @@ actor WorkLoop {
     var lanes: [UUID: Lanes] = [:]
     /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
     let notices: LoopNotices
+    /// P2: the wait before an attempt whose prompt was not delivered starts over with a new agent (the tests' zero).
+    let promptRetryWait: Duration
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices()) {
+         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20)) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices
+        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -329,7 +334,8 @@ actor WorkLoop {
         // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
                                                         precheck: loop.precheck != nil, reviewer: loop.review == true,
-                                                        reviewRejectsInRow: task.reviewRejects ?? 0), adopt ? .adopted : .started)
+                                                        reviewRejectsInRow: task.reviewRejects ?? 0, promptRetries: task.promptRetries ?? 0),
+                                                 adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -518,6 +524,14 @@ actor WorkLoop {
             guard rest >= 1 else { return .waitExpired }
             await record(id, &r)
             return await talk(agent, Self.precheckPrompt(tail), .seconds(rest))
+        case .promptRetry(let used):
+            // P2: the task's count, not the attempt's (it crosses attempts); the note is the summary's line of it
+            let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))"
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].promptRetries = (x.tasks[i].promptRetries ?? 0) + 1 }
+                x.notes.append(WorkNote(at: at, text: text))
+            }
+            if promptRetryWait > .zero, !Task.isCancelled { await Self.nap(promptRetryWait) }
         case .runPrecheck:
             // a timeout, or a pre-check that could not run, is a failure (status nil): its tail says which
             let limit = Swift.min(Self.precheckTimeout, await left(id, r.loop, since: r.started))
@@ -540,7 +554,10 @@ actor WorkLoop {
             // for the journal only: the verdict reads the commit again, after the dismiss
             guard await committed(before: before, branch: branch, dir) else {
                 if let looked, looked.busy, looked.secs < Self.shortTurn {
+                    // P2: what the agent's screen showed, read before the dismiss
+                    let screen = if let agent = r.agent, let lines = await host.screen(agent) { Self.screenTail(lines) } else { "" }
                     let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))"
+                        + (screen.isEmpty ? "" : "\ntela do agente:\n" + screen)
                     await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
                 }
                 return .waitExpired
@@ -917,7 +934,10 @@ actor WorkLoop {
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
             g.addTask {
                 do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
-                catch where error.code == .timeout { return .turnTimedOut }
+                catch where error.code == .timeout {
+                    // P2: never reached the agent / its reply timed out after it did
+                    return AskCoordinator.promptNotDelivered(error) ? .promptNotDelivered(error.message, load: Self.loadAverage()) : .turnTimedOut(error.message)
+                }
                 catch { return .turnFailed(error.message) }
             }
             g.addTask {
@@ -930,6 +950,20 @@ actor WorkLoop {
             for await e in g { if let e { g.cancelAll(); return e } }
             return .turnFailed("no turn")
         }
+    }
+
+    /// P2: the one-minute load average (0 when it cannot be read).
+    static func loadAverage() -> Double {
+        var l = [0.0]
+        return getloadavg(&l, 1) == 1 ? l[0] : 0
+    }
+
+    /// P2: the end of an agent's screen for a note: its last `screenLines` lines, clean (as an event's detail, secrets
+    /// hidden), at most `screenChars` characters.
+    static let screenLines = 20, screenChars = 800
+    static func screenTail(_ lines: [String]) -> String {
+        let clean = lines.suffix(screenLines).map { LotBoards.scrub(RerailText.plain(ANSI.strip($0))).trimmingCharacters(in: .whitespaces) }
+        return String(clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).suffix(screenChars))
     }
 
     /// M2.2a: a 40-character lowercase hex sha, as `git rev-parse HEAD` prints one. `resumeFrom` comes from the work's

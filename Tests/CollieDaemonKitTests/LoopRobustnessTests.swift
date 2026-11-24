@@ -92,18 +92,18 @@ private func stopped() -> WorkLoopState {
         var pairs: [(M.State, M.Event, String)] = []
         func add(_ strays: [M.Event]) { pairs += strays.map { (s, $0, String(describing: $0).prefix { $0 != "(" }.description) } }
         // summoning; `measured` with no failure before: nothing was ever asked to measure
-        add([.turnTimedOut, .gateDone(status: 0, broken: nil), .decided(.pass), .commitSeen("c1"), .waitExpired, m, .gateClear])
+        add([.turnTimedOut(""), .gateDone(status: 0, broken: nil), .decided(.pass), .commitSeen("c1"), .waitExpired, m, .gateClear])
         s = M.reduce(s, .started).0; s = M.reduce(s, .summoned(agent)).0
         #expect(s.phase == .turn)
         add([.started, .summoned(UUID()), .checkDone(status: 0, broken: nil), .settled(moved: false, reset: false), m])
         s = M.reduce(s, .turnEnded(source: .hook)).0
         #expect(s.phase == .waitingCommit && s.agent != nil)
-        add([.started, .turnTimedOut, m, .measured(nil), .blocked(nil)])   // measured with the terminal still open
+        add([.started, .turnTimedOut(""), m, .measured(nil), .blocked(nil)])   // measured with the terminal still open
         s = M.reduce(s, .commitSeen("c1")).0
         add([.commitSeen("c2"), .waitExpired, .measured(nil)])   // the terminal is gone; nothing failed, so nil measures nothing
         s = M.reduce(s, m).0
         #expect(s.phase == .checking)
-        add([.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut, m])
+        add([.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut(""), m])
         for (state, event, name) in pairs {
             let (next, fx) = M.reduce(state, event)
             #expect(next == state, "\(state.phase), \(event)")

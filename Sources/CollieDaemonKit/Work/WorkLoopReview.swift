@@ -16,6 +16,8 @@ extension WorkLoop {
         var note: String
         /// F2 Z3a: the turn left after the line counts and the spec is under `reviewMinTurn`: no reviewer was summoned
         var budgetOut = false
+        /// P1: the journal lines the review leaves (`reviewerMute` per mute persona, `reviewRetried`): the caller records them.
+        var events: [LoopEvent] = []
     }
 
     /// One persona's answer, with the model it ran on (for the note and the evidence file).
@@ -479,11 +481,27 @@ extension WorkLoop {
         "parecer: " + (!o.approved ? "veto" : o.silent != nil ? ReviewVerdict.reviewAdvisoryNone : "sem veto") + " (\(detail))"
     }
 
-    /// No answer (summon refused, terminal gone, past the turn's time, empty text): invalid, never a veto nor an approval
-    /// (A1, reviewAdvisory: 'sem parecer').
-    static func mute(_ persona: String) -> PersonaVerdict {
-        PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "revisor \(persona) sem resposta")
+    /// P1: why a reviewer gave no answer, said in its note and in the journal (`reviewerMute`). `summonRefused`'s text
+    /// is the router's error, cleaned like any journal detail (`eventDetail`). An unreadable answer keeps `ReviewVerdict.parse`'s own reason.
+    enum ReviewMuteCause: Sendable, Equatable {
+        case summonRefused(String), terminalGone, timedOut(Int), emptyText
+        var text: String {
+            switch self {
+            case .summonRefused(let why): "summon recusado: " + WorkLoop.eventDetail(why)
+            case .terminalGone: "terminal sumiu"
+            case .timedOut(let s): "passou do tempo do turno (\(s) s)"
+            case .emptyText: "texto vazio"
+            }
+        }
     }
+
+    /// No answer: invalid, never a veto nor an approval (A1, reviewAdvisory: 'sem parecer'). P1: the cause is said.
+    static func mute(_ persona: String, _ cause: ReviewMuteCause) -> PersonaVerdict {
+        PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "revisor \(persona) sem resposta (causa: \(cause.text))")
+    }
+
+    /// P1: the journal detail of the retry when every persona was mute.
+    static let reviewRetryNote = "todas as personas mudas: revisão repetida uma vez"
 
     /// The personas at `before`: the `.md` files of `CommandRouter.personasDir` as committed there.
     func basePersonas(_ before: String, _ dir: URL) async throws -> [Persona] {
@@ -537,7 +555,7 @@ extension WorkLoop {
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
     /// the reviewers') and again once the commit's copy is made (T1 f2fix8: nor is the copy's).
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
-                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: () async -> Int, _ dir: URL) async -> Reviewed {
+                evidence: String, configSilenced: String? = nil, agentOpen: Bool = false, turn: @Sendable () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
         let diff = (try? await host.git(["diff", before, judged], in: dir)).flatMap { $0.status == 0 ? $0.stdout : nil } ?? ""
         let paths = (try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir))
@@ -558,9 +576,6 @@ extension WorkLoop {
         let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
         let spec = await specText(task.spec, at: before, dir)
         let budgetOut = Reviewed(outcome: .init(approved: false, reason: Self.reviewBudgetNote, notes: []), line: "", note: "", budgetOut: true)
-        let before_ = await turn()
-        // F2 Z3a: the counts and the spec ate the budget: mute reviewers would be a refusal that is not one (X3)
-        if before_ < Swift.min(Self.reviewMinTurn, loop.timeout) { return budgetOut }
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
@@ -568,65 +583,98 @@ extension WorkLoop {
         let planted = agentOpen ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
         let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
-        let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }
-        // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree.
-        // T1 f2fix8 (reviewOneCopy): one copy per attempt, cloned into each folder; the turn is read once it is made.
-        var snapshots: [URL?] = scratch.map { _ in nil }, snapshotWhy: [String?] = scratch.map { _ in nil }, skipped: [String] = []
-        if scratch.contains(where: { $0 != nil }) {
-            let (master, copy) = await reviewOneCopy(judged, dir, agent: agent, deadline: Self.reviewOneCopyDeadline(before_))
-            for (i, s) in scratch.enumerated() {
-                guard let s else { continue }
-                switch copy.flatMap({ Self.reviewClone($0.url, into: s) }) {
-                case .success(let u): snapshots[i] = u
-                case .failure(let f): snapshotWhy[i] = f.why
+        /// One round of reviewers: fresh folders, one copy, one terminal per persona, all dismissed and their folders gone.
+        /// nil: the budget is too short for it (no reviewer summoned).
+        func round() async -> (runs: [(Int, PersonaRun, UUID?)], skipped: [String])? {
+            let before_ = await turn()
+            // F2 Z3a: the counts and the spec ate the budget: mute reviewers would be a refusal that is not one (X3)
+            if before_ < Swift.min(Self.reviewMinTurn, loop.timeout) { return nil }
+            let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }
+            // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree.
+            // T1 f2fix8 (reviewOneCopy): one copy per attempt, cloned into each folder; the turn is read once it is made.
+            var snapshots: [URL?] = scratch.map { _ in nil }, snapshotWhy: [String?] = scratch.map { _ in nil }, skipped: [String] = []
+            if scratch.contains(where: { $0 != nil }) {
+                let (master, copy) = await reviewOneCopy(judged, dir, agent: agent, deadline: Self.reviewOneCopyDeadline(before_))
+                for (i, s) in scratch.enumerated() {
+                    guard let s else { continue }
+                    switch copy.flatMap({ Self.reviewClone($0.url, into: s) }) {
+                    case .success(let u): snapshots[i] = u
+                    case .failure(let f): snapshotWhy[i] = f.why
+                    }
                 }
+                if case .success(let c) = copy { skipped = c.skipped }
+                if let master { Self.dropScratch(master) }
             }
-            if case .success(let c) = copy { skipped = c.skipped }
-            if let master { Self.dropScratch(master) }
-        }
-        let turn = await turn()
-        // T1 f2fix8: the copy ate the budget: no reviewer, no refusal counted
-        if turn < Swift.min(Self.reviewMinTurn, loop.timeout) {
+            let turn = await turn()
+            // T1 f2fix8: the copy ate the budget: no reviewer, no refusal counted
+            if turn < Swift.min(Self.reviewMinTurn, loop.timeout) {
+                for case let s? in scratch { Self.dropScratch(s) }
+                return nil
+            }
+            let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
+                for (i, p) in personas.enumerated() {
+                    let model = loop.reviewerModel ?? p.model ?? loop.model
+                    let as_ = { var l = loop; l.model = model; return l }()
+                    // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
+                    let nonce = ReviewPrompt.newNonce()
+                    let snapshot = snapshots[i], snapshotFailed = snapshotWhy[i]
+                    let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce,
+                                                    snapshot: snapshot?.path)
+                    let name = Self.reviewerName(agent, persona: p.name), cwd = snapshot == nil ? nil : scratch[i]
+                    g.addTask {
+                        var id: UUID?
+                        var verdict = Self.mute(p.name, .summonRefused("pasta do revisor não criada"))
+                        if let silenced { verdict.invalid = "revisor \(p.name) mudo: \(silenced)" }
+                        if let why = snapshotFailed { verdict.invalid = "revisor \(p.name) mudo: \(why)" }
+                        // P1: which of the four ways the reviewer said nothing
+                        do throws(ProtocolError) {
+                            guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
+                            // F2 X5: no time left to answer in: mute, and no terminal summoned for nothing
+                            guard turn > 0 else { verdict = Self.mute(p.name, .timedOut(turn)); throw ProtocolError(code: .timeout, message: "no turn left") }
+                            let t: UUID
+                            do throws(ProtocolError) {
+                                t = try await AgentNaming.summon(name, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
+                                    try await host.summonReviewer(name: x, for: work, loop: as_, cwd: cwd)
+                                }
+                            } catch { verdict = Self.mute(p.name, .summonRefused(error.message)); throw error }
+                            id = t
+                            let text: String
+                            do throws(ProtocolError) { text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn)) } catch {
+                                verdict = Self.mute(p.name, error.code == .timeout ? .timedOut(turn) : .terminalGone); throw error
+                            }
+                            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = Self.mute(p.name, .emptyText) }
+                            else { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce, lineCounts: lineCounts) }
+                        } catch {}
+                        return (i, PersonaRun(persona: p.name, model: model, approved: verdict.approved, invalid: verdict.invalid, findings: verdict.findings), id)
+                    }
+                }
+                var all: [(Int, PersonaRun, UUID?)] = []
+                for await r in g { all.append(r) }
+                return all.sorted { $0.0 < $1.0 }
+            }
+            // every reviewer goes, whatever it answered, before the machine moves on
+            for case let (_, _, id?) in runs { await host.dismiss(id) }
+            // nothing above throws: the folders go whatever happened, a cancelled loop included
             for case let s? in scratch { Self.dropScratch(s) }
-            return budgetOut
+            return (runs, skipped)
         }
-        let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
-            for (i, p) in personas.enumerated() {
-                let model = loop.reviewerModel ?? p.model ?? loop.model
-                let as_ = { var l = loop; l.model = model; return l }()
-                // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
-                let nonce = ReviewPrompt.newNonce()
-                let snapshot = snapshots[i], snapshotFailed = snapshotWhy[i]
-                let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce,
-                                                snapshot: snapshot?.path)
-                let name = Self.reviewerName(agent, persona: p.name), cwd = snapshot == nil ? nil : scratch[i]
-                g.addTask {
-                    var id: UUID?
-                    var verdict = Self.mute(p.name)
-                    if let silenced { verdict.invalid = "revisor \(p.name) mudo: \(silenced)" }
-                    if let why = snapshotFailed { verdict.invalid = "revisor \(p.name) mudo: \(why)" }
-                    do {
-                        guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
-                        // F2 X5: no time left to answer in: mute, and no terminal summoned for nothing
-                        guard turn > 0 else { throw ProtocolError(code: .timeout, message: "no turn left") }
-                        let t = try await AgentNaming.summon(name, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
-                            try await host.summonReviewer(name: x, for: work, loop: as_, cwd: cwd)
-                        }
-                        id = t
-                        let text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn))
-                        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { verdict = ReviewVerdict.parse(text, persona: p.name, nonce: nonce, lineCounts: lineCounts) }
-                    } catch {}
-                    return (i, PersonaRun(persona: p.name, model: model, approved: verdict.approved, invalid: verdict.invalid, findings: verdict.findings), id)
-                }
-            }
-            var all: [(Int, PersonaRun, UUID?)] = []
-            for await r in g { all.append(r) }
-            return all.sorted { $0.0 < $1.0 }
+        guard let first = await round() else { return budgetOut }
+        var runs = first.runs, skipped = first.skipped
+        // P1: each mute persona's cause in the journal
+        var events: [LoopEvent] = []
+        func journal(_ rs: [(Int, PersonaRun, UUID?)]) {
+            for r in rs { if let why = r.1.invalid { events.append(entry(.reviewerMute, task: task.id, attempt: n, detail: why)) } }
         }
-        // every reviewer goes, whatever it answered, before the machine moves on
-        for case let (_, _, id?) in runs { await host.dismiss(id) }
-        // nothing above throws: the folders go whatever happened, a cancelled loop included
-        for case let s? in scratch { Self.dropScratch(s) }
+        journal(runs)
+        // P1: every persona mute (none deliberately silenced: a retry would be mute the same way) is asked again, once,
+        // with fresh reviewers and folders, inside the budget; some mute is a note per persona, no retry
+        var firstRound = ""
+        if silenced == nil, !runs.isEmpty, runs.allSatisfy({ $0.1.invalid != nil }), !Task.isCancelled {
+            events.append(entry(.reviewRetried, task: task.id, attempt: n, detail: Self.reviewRetryNote))
+            firstRound = "\n1ª rodada (\(Self.reviewRetryNote)): " + runs.compactMap(\.1.invalid).joined(separator: "; ")
+            if let again = await round() { (runs, skipped) = again; journal(runs) }
+            else { firstRound += " (repetição sem orçamento)" }
+        }
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
         let outcome = ReviewVerdict.aggregate(verdicts, threshold: loop.reviewThreshold)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }
@@ -640,8 +688,8 @@ extension WorkLoop {
         let left = skipped.isEmpty ? "" : "\ncópia sem \(skipped.count) arquivo(s) acima do limite de tamanho: " + skipped.prefix(10).joined(separator: ", ")
             + (skipped.count > 10 ? ", …" : "")
         let note = LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
-            + "\n" + each.joined(separator: "\n") + left)
-        return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)))
+            + "\n" + each.joined(separator: "\n") + firstRound + left)
+        return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)), events: events)
     }
 
     /// The evidence of the review: `<patchDir>/evidence/<task>-revisao/tentativa-<n>.json`, per persona its model,

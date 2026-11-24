@@ -55,7 +55,12 @@ extension CommandRouter {
             guard let state = str(r, "state"), state == "on" || state == "off" else {
                 throw ProtocolError(code: .invalidArgs, message: "state must be on|off")
             }
-            if state == "on", let why = FactoryDoctorReader.factoryRefusal(root: URL(fileURLWithPath: f.path)) { throw Self.factoryRefused(why) }
+            if state == "on" {
+                // B1: the loop reads the profile at HEAD; a worktree's file that differs from it (or is not committed) refuses,
+                // so the doctor's verdict over the tree is the verdict over HEAD. A folder paddock runs no loop: its tree
+                if !f.isFolder, let why = await Self.factoryDirty(URL(fileURLWithPath: f.path)) { throw Self.factoryRefused(why) }
+                if let why = FactoryDoctorReader.factoryRefusal(root: URL(fileURLWithPath: f.path)) { throw Self.factoryRefused(why) }
+            }
             return try isoJSON(try await setFactory(f.id, state == "on"))
         case "paddock.status":
             var f = try findPaddock(try need(r, "name"))
@@ -165,6 +170,15 @@ extension CommandRouter {
     static let factoryOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente")
     static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
 
+    /// B1: why the worktree's `collie-work.json` is not HEAD's, in one line; nil: it is (or git says so).
+    static func factoryDirty(_ dir: URL) async -> String? {
+        let name = ProjectWorkConfig.fileName
+        guard let st = try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", name], in: dir, timeout: .seconds(30)),
+              st.status == 0 else { return "\(name) não pôde ser comparado com o commit HEAD (git status falhou)" }
+        return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil
+            : "\(name) difere do commit HEAD (o que o laço lê); próxima ação: commite ou descarte a mudança e ligue de novo"
+    }
+
     /// A2: marks (or unmarks) the paddock cercado fábrica, saved and told to the app.
     func setFactory(_ id: UUID, _ on: Bool) async throws -> Paddock {
         guard let i = ws.paddocks.firstIndex(where: { $0.id == id }) else { throw ProtocolError(code: .notFound, message: "Paddock not found") }
@@ -219,6 +233,7 @@ public enum PaddockText {
         func str(_ k: String) -> String { if case .string(let s)? = o[k] { s } else { "" } }
         var l = str("name") + (o["factory"] == .bool(true) ? " (fábrica)" : "") + "\t" + str("status")
         if case .string(let b)? = o["branch"], !b.isEmpty { l += "\t" + b }
+        if case .string(let x)? = o["path"], !x.isEmpty { l += "\t" + x }   // B1: docs/referencia.md promises the paths
         if case .string(let x)? = o["loops"] { l += "\t" + x }
         return l
     }

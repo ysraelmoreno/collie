@@ -121,7 +121,14 @@ actor LoopFakeHost: LoopHost {
     /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
     var reviewTimeouts: Set<String> = []
     func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    /// P1: answers (by name or persona) taken one per ask, before `reviewAnswers` (a retried review gets the next one).
+    var reviewAnswerQueue: [String: [String?]] = [:]
+    func queueReviewAnswers(_ who: String, _ texts: [String?]) { reviewAnswerQueue[who] = texts }
+    /// P1: reviewers (by name) whose summon the router refuses.
+    var reviewSummonRefusals: Set<String> = []
+    func refuseReviewSummon(_ name: String) { reviewSummonRefusals.insert(name) }
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        if reviewSummonRefusals.contains(name) { throw ProtocolError(code: .unavailable, message: "sem vaga\u{1b}[31m") }
         let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
         events.append("reviewer \(name)")
         reviewerModels[name] = loop.model ?? "-"
@@ -152,6 +159,12 @@ actor LoopFakeHost: LoopHost {
         if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
         let nonce = Self.nonce(in: prompt)
+        let queued = reviewAnswerQueue[name] != nil ? name : persona
+        if var q = reviewAnswerQueue[queued], !q.isEmpty {
+            let next = q.removeFirst(); reviewAnswerQueue[queued] = q
+            guard let next else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+            return next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? next : prompt + "\n" + next.replacingOccurrences(of: "<NONCE>", with: nonce)
+        }
         guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {
             return prompt + "\n" + ReviewPrompt.endMarker(nonce) + "\n" + #"{"persona":"\#(persona)","nonce":"\#(nonce)","verdict":"approve","findings":[]}"#
         }
@@ -180,6 +193,8 @@ actor LoopFakeHost: LoopHost {
             do { try await s.prechecked(dir) } catch { Issue.record("prechecked \(name): \(error)") }
             return s.source
         }
+        // P2: an ask that never reached the agent (one per ask, before the script; the name is the same after a retry)
+        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); throw e }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -191,6 +206,13 @@ actor LoopFakeHost: LoopHost {
         return s.source
     }
     var nudges: [(name: String, prompt: String, timeout: Duration)] = []
+    /// P2: errors the attempt's ask throws (by name, one per ask) before its script runs, and who got one.
+    var askErrors: [String: [ProtocolError]] = [:], notDelivered: [String] = []
+    func queueAskErrors(_ name: String, _ e: [ProtocolError]) { askErrors[name] = e }
+    /// P2: each agent's screen (by name), as `screen` reads it.
+    var screens: [String: [String]] = [:]
+    func setScreen(_ name: String, _ lines: [String]) { screens[name] = lines }
+    func screen(_ terminal: UUID) async -> [String]? { screens[names[terminal] ?? ""] }
     var precheckNudges: [(name: String, prompt: String)] = []
     /// M2.0: the agents (by name) whose prompt had its Enter sent again.
     var resubmits: Set<String> = []
@@ -325,7 +347,7 @@ struct LoopRig {
         try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
-                        notices: LoopNotices(window: noticeWindow))
+                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }

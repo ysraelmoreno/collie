@@ -94,7 +94,7 @@ private let paths: [Path] = [
         Step(.settled(moved: false, reset: false), .deciding, verdict("check could not run: x", then: .awaitOthers)),
     ]),
     Path(name: "turn timed out: not a failure by itself, the check runs", steps: Array(turn.prefix(2)) + [
-        Step(.turnTimedOut, .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
+        Step(.turnTimedOut(""), .waitingCommit, [.journal(.turnEnded, "timeout"), .lookForCommit]),
         Step(.waitExpired, .waitingCommit, [.dismiss, .journal(.agentDismissed, nil), .measureFacts]),
         measured(committed: false),
         Step(.checkDone(status: 0, broken: nil), .checking, [.journal(.checkFinished, "exit 0"), .awaitOthers]),
@@ -364,7 +364,7 @@ private func alongTheHappyPath() -> [M.State] { along(happy) }
     /// M1b.1: the state stays, and the interpreter is told (`fault`) instead of nothing.
     @Test func anEventOfAnotherPhaseChangesNothing() {
         let states = alongTheHappyPath()
-        let strays: [M.Event] = [.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut, .usageLimit("x")]
+        let strays: [M.Event] = [.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut(""), .usageLimit("x")]
         for s in states where s.phase == .checking {
             for e in strays {
                 let (next, fx) = M.reduce(s, e)

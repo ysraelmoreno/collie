@@ -143,6 +143,7 @@ enum MCPServer {
         guard let command = Commands.all.first(where: { $0.mcpName == name })?.name else {
             return content("invalidArgs: unknown tool '\(name)'", isError: true)
         }
+        if let why = MCPSchema.refusal(command: command, args: args) { return content("invalidArgs: " + why, isError: true) }
         do {
             let result = try await Client.call(command, args)
             if case .object(let r) = result, case .string(let out)? = r["output"] {

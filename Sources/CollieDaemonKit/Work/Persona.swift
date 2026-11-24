@@ -83,7 +83,8 @@ struct PersonaRouter: Sendable {
     /// `diffText`: the diff itself, only read for the async/await/Task rule. `requested` (the task's explicit list)
     /// wins over the rules but must name catalog personas; `correcao` is never cut, by either path.
     /// `specs`: the repo-relative spec paths of the work's tasks. A1 `only` (`factory.review.personas`): the "auto"
-    /// choice keeps only these names (an explicit `requested` wins over it); `correcao` still stays.
+    /// choice keeps only these names (an explicit `requested` wins over it); `correcao` still stays, and so does `seguranca`
+    /// when the X4 rule calls it (B1).
     func select(changedPaths: [String], diffLines: Int, diffText: String = "", requested: [String]? = nil,
                 max: Int = 4, specs: [String] = [], only: [String]? = nil) throws -> [Persona] {
         let byName = Dictionary(catalog.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
@@ -92,16 +93,19 @@ struct PersonaRouter: Sendable {
             if let unknown = requested.first(where: { byName[$0] == nil }) { throw PersonaError.unknown(name: unknown) }
             names = Set(requested)
         } else {
+            // B1: X4 (what judges the next attempts) keeps `seguranca` past `only`, as `correcao` is kept
+            let x4 = Self.matches([Self.personasGlob], any: changedPaths) || changedPaths.contains { specs.contains($0) }
             names = Set(catalog.filter { persona in
                 switch persona.name {
                 case Self.always: true
                 case Self.bigDiff: diffLines > Self.bigDiffLines
                 case Self.concurrency: Self.usesConcurrency(diffText) || Self.matches(persona.paths, any: changedPaths)
-                case Self.security: Self.matches(persona.paths + [Self.personasGlob], any: changedPaths) || changedPaths.contains { specs.contains($0) }
+                case Self.security: x4 || Self.matches(persona.paths, any: changedPaths)
                 default: Self.matches(persona.paths, any: changedPaths)
                 }
             }.map(\.name))
             if let only, !only.isEmpty { names.formIntersection(only) }
+            if x4, byName[Self.security] != nil { names.insert(Self.security) }
         }
         if byName[Self.always] != nil { names.insert(Self.always) }
         let ordered = names.sorted { Self.rank($0) == Self.rank($1) ? $0 < $1 : Self.rank($0) < Self.rank($1) }

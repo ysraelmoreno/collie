@@ -20,7 +20,11 @@ enum AttemptMachine {
         /// M2.2a: the attempt starts on a commit that is already there (a fallen daemon's agent made it): no agent.
         case adopted
         case summoned(UUID), summonFailed(String)
-        case turnEnded(source: AskResult.Source), turnTimedOut, turnFailed(String)
+        /// P2: `turnTimedOut` carries the error's message (the journal's detail).
+        case turnEnded(source: AskResult.Source), turnTimedOut(String), turnFailed(String)
+        /// P2: the ask timed out before its prompt reached the agent (`AskCoordinator.promptNotDelivered`): the message,
+        /// and the machine's load average then (for the owner's note when the free retries are spent).
+        case promptNotDelivered(String, load: Double)
         /// M5.3: the agent sits in the model's usage-limit dialog (its text, short: `UsageLimit.excerpt`).
         case usageLimit(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
@@ -60,6 +64,9 @@ enum AttemptMachine {
         case precheckNudge(String)
         /// M10.2: the work's `--precheck`, its own time limit: `precheckDone`.
         case runPrecheck
+        /// P2: the initial prompt was not delivered: the attempt is redone with a new agent, not counted. Waits the
+        /// retry's back-off and adds one to the TASK's free retries (`detail`: the journal's `promptRetry`). No event.
+        case promptRetry(String)
         /// `waitForCommit` waits for a commit first (an `.idle` end); both then look once: `commitSeen` or `waitExpired`.
         case waitForCommit, lookForCommit
         case dismiss
@@ -94,7 +101,7 @@ enum AttemptMachine {
         var answers: Bool {
             switch self {
             case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .runReview, .decide: true
-            case .dismiss, .show, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
+            case .dismiss, .show, .promptRetry, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
     }
@@ -119,10 +126,14 @@ enum AttemptMachine {
         let name: String
         /// F2 R3: the review by personas is on: an attempt that would pass goes to `reviewing` first.
         let reviewer: Bool
+        /// P2: the free retries the TASK already spent (a prompt not delivered), across its attempts: at most
+        /// `maxPromptRetries`; past them a prompt not delivered is a turn timed out, as before.
+        var promptRetries: Int
 
         init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil, precheck: Bool = false,
-             reviewer: Bool = false, reviewRejectsInRow: Int = 0) {
+             reviewer: Bool = false, reviewRejectsInRow: Int = 0, promptRetries: Int = 0) {
             self.task = task; self.n = n; self.before = before; judged = before; hasPrecheck = precheck; self.reviewer = reviewer
+            self.promptRetries = promptRetries
             self.name = name ?? AgentNaming.name(work: "", task: "", taskId: task, attempt: n, lane: nil)
             facts = .init(attempt: n, tries: tries, hasGate: hasGate)
             facts.reviewRejectsInRow = reviewRejectsInRow
@@ -154,10 +165,24 @@ enum AttemptMachine {
         case (.turn, .turnEnded(let source)):
             s.phase = .waitingCommit; s.nudgeable = source == .hook && !s.nudged
             return (s, [.journal(.turnEnded, source.rawValue), source == .idle ? .waitForCommit : .lookForCommit])
-        case (.turn, .turnTimedOut):
+        case (.turn, .turnTimedOut(let message)):
             // a turn past its timeout is not a failure by itself: the check decides
             s.phase = .waitingCommit
-            return (s, [.journal(.turnEnded, "timeout"), .lookForCommit])
+            return (s, [.journal(.turnEnded, timeoutDetail(message)), .lookForCommit])
+        // P2: the attempt's INITIAL prompt never reached the agent: nothing was tried, so the agent goes and the same
+        // attempt starts over with a new one, not counted, at most `maxPromptRetries` times per task. A nudge's prompt
+        // not delivered is not this: its agent already worked a turn, the check decides as for any timeout
+        case (.turn, .promptNotDelivered(let message, let load)) where s.agent != nil && !s.nudged && !s.prechecked:
+            guard s.promptRetries < maxPromptRetries else {
+                s.phase = .waitingCommit
+                return (s, [.journal(.turnEnded, timeoutDetail(message)), .note(overloadNote(s, load)), .lookForCommit])
+            }
+            s.promptRetries += 1; s.agent = nil; s.phase = .summoning
+            return (s, [.journal(.turnEnded, timeoutDetail(message)), .dismiss, .journal(.agentDismissed, nil),
+                        .journal(.promptRetry, "\(s.promptRetries)/\(maxPromptRetries)"), .promptRetry("\(s.promptRetries)/\(maxPromptRetries)"), .summon])
+        case (.turn, .promptNotDelivered(let message, _)):
+            s.phase = .waitingCommit
+            return (s, [.journal(.turnEnded, timeoutDetail(message)), .lookForCommit])
         // M5.3: the turn would only end at its timeout and the next attempts would hit the same limit: not counted,
         // nothing discarded (as a cancel), the loop stops and says what to do
         case (.turn, .usageLimit(let text)) where s.agent != nil:
@@ -277,6 +302,19 @@ enum AttemptMachine {
         default:
             return stray(s, e)   // not this phase's event: it never should have come
         }
+    }
+
+    /// P2: free retries (a prompt not delivered) per task; the next one counts as a normal attempt.
+    static let maxPromptRetries = 2
+
+    /// P2: the journal's `turnEnded` detail of a timeout: its message, clean, at most 120 characters.
+    static func timeoutDetail(_ message: String) -> String {
+        message.isEmpty ? "timeout" : "timeout: " + String(WorkLoop.eventDetail(message).prefix(120))
+    }
+
+    /// P2: the task spent its free retries and its prompt was not delivered again: load is the likely cause.
+    static func overloadNote(_ s: State, _ load: Double) -> String {
+        "[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue \(maxPromptRetries + 1) vezes seguidas; a máquina está sobrecarregada? (load average \(String(format: "%.2f", load)))"
     }
 
     /// Nothing changes and the interpreter is told (`fault`): the pair, without the event's payload (it may be the

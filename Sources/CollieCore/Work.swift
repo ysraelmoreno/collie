@@ -52,6 +52,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// F2 R4: the last review of the task, as the summary shows it ("parecer: sem veto (personas: a, b; 2 achados)"),
     /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
     public var review: String?; public var reviewRejects: Int?
+    /// P2: the free retries the loop spent on this task because an attempt's prompt was not delivered (nil: none).
+    public var promptRetries: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -90,6 +92,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
         model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
         review = (try? c.decodeIfPresent(String.self, forKey: .review)) ?? nil   // F2 R4: tolerant too
         reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
+        promptRetries = (try? c.decodeIfPresent(Int.self, forKey: .promptRetries)) ?? nil   // P2: tolerant too
     }
 }
 
@@ -146,6 +149,11 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case integrated, integrationRetry
         /// M10.2: the work's `--precheck` failed / passed at the end of a turn (detail: `exit n` or `timeout`).
         case precheckFailed, precheckPassed
+        /// P1: a persona gave no review answer (detail: why) / every persona did and the review ran once more (detail: that).
+        case reviewerMute, reviewRetried
+        /// P2: the attempt's prompt was not delivered and the attempt starts over with a new agent, not counted (detail:
+        /// the task's free retries used, `n/2`).
+        case promptRetry
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

@@ -85,11 +85,17 @@ struct PaddockRail: View {
                     // the sidebar-colored disc keeps the dot readable over the accent fill
                     if let f { PaddockStatusDot(status: f.status).padding(2).background(Color.collieSidebar, in: .circle).offset(x: 3, y: 3) }
                 }
+                .overlay(alignment: .topTrailing) {   // A3: a discreet "F" on a factory paddock (the label says it in words)
+                    if let f, FactorySwitch.badge(f) != nil {
+                        Text("F").font(.collieMono(8, .bold)).foregroundStyle(Color.collieMuted)
+                            .padding(2).background(Color.collieSidebar, in: .circle).offset(x: 3, y: -3).accessibilityHidden(true)
+                    }
+                }
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .help(f.map { "\($0.name) · \($0.status.label)" } ?? name)
-        .accessibilityLabel(name)
+        .accessibilityLabel(f.flatMap(FactorySwitch.badge).map { "\(name), \($0)" } ?? name)
         .accessibilityValue(f?.status.label ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }

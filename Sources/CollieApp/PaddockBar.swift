@@ -28,11 +28,13 @@ extension LandMode {
     var label: String { switch self { case .merge: "Merge"; case .squash: "Squash"; case .rebase: "Rebase"; case .pr: "Abrir PR" } }
 }
 
-/// The "Novo cercado" sheet: a name and a folder; a git folder offers isolating the paddock in a worktree (on by default).
+/// The "Novo cercado" sheet: a name and a folder; a git folder offers isolating the paddock in a worktree (on by default)
+/// and creating it cercado fábrica (A3, off by default; never off a non-git folder).
 struct NewPaddockForm: Equatable {
     var name = ""
-    var folder: String? { didSet { isGit = folder.map { Self.isGit($0) } ?? false } }
+    var folder: String? { didSet { isGit = folder.map { Self.isGit($0) } ?? false; if !isGit { factory = false } } }
     var isolate = true
+    var factory = false { didSet { if !isGit { factory = false } } }
     private(set) var isGit = false
     init(folder: String? = nil) { self.folder = folder; isGit = folder.map { Self.isGit($0) } ?? false }
     var slug: String? { PaddockName.slug(name) }
@@ -66,7 +68,45 @@ struct NewPaddockForm: Equatable {
     var choosingStatus: Paddock?   // the palette's status dialog
     var choosingLand: Paddock?     // the palette's land dialog
 
-    init(client: DaemonClient) { self.client = client }
+    /// A3: per paddock, the daemon's refusal of the last Fábrica switch, word for word (shown under the switch, never an alert).
+    var factoryRefusal: [UUID: String] = [:]
+    /// A3: per factory paddock, the doctor's layers, one line each (or why there is none).
+    var factoryNote: [UUID: [String]] = [:]
+    /// The daemon side of the switch (`paddock factory <name> on|off`); tests swap it.
+    var factoryCall: @MainActor (String, Bool) async throws -> Void
+
+    init(client: DaemonClient) {
+        self.client = client
+        factoryCall = { [client] name, on in try await client.setPaddockFactory(name, on) }
+    }
+
+    /// A3: the Fábrica switch and the paddock menu's "Ligar/Desligar fábrica". The new state reaches the UI through the
+    /// paddock event, as any other paddock change.
+    @discardableResult
+    func setFactory(_ f: Paddock, _ on: Bool) -> Task<Void, Never> {
+        factoryRefusal[f.id] = nil
+        return run { [self] in try await factoryCall(f.name, on) } onError: { [self] m in
+            message = nil   // shown under the switch instead
+            factoryRefusal[f.id] = m
+        }
+    }
+
+    /// A3: the doctor's note of a factory paddock. The daemon reads the project through a terminal of the paddock; with
+    /// none open, the note says so (no engine change for a terminal-less doctor).
+    func loadFactoryNote(_ f: Paddock) async {
+        guard let t = client.terminals.first(where: { $0.paddockId == f.id }) else {
+            factoryNote[f.id] = ["Abra um terminal no cercado para ver a nota do doctor."]
+            return
+        }
+        do { factoryNote[f.id] = Self.noteLines(try await client.factoryDoctor(terminal: t.name)) }
+        catch let e as ProtocolError { factoryNote[f.id] = [e.message] }
+        catch { factoryNote[f.id] = ["\(error)"] }
+    }
+
+    /// One line per layer: "static 2/3 OK".
+    static func noteLines(_ r: FactoryDoctor.Report) -> [String] {
+        r.layers.map { "\($0.layer.rawValue) \($0.score)/3 \($0.rating.rawValue)" }
+    }
 
     func select(_ id: UUID?) {
         client.currentPaddock = id
@@ -100,7 +140,7 @@ struct NewPaddockForm: Equatable {
         UserDefaults.standard.set(folder, forKey: Self.repoKey)
         newForm = nil
         run { [self] in
-            try await client.createPaddock(name: name, folder: folder, worktree: form.worktree)
+            try await client.createPaddock(name: name, folder: folder, worktree: form.worktree, factory: form.factory)
             if let f = client.paddocks.first(where: { $0.name == name }) { select(f.id) }
         }
     }
@@ -127,10 +167,12 @@ struct NewPaddockForm: Equatable {
         }
     }
 
-    /// Runs a daemon call off the click; failures (land conflicts included) go to the alert.
-    func run(_ op: @escaping @MainActor () async throws -> Void, onError: (@MainActor (String) -> Void)? = nil) {
+    /// Runs a daemon call off the click; failures (land conflicts included) go to the alert. The task is returned so a
+    /// caller (a test) can await its end.
+    @discardableResult
+    func run(_ op: @escaping @MainActor () async throws -> Void, onError: (@MainActor (String) -> Void)? = nil) -> Task<Void, Never> {
         running += 1
-        Task {
+        return Task {
             defer { running -= 1 }
             do { try await op() }
             catch let e as ProtocolError { message = e.message; onError?(e.message) }
@@ -139,7 +181,20 @@ struct NewPaddockForm: Equatable {
     }
 }
 
-/// A paddock's menu items (Status, Land, Excluir…), for a `Menu` or a `contextMenu`.
+/// A3: the Fábrica switch's state, out of SwiftUI. `label` is the action a click takes (also the paddock menu's item);
+/// disabled while a daemon call runs; `refusal` is the daemon's text whole; `note` only while on.
+struct FactorySwitch: Equatable {
+    var isOn: Bool, label: String, enabled: Bool, refusal: String?, note: [String]
+
+    static func make(_ p: Paddock, busy: Bool, refusal: String?, note: [String]?) -> FactorySwitch {
+        FactorySwitch(isOn: p.factory, label: label(p), enabled: !busy, refusal: refusal, note: p.factory ? note ?? [] : [])
+    }
+    static func label(_ p: Paddock) -> String { p.factory ? "Desligar fábrica" : "Ligar fábrica" }
+    /// The rail's badge and its accessibility text; nil for a plain paddock.
+    static func badge(_ p: Paddock) -> String? { p.factory ? "cercado fábrica" : nil }
+}
+
+/// A paddock's menu items (Status, Land, Ligar/Desligar fábrica, Excluir…), for a `Menu` or a `contextMenu`.
 struct PaddockMenu: View {
     let paddock: Paddock
     let actions: PaddockActions
@@ -155,6 +210,7 @@ struct PaddockMenu: View {
                 ForEach(LandMode.menuOrder, id: \.self) { m in Button(m.label) { actions.land(paddock, m) } }
             }.disabled(actions.busy)
         }
+        Button(FactorySwitch.label(paddock)) { actions.setFactory(paddock, !paddock.factory) }.disabled(actions.busy)
         Divider()
         Button("Excluir…") { actions.askDelete(paddock) }.disabled(actions.busy)
     }
@@ -219,6 +275,8 @@ private struct PaddockDialogs: ViewModifier {
             }
             if form.folder != nil {
                 Toggle("Isolar numa branch (worktree)", isOn: Binding(get: { form.worktree }, set: { actions.newForm?.isolate = $0 }))
+                    .disabled(!form.isGit)
+                Toggle("Cercado fábrica", isOn: Binding(get: { form.factory }, set: { actions.newForm?.factory = $0 }))
                     .disabled(!form.isGit)
                 if !form.isGit {
                     Text("A pasta não é um repositório git: o cercado trabalha nela direto.")

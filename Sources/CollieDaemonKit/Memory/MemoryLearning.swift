@@ -78,6 +78,19 @@ enum MemoryLearning {
         return l.joined(separator: "\n")
     }
 
+    /// True when `texts` cite file paths and every one is under a `.collie/` folder (scratch of the worktree, not the repo).
+    /// A path: a token with a `/` whose last piece has an extension (or starts with `.`); `.collie/…` or `…/.collie/…`.
+    static func onlyScratchPaths(_ texts: [String]) -> Bool {
+        let seps = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'`()[]<>,;:"))
+        var paths: [String] = []
+        for t in texts.joined(separator: " ").components(separatedBy: seps) {
+            let tok = t.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            guard tok.contains("/"), let last = tok.split(separator: "/").last, last.contains(".") || t.hasPrefix(".") else { continue }
+            paths.append(t)
+        }
+        return !paths.isEmpty && paths.allSatisfy { $0.hasPrefix(".collie/") || $0.contains("/.collie/") }
+    }
+
     static func oneLine(_ s: String, max: Int) -> String {
         let l = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return l.count <= max ? l : String(l.prefix(max)) + "…"
@@ -91,7 +104,7 @@ extension CommandRouter {
     /// a pitfall or (a stated how-to) a procedure.
     static func correctionScope(_ p: CorrectionPayload) -> CuratorScope {
         CuratorScope(ids: Set(p.candidates.map(\.id) + (p.proposal.map { [$0] } ?? [])),
-                     scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback, .pitfall, .procedure], maxOps: 12)
+                     scopes: p.lot != nil ? [.lot, .project, .global] : [.project, .global], kinds: [.feedback, .pitfall, .procedure], maxOps: 12)   // a lot's `project` is written as `lot` (applyOps)
     }
 
     /// A flagged prompt → a queued curator job (deduped per family + prompt; ≤ 5 a terminal an hour). The quote waits as a
@@ -359,12 +372,14 @@ extension CommandRouter {
         if correction, let pid = ctx.proposal, let q = await find(pid), q.rec.status != .proposed { return [] }
 
         for case .create(let n) in ops where created == nil {
-            var target: RepoMemory, scope: MemoryScope
+            var target: RepoMemory, scope: MemoryScope, toLot = false
             let familyScope: MemoryScope = family.lotId != nil ? .lot : family === memory.global ? .global : .project
             switch n.scope {
             case .lot: guard family.lotId != nil else { continue }; target = family; scope = .lot
             case .global: target = memory.global; scope = .global
-            case .project, .paddock: guard family.lotId == nil else { continue }; target = family; scope = familyScope
+            case .project, .paddock:
+                // a lot's family has no project scope: the model's `project` is the lot's (the owner promotes it)
+                target = family; scope = familyScope; toLot = family.lotId != nil
             }
             var subject = n.subject, body = [n.body, [n.why.isEmpty ? nil : "Por quê: \(n.why)", n.howToApply.isEmpty ? nil : "Como aplicar: \(n.howToApply)",
                                  ctx.quote.map { "Citação: \"\($0)\"" }].compactMap { $0 }.joined(separator: "\n")]
@@ -380,11 +395,17 @@ extension CommandRouter {
             rec.curatedBy = curatedBy
             // a retry: already written (a confirmed likely-user proposal is written again, active)
             if let done = await find(job.id), !(ctx.user && done.rec.status == .proposed) { created = done.rec; touched.insert(done.rec.id); continue }
-            if correction && !ctx.user || limited {
+            // A7: only about scratch under `.collie/` (a throwaway file of a batch): the user decides, never active
+            let scratch = MemoryLearning.onlyScratchPaths([n.title, body] + n.aliases)
+            if correction && !ctx.user || limited || scratch {
                 rec.status = .proposed   // R12: not proven the user's (or a limited curator's): the user approves it in the panel
                 let r = rec
                 try await target.run { try $0.store.write(r) }
                 created = rec; touched.insert(rec.id)
+                if toLot || scratch, !(correction && !ctx.user || limited) {
+                    entry("aprendido", rec.title, scratch ? "só cita arquivos de .collie/: proposta, não ativa" : "escopo do lote, não do projeto",
+                          target, created: [rec.id], before: [])
+                }
                 continue
             }
             let old = await replaced(rec, in: target)
@@ -397,7 +418,7 @@ extension CommandRouter {
             created = saved
             touched.insert(saved.id)
             if let old { touched.insert(old.id) }
-            entry("aprendido", saved.title, ctx.name.map { "correção do usuário em \($0)" } ?? "proposta revisada", target,
+            entry("aprendido", saved.title, (ctx.name.map { "correção do usuário em \($0)" } ?? "proposta revisada") + (toLot ? " (escopo do lote, não do projeto)" : ""), target,
                   created: [saved.id], before: old.map { [$0] } ?? [])
         }
         if created != nil, let pid = ctx.proposal { touched.insert(pid) }   // the rule replaces the proposal: never two

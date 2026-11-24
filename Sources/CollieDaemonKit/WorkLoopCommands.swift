@@ -355,17 +355,23 @@ extension CommandRouter {
         func quoted(_ x: String) -> String {
             "«" + x.replacingOccurrences(of: "«", with: "‹").replacingOccurrences(of: "»", with: "›") + "»"
         }
+        var review = ""
+        if l.review == true {
+            let who: String = l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto"
+            let only: String = l.reviewOnly.map { " (só " + $0.map(quoted).joined(separator: " ") + ")" } ?? ""
+            let veto: String = l.reviewThreshold == "blocker" ? ", veto só por blocker" + file : ""
+            let model: String = l.reviewerModel.map { ", revisor " + quoted($0) } ?? ""
+            review = "revisão por personas: " + who + only + veto + model + ". "
+        } else if profileReviewOff {
+            review = "sem revisão: --no-review desliga a do perfil" + file + ". "
+        }
         var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
             + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
-            + (l.review == true ? "revisão por personas: \(l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto")"
-               + (l.reviewOnly.map { " (só " + $0.map(quoted).joined(separator: " ") + ")" } ?? "")
-               + (l.reviewThreshold == "blocker" ? ", veto só por blocker\(file)" : "")
-               + (l.reviewerModel.map { ", revisor \(quoted($0))" } ?? "") + ". "
-               : profileReviewOff ? "sem revisão: --no-review desliga a do perfil\(file). " : "")
+            + review
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {

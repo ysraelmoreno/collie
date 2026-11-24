@@ -254,10 +254,12 @@ public enum WorkStatusText {
     /// ", revisão …" for the trusted notice; "" with no review and no profile review turned off.
     static func reviewText(_ l: WorkLoopState, profileReviewOff: Bool) -> String {
         let file = " (\(ProjectWorkConfig.fileName))"
+        func names(_ xs: [String]) -> String { xs.map { "«" + RerailText.clean($0, max: 60) + "»" }.joined(separator: " ") }
         if l.review == true {
-            return ", revisão por personas: " + (l.personas.map { $0.map { "«\(RerailText.clean($0, max: 60))»" }.joined(separator: " ") } ?? "auto")
-                + (l.reviewOnly.map { " (só " + $0.map { "«\(RerailText.clean($0, max: 60))»" }.joined(separator: " ") + ")" } ?? "")
-                + (l.reviewThreshold == "blocker" ? ", veto só por blocker\(file)" : "")
+            let who: String = l.personas.map(names) ?? "auto"
+            let only: String = l.reviewOnly.map { " (só " + names($0) + ")" } ?? ""
+            let veto: String = l.reviewThreshold == "blocker" ? ", veto só por blocker" + file : ""
+            return ", revisão por personas: " + who + only + veto
         }
         return profileReviewOff ? ", sem revisão: --no-review desliga a do perfil\(file)" : ""
     }

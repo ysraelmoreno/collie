@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "gate": "scripts/ci/lint.sh && scripts/ci/check-architecture.sh",
+  "smoke": "swift test --disable-sandbox --skip MemoryEventEmissionTests --filter WorkLoopTests --filter AttemptMachineTests --filter WorkStoreTests --filter LoopJournalTests --filter CommandsTests",
+  "areas": {
+    "work": "swift test --disable-sandbox --skip MemoryEventEmissionTests --filter WorkCommandTests --filter WorkLoopReviewTests --filter LaneHostTests",
+    "factory": "swift test --disable-sandbox --skip MemoryEventEmissionTests --filter FactoryDoctorTests --filter FactoryProfileTests --filter FactoryBaitTests --filter FactoryModelsTests --filter RatchetTests",
+    "ask": "swift test --disable-sandbox --skip MemoryEventEmissionTests --filter AskTests --filter AskClockTests"
+  },
+  "factory": {
+    "version": 1,
+    "static": {
+      "architecture": ["scripts/ci/check-architecture.sh"]
+    },
+    "review": {
+      "personas": ["correcao", "motor-concorrencia", "seguranca", "simplicidade", "testes"],
+      "threshold": "major",
+      "callOwner": true
+    },
+    "guardrails": {
+      "budgetSeconds": 14400,
+      "maxTries": 3,
+      "destructive": ["git push", "git reset --hard", "git clean", "rm -rf", "paddock land"],
+      "land": "manual"
+    },
+    "prose": {
+      "traps": ["07d5be97", "2f68ae8d", "d38f661a", "0d2e6e32", "1dcc610a", "33d74083"]
+    }
+  }
+}

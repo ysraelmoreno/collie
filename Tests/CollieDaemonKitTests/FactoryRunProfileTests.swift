@@ -42,6 +42,17 @@ private let profile = #"""
         #expect(try r.select(changedPaths: paths, diffLines: 10, requested: ["seguranca"], only: ["testes"]).map(\.name) == ["correcao", "seguranca"])
     }
 
+    @Test func onlyNeverCutsSegurancaWhenX4CallsIt() throws {
+        let catalog = [persona("correcao"), persona("testes", paths: ["Tests/**"]), persona("seguranca", paths: ["Sources/**"])]
+        let r = PersonaRouter(catalog: catalog)
+        let only = ["correcao", "testes"]
+        #expect(try r.select(changedPaths: ["docs/fabrica/personas/testes.md"], diffLines: 10, only: only).map(\.name) == ["correcao", "seguranca"])
+        #expect(try r.select(changedPaths: ["docs/spec.md", "Tests/A.swift"], diffLines: 10, specs: ["docs/spec.md"], only: only).map(\.name)
+                == ["correcao", "seguranca", "testes"])
+        // by its own globs only (no X4): the profile's list still cuts it
+        #expect(try r.select(changedPaths: ["Sources/B.swift"], diffLines: 10, only: only).map(\.name) == ["correcao"])
+    }
+
     @Test func thresholdBlockerDoesNotVetoAMajor() {
         let major = PersonaVerdict(persona: "testes", approved: false, findings: [ReviewFinding(severity: .major, file: "A.swift", line: 3, claim: "bug")])
         #expect(ReviewVerdict.aggregate([major]).approved == false)                          // today: a major vetoes

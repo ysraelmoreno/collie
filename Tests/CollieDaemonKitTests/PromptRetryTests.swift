@@ -165,7 +165,7 @@ extension WorkLoopTests {
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         #expect(w.loop?.stopReason?.code == .budgetSpent, "\(String(describing: w.loop?.stopReason))")
-        #expect(w.tasks[0].state == .open && w.tasks[0].tries == 0 && w.tasks[0].promptRetries == nil, "\(w.tasks[0])")
+        #expect(w.tasks[0].state == .open && (w.tasks[0].tries ?? 0) == 0 && w.tasks[0].promptRetries == nil, "\(w.tasks[0])")
         #expect(await r.host.summoned == ["w-task-a-t1"])
         #expect(!(w.loop?.events ?? []).contains { $0.kind == .promptRetry })
         #expect(w.notes.contains { $0.text.contains("não cabe outra tentativa") } && !w.notes.contains { $0.text.contains("sobrecarregada") }, "\(w.notes.map(\.text))")

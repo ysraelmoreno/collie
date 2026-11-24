@@ -92,9 +92,7 @@ extension CommandRouter {
         try refuseFreeSummoner(me)
         try reserve(name); defer { launching.remove(name.lowercased()) }
         // no preset: the Shepherd's own (with its command, for a custom one); a shell only when asked for
-        guard let preset = str(r, "preset").map({ Preset(rawValue: $0) }) ?? me.preset else {
-            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-        }
+        let preset = try str(r, "preset").map { try Preset.parse($0) } ?? me.preset
         let command = str(r, "command") ?? (str(r, "preset") == nil ? me.command : nil)
         let model = str(r, "model")
         if let model {
@@ -187,5 +185,15 @@ extension CommandRouter {
         }
         born = true
         return .object(result)
+    }
+}
+
+extension Preset {
+    /// The one validation of a preset's text: every command that takes `preset` goes through here.
+    static func parse(_ s: String) throws(ProtocolError) -> Preset {
+        guard let p = Preset(rawValue: s) else {
+            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
+        }
+        return p
     }
 }

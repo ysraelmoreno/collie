@@ -64,7 +64,7 @@ extension CommandRouter {
         guard dirty.isEmpty else { throw invalid("tracked files are dirty in paddock '\(paddock.name)'; commit or discard them first:\n\(dirty.prefix(500))") }
 
         // the summon's own checks run again per attempt; these only save three failed attempts
-        if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
+        if let p = str(r, "preset") { _ = try Preset.parse(p) }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
         let gateFlag = str(r, "gate")
@@ -79,7 +79,11 @@ extension CommandRouter {
         // M13.2: a flag left out takes the paddock's collie-work.json; no file or an invalid one: today's defaults (none),
         // and an invalid one a one-line warning in the reply, never a refusal. M13.3: the file as committed at HEAD now
         // (the loop's base), never the tree's: an agent's edit, committed or not, never picks the gate
-        let (fileConfig, fileWarning) = await Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        // A1: read always now (the `factory` block applies whatever the flags); its warnings only when a flag was left out,
+        // as before. An invalid `factory` is the one refusal, before the card.
+        let file = await Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        if let refusal = file.refusal { throw invalid(refusal) }
+        let fileConfig = file.config, factory = file.config?.factory
         let gate = gateFlag ?? fileConfig?.gate, precheck = precheckFlag ?? fileConfig?.precheck
         let from = (gate: gateFlag == nil && gate != nil, precheck: precheckFlag == nil && precheck != nil)
         // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
@@ -90,16 +94,37 @@ extension CommandRouter {
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
         let notify = try Self.loopNotify(str(r, "notify"))
-        let review = try await Self.loopReview(review: flag(r, "review"), personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
-        let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
+        // A1: an explicit flag wins over the profile, the profile over the engine's default
+        let reviewFlag = flag(r, "review"), noReview = flag(r, "no-review")
+        if reviewFlag && noReview { throw invalid("--review and --no-review together: choose one") }
+        let fromProfile = factory != nil && file.reviewPresent && !reviewFlag && !noReview
+        let review = try await Self.loopReview(review: reviewFlag || fromProfile, personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
+        let triesFlag = try num(r, "tries", max: Self.loopTriesMax), budgetFlag = try num(r, "budget", max: Self.loopBudgetMax)
+        // ponytail: the profile allows a budget up to 86400 s, the engine's ceiling is lower: capped, not refused
+        let profileBudget = factory?.budgetSeconds.map { min(Double($0), Self.loopBudgetMax) }
+        var loop = WorkLoopState(state: .running, tries: Int(triesFlag ?? factory?.maxTries.map(Double.init) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
                                  model: Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
-                                 max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
+                                 max: max, used: 0, budget: Int(budgetFlag ?? profileBudget ?? Self.loopBudgetDefault),
                                  spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck,
                                  review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel)
+        var warning = file.warning
+        if let factory {
+            func origin(_ flag: Bool, _ profile: Bool) -> String { flag ? "flag" : profile ? "perfil" : "padrão" }
+            loop.origins = ["review": origin(reviewFlag || noReview, file.reviewPresent), "budget": origin(budgetFlag != nil, profileBudget != nil),
+                            "tries": origin(triesFlag != nil, factory.maxTries != nil)]
+            if review.on, file.reviewPresent, review.personas == nil, !factory.personas.isEmpty { loop.reviewOnly = factory.personas }
+            if review.on, file.reviewPresent { loop.reviewThreshold = factory.threshold.rawValue }
+            if !factory.destructive.isEmpty { loop.destructive = factory.destructive.count }
+            // ponytail: no paddock carries the factory mark until A2/A4: factory-paddock is always only a warning here
+            if factory.land == .factoryPaddock {
+                let w = "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
+                warning = [warning, w].compactMap { $0 }.joined(separator: "; ")
+            }
+        }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -115,7 +140,7 @@ extension CommandRouter {
             started = true   // the reservation now belongs to the loop
             let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
-            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], fileWarning)
+            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], warning)
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
@@ -131,25 +156,35 @@ extension CommandRouter {
             }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
-        return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], fileWarning)
+        return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], warning)
     }
 
-    /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults, read only when a flag is left out. Never fails:
-    /// an absent file is nil with no warning, a refused or invalid one nil with its one-line warning. M13.3: read from
-    /// the commit at HEAD (`git show HEAD:collie-work.json`, by its sha), never from the working tree.
-    static func loopFileDefaults(_ dir: URL, needed: Bool) async -> (ProjectWorkConfig?, String?) {
-        guard needed else { return (nil, nil) }
+    /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
+    /// invalid one nil with its one-line warning (only when `needed`: a flag was left out). M13.3: read from the commit at
+    /// HEAD (by its sha), never from the working tree. A1: read always; an invalid `factory` is `refusal` (the strict
+    /// reader's line), never a warning; `reviewPresent`: the base's `factory` has a `review` key.
+    static func loopFileDefaults(_ dir: URL, needed: Bool) async -> (config: ProjectWorkConfig?, warning: String?, refusal: String?, reviewPresent: Bool) {
         let base = (try? await GitRunner.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], in: dir, timeout: .seconds(30)))?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // review A2: the loop reads the commit, so an edit or a new file the owner has not committed is not what runs
-        let dirty = (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
-                                              in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let dirty = needed ? (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
+                                                       in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" : ""
         let uncommitted = dirty.isEmpty ? nil : "aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas"
-        switch await WorkConfigFile.config(base: base, dir: dir) {
-        case .success(let c): return (c, uncommitted)
-        case .failure(let e):
-            return (nil, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
-                    + e.message.replacingOccurrences(of: "\n", with: " "))
+        func ignored(_ m: String) -> String? {
+            needed ? "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
+                + RerailText.clean(m, max: 300).replacingOccurrences(of: "\n", with: " ") : nil
+        }
+        switch await WorkConfigFile.read(base: base, dir: dir) {
+        case .absent: return (nil, uncommitted, nil, false)
+        case .refused(let m): return (nil, ignored(m), nil, false)
+        case .loaded(let d):
+            switch ProjectWorkConfig.parse(d) {
+            case .success(let ok):
+                let f = ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any])?["factory"] as? [String: Any]
+                return (ok.config, uncommitted, nil, f?["review"] != nil)
+            case .failure(.invalidFactory(let e)): return (nil, nil, RerailText.clean(e.message, max: 300).replacingOccurrences(of: "\n", with: " "), false)
+            case .failure(let e): return (nil, ignored(e.message), nil, false)
+            }
         }
     }
 

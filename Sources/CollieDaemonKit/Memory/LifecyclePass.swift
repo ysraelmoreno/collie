@@ -11,7 +11,7 @@ extension CommandRouter {
         guard let records = try? await store.run({ $0.store.all().records }) else { return }   // unreadable: nothing judged, nothing pruned
         // the user's kinds keep their entry and tag, but are never checked, archived or promoted automatically
         let eligible = records.filter { LifecycleRules.eligible($0) && !MemoryLearning.usersKind($0.kind) }
-        let day = { let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f.string(from: now) }()
+        let day = LifecycleRules.dayFormatter.string(from: now)
 
         // (1) migration: an eligible record with no entry starts provisional now (its clock starts here, not at createdAt);
         // (2) provisional → earned stored; a contested longTerm is never demoted on disk (`tier(for:)` reads it as earned

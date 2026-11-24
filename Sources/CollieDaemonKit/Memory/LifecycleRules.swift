@@ -87,7 +87,8 @@ enum LifecycleRules {
     private static func date(_ day: String) -> Date? {
         dayFormatter.date(from: day)
     }
-    nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {
+    /// The one `yyyy-MM-dd` formatter of the Memory module (lifecycle days, use keys).
+    nonisolated(unsafe) static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init
         let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
     }()
 }

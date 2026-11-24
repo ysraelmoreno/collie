@@ -45,6 +45,33 @@ enum FactoryDoctorReader {
         return .success(s)
     }
 
+    /// A2: why `root` cannot be marked cercado fábrica, in one line (the layer and the next action); nil: it can. The
+    /// doctor's core, read only: an invalid `collie-work.json`, or `static` or `judge` below 1, refuses.
+    static func factoryRefusal(root: URL) -> String? {
+        let snap: FactoryDoctor.Snapshot
+        switch snapshot(root: root) {
+        case .failure(let e):
+            return RerailText.clean("perfil inválido (\(e.message)); próxima ação: corrija collie-work.json (collie work config mostra o erro)", max: 400)
+        case .success(let s): snap = s
+        }
+        guard let low = FactoryDoctor.score(snap).layers.first(where: { ($0.layer == .static || $0.layer == .judge) && $0.score < 1 }) else { return nil }
+        let why = low.evidence.first.map { " (\($0))" } ?? ""
+        let next = low.nextAction.first ?? "rode collie factory doctor"
+        return RerailText.clean("camada \(low.layer.rawValue) \(low.score)/3\(why); próxima ação: \(next)", max: 400)   // repository text
+    }
+
+    /// A2: `factory doctor`'s lines on the mark: "cercado fábrica: sim/não" and, when the profile asks for
+    /// `land = factory-paddock` where there is no mark (or no paddock recognized), a warning; never an error.
+    static func factoryPaddockLines(_ paddock: Paddock?, land: FactoryProfile.Land?) -> [String] {
+        var out = ["cercado fábrica: \(paddock?.factory == true ? "sim" : "não")\(paddock == nil ? " (cercado não reconhecido)" : "")"]
+        if land == .factoryPaddock, paddock?.factory != true {
+            out.append(paddock == nil
+                ? "aviso: guardrails.land = factory-paddock, mas o cercado não foi reconhecido; o laço segue como 'manual'"
+                : "aviso: guardrails.land = factory-paddock, mas o cercado '\(paddock!.name)' não tem a marca; o dono liga com `collie paddock factory \(paddock!.name) on`")
+        }
+        return out
+    }
+
     static let maxBaitBytes = 1 << 20
 
     /// U4: `rel` as a regular file inside the root (no link, no `..`, at most 1 MB); nil when absent.
@@ -116,8 +143,10 @@ extension CommandRouter {
             r.layers[i].nextAction = r.layers[i].nextAction.map { RerailText.clean($0, max: 300) }
         }
         let report = (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(r))) ?? .null
-        return .object(["output": .string(FactoryDoctor.text(r, min: min)), "report": report,
-                        "passed": .bool(r.passes(min: min)), "min": .number(Double(min))])
+        let paddock = ws.paddocks.first { $0.id == t.paddockId }
+        let mark = FactoryDoctorReader.factoryPaddockLines(paddock, land: snap.config?.factory?.land)
+        return .object(["output": .string(FactoryDoctor.text(r, min: min) + "\n" + mark.joined(separator: "\n")), "report": report,
+                        "passed": .bool(r.passes(min: min)), "min": .number(Double(min)), "factoryPaddock": .bool(paddock?.factory == true)])
     }
 }
 

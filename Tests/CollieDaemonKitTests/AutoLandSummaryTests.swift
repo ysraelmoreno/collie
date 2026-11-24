@@ -120,13 +120,18 @@ import CollieProtocol
     @Test func anUnreadableRegistryStillTellsTheOwner() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await r.host.setSecrets(["vivo-xyz-987"])
-        try Data("{ quebrado".utf8).write(to: r.storeDir.appendingPathComponent("work.json"))
-        await r.loop.autoLandSummary(work: r.work, started: Date(), stop: .init(.landCiRed, detail: "vivo-xyz-987"), dir: r.repo, landing: true)
+        // a fresh store over a broken file (the rig's store keeps what it loaded): its `get` throws
+        let broken = URL(fileURLWithPath: "/tmp/collie-c2-store-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: broken) }
+        try Data("{ quebrado".utf8).write(to: broken.appendingPathComponent("work.json"))
+        let loop = WorkLoop(store: WorkStore(dir: broken), host: r.host)
+        await loop.autoLandSummary(work: r.work, started: Date(), stop: .init(.landCiRed, detail: "vivo-xyz-987"), dir: r.repo, landing: true)
         let notices = await r.host.ownerNotices
         #expect(notices.count == 1 && notices[0].contains("Resumo não gravado") && notices[0].contains("[landCiRed]"), "\(notices)")
         #expect(notices[0].contains(r.work.uuidString.prefix(8).lowercased()) && !notices[0].contains("vivo-xyz-987"), "\(notices)")
         // a run that was no auto-land's tells nothing
-        await r.loop.autoLandSummary(work: r.work, started: Date(), stop: nil, dir: r.repo)
+        await loop.autoLandSummary(work: r.work, started: Date(), stop: nil, dir: r.repo)
         #expect(await r.host.ownerNotices.count == 1)
     }
 

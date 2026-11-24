@@ -85,6 +85,27 @@ import CollieProtocol
         #expect(try await r.get().loop?.stopReason?.detail == "intruso")
     }
 
+    /// A `work stop` sent during the CI (which may take up to its timeout) wins: nothing lands.
+    @Test func aStopDuringTheCILandsNothing() async throws {
+        let r = try await Self.rig(ci: "echo ci"); defer { r.cleanup() }
+        let loop = r.loop, id = r.work
+        await r.host.setProbe { c in if c == "echo ci" { await loop.stop(work: id) } }
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .requested && w.loop?.autoLand?.after == nil)
+        #expect(await r.host.lands.isEmpty)
+    }
+
+    /// The work closed during the CI: nothing lands.
+    @Test func theWorkClosedDuringTheCILandsNothing() async throws {
+        let r = try await Self.rig(ci: "echo ci"); defer { r.cleanup() }
+        let store = r.store, id = r.work
+        await r.host.setProbe { c in if c == "echo ci" { try? await store.update(id) { $0.closedAt = Date() } } }
+        _ = await r.run()
+        #expect(try await r.get().loop?.autoLand?.after == nil)
+        #expect(await r.host.lands.isEmpty)
+    }
+
     @Test func aMuteReviewIsNoApproval() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         await r.host.setReviewAnswer("correcao", nil)

@@ -713,12 +713,14 @@ extension CommandRouter {
         guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
         guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
         guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
-        let base = try await GitRunner.run(["rev-parse", "--verify", "refs/heads/\(f.baseBranch)"], in: URL(fileURLWithPath: f.repoRoot))
-        guard base.status == 0 else { throw ProtocolError(code: .invalidArgs, message: "base branch '\(f.baseBranch)' not found") }
         do {
             let res = try await landPaddock(&f, mode: .merge, message: message)
             guard let after = res.commit else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
-            return (base.stdout.trimmingCharacters(in: .whitespacesAndNewlines), after)
+            // the base before is the merge's own first parent (`--no-ff`): read after the land, so another paddock landing
+            // on the same base meanwhile can never make the recorded `git reset --hard <before>` wipe its land
+            let p = try await GitRunner.run(["rev-parse", "--verify", "\(after)^1"], in: URL(fileURLWithPath: f.repoRoot))
+            // landed already: an unreadable parent is no failure (the note would say "nada integrado"), only an unknown before
+            return (p.status == 0 ? p.stdout.trimmingCharacters(in: .whitespacesAndNewlines) : "\(after)^1", after)
         } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
     }
 

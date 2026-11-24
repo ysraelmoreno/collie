@@ -1277,6 +1277,12 @@ extension WorkLoop {
         if !status.isEmpty { return await failed(.landDirty, "árvore do cercado suja", String(status.prefix(300))) }
         if await out(["rev-parse", "HEAD"], dir) != head { return await failed(.landDirty, "o HEAD mudou durante o portão ou o CI", "era \(head.prefix(12))") }
         if let who = await host.othersWorking() { return await failed(.landDirty, "outro agente trabalhando no cercado", who) }
+        // the gate and the CI may take long (up to the CI's timeout): a `work stop`, a cancel, the work closed or the
+        // starter gone meanwhile wins, and nothing lands
+        if stopping.contains(id) { return .init(.requested) }
+        if Task.isCancelled { return .init(.cancelled) }
+        guard let now = try? await store.get(id), now.closedAt == nil, now.loop?.state == .running else { return .init(.workGone) }
+        guard await host.starterAlive() else { return .init(.starterGone) }
         do {
             let (before, after) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
             let at = host.now()

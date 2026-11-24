@@ -85,14 +85,7 @@ extension CommandRouter {
             var f = try findPaddock(try need(r, "name"))
             try PaddockManager.refuseFolder(f)
             guard isCreator(f) else { throw refuse("only the Shepherd that created paddock '\(f.name)' can land it") }
-            try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
-            let res = try await PaddockManager.land(&f, mode: mode, message: str(r, "message"))
-            let i = ws.paddocks.firstIndex { $0.id == f.id }
-            let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
-            if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
-            try await save(f)
-            if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
-            if apps { await publishPlugins() }
+            let res = try await landPaddock(&f, mode: mode, message: str(r, "message"))
             guard case .object(var o) = try isoJSON(res) else { return .null }
             o["paddock"] = try isoJSON(f)
             return .object(o)
@@ -206,6 +199,20 @@ extension CommandRouter {
         guard let fid = rec.paddockId, paddockDeleting.contains(fid) || !ws.paddocks.contains(where: { $0.id == fid }) else { return }
         try? await remove(rec)
         throw ProtocolError(code: .notFound, message: "Paddock of '\(rec.name)' was deleted")
+    }
+
+    /// `paddock land` once the caller may: claimed, landed (`PaddockManager.land`), saved, its apps' approvals ended and
+    /// its works closed by merge. A4: also the loop's `--auto-land` (`loopLand`), always `.merge`.
+    func landPaddock(_ f: inout Paddock, mode: LandMode, message: String?) async throws -> LandResult {
+        try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
+        let res = try await PaddockManager.land(&f, mode: mode, message: message)
+        let id = f.id, i = ws.paddocks.firstIndex { $0.id == id }
+        let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
+        if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
+        try await save(f)
+        if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
+        if apps { await publishPlugins() }
+        return res
     }
 
     func claim(_ name: String) throws(ProtocolError) {

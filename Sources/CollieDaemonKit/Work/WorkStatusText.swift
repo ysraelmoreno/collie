@@ -85,7 +85,7 @@ public enum WorkStatusText {
                 + (now.flatMap { times(l, now: $0, timeZone: timeZone) }.map { " · \($0)" } ?? "")
                 + (l.phase == .agent && agents.count == 1 ? " · terminal \(RerailText.clean(agents[0].id))" : "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
-        case .finished: return "laço terminou (\(l.used) tentativas)"
+        case .finished: return "laço terminou (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         }
     }
 

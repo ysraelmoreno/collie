@@ -52,6 +52,9 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// F2 R4: the last review of the task, as the summary shows it ("parecer: sem veto (personas: a, b; 2 achados)"),
     /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
     public var review: String?; public var reviewRejects: Int?
+    /// A4: the task's last attempt was reviewed and every persona answered with no veto (no mute or invalid one, the tree
+    /// as judged). nil: not so, or no review ran in it (cleared as each attempt starts). What `--auto-land` requires.
+    public var reviewClean: Bool?
     /// P2: the free retries the loop spent on this task because an attempt's prompt was not delivered (nil: none).
     public var promptRetries: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
@@ -93,6 +96,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
         review = (try? c.decodeIfPresent(String.self, forKey: .review)) ?? nil   // F2 R4: tolerant too
         reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
         promptRetries = (try? c.decodeIfPresent(Int.self, forKey: .promptRetries)) ?? nil   // P2: tolerant too
+        reviewClean = (try? c.decodeIfPresent(Bool.self, forKey: .reviewClean)) ?? nil   // A4: tolerant too
     }
 }
 
@@ -154,6 +158,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         /// P2: the attempt's prompt was not delivered and the attempt starts over with a new agent, not counted (detail:
         /// the task's free retries used, `n/2`).
         case promptRetry
+        /// A4, `--auto-land`: the paddock was landed (merge) once every task was done (detail: "<base before> -> <after>").
+        case landed
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
@@ -227,6 +233,11 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 case adoptionFailed
                 /// M5.3: the attempt's agent hit the model's usage limit (detail: the dialog's text, short): not counted.
                 case usageLimit
+                /// A4, `--auto-land`: every task done and the paddock landed (merge; detail: "<base before> -> <base after>").
+                /// The loop `finished`; the others stop it before any land: the gate red, a veto or no clean review, the
+                /// local CI red, a dirty tree or another agent busy, the land refused (a conflict or any failure), the
+                /// paddock no longer a factory's.
+                case landed, landGateRed, landReviewVeto, landCiRed, landDirty, landConflict, landNotFactory
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -247,14 +258,31 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
             case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
             case .usageLimit: "o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>"
+            case .landed: "integrado (auto-land, merge local; sem push)" + (detail.map { ": \($0)" } ?? "")
+            case .landGateRed: "auto-land: portão vermelho no HEAD do cercado; nada integrado"
+            case .landReviewVeto: "auto-land: revisão com veto ou sem parecer em \(detail ?? "uma tarefa"); nada integrado"
+            case .landCiRed: "auto-land: CI local vermelho; nada integrado"
+            case .landDirty: "auto-land: árvore suja ou outro agente trabalhando (\(detail ?? "cercado")); nada integrado"
+            case .landConflict: "auto-land: o land (merge) falhou (\(detail ?? "conflito")); nada integrado"
+            case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
             case .unknown: "motivo desconhecido"
             }
         }
-        /// The note every stopped loop leaves.
-        public var note: String { "[loop] laço parado: \(label)" }
+        /// The note every stopped loop leaves (A4: a landed one is no stop).
+        public var note: String { code == .landed ? "[loop] laço terminou: \(label)" : "[loop] laço parado: \(label)" }
     }
     /// Set when the loop ends `stopped`; nil while it runs and when it `finished`.
     public var stopReason: Stop?
+    /// A4, `work run --auto-land`: what the land runs, all from the profile committed at the loop's base: its `gate`,
+    /// the local CI (`factory.autoland.ci`, else `scripts/ci/run-tests.sh`) and its timeout (seconds). `before`/`after`:
+    /// the base branch's commit before and after the land (nil: no land yet). nil: no auto-land (the loop as before).
+    public struct AutoLand: Codable, Sendable, Equatable {
+        public static let defaultCI = "scripts/ci/run-tests.sh", defaultTimeout = 1800
+        public var gate: String; public var ci: String; public var timeout: Int
+        public var before: String?, after: String?
+        public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout) { self.gate = gate; self.ci = ci; self.timeout = timeout }
+    }
+    public var autoLand: AutoLand?
     /// The loop's journal, oldest first: a ring of the `eventsMax` newest (`record`). nil: none yet, or a loop written
     /// before the journal existed. A new `work run` is a new `WorkLoopState`: it starts empty.
     public var events: [LoopEvent]?
@@ -347,6 +375,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         reviewThreshold = (try? c.decodeIfPresent(String.self, forKey: .reviewThreshold)) ?? nil
         origins = (try? c.decodeIfPresent([String: String].self, forKey: .origins)) ?? nil
         destructive = (try? c.decodeIfPresent(Int.self, forKey: .destructive)) ?? nil
+        autoLand = (try? c.decodeIfPresent(AutoLand.self, forKey: .autoLand)) ?? nil   // A4: tolerant too
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

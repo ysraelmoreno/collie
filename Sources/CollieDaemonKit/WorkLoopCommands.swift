@@ -135,12 +135,16 @@ extension CommandRouter {
             if !factory.destructive.isEmpty { loop.destructive = factory.destructive.count }
             // nit (B1): the engine's ceiling cuts the profile's budget; `work status` says so
             if let b = factory.budgetSeconds, Double(b) > Self.loopBudgetMax, budgetFlag == nil { loop.origins?["budgetCut"] = String(b) }
-            // ponytail: auto-land is A4; until then factory-paddock only warns, by the mark (A2) the paddock carries or not
-            if factory.land == .factoryPaddock {
-                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock', mas o auto-land ainda não existe (A4); segue manual"
+            // A4: auto-land only by --auto-land; the profile's land alone only warns
+            if factory.land == .factoryPaddock, !flag(r, "auto-land") {
+                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock'; o auto-land só liga com work run --auto-land; segue manual"
                     : "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
                 warning = [warning, w].compactMap { $0 }.joined(separator: "; ")
             }
+        }
+        // A4: `--auto-land`, refused unless the paddock is a factory's, the committed profile has a gate and the review is on
+        if flag(r, "auto-land") {
+            loop.autoLand = try Self.loopAutoLand(factory: paddock.factory, config: fileConfig, review: review.on, noReview: noReview)
         }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from, profileReviewOff: profileReviewOff) else {
@@ -174,6 +178,16 @@ extension CommandRouter {
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], warning)
+    }
+
+    /// A4: `--auto-land`'s settings from the profile committed at the base (`config`), or why it is refused.
+    static func loopAutoLand(factory: Bool, config: ProjectWorkConfig?, review: Bool, noReview: Bool) throws(ProtocolError) -> WorkLoopState.AutoLand {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard factory else { throw invalid("--auto-land: o cercado não está marcado como fábrica (só o dono liga: collie paddock factory <nome> on)") }
+        guard let gate = config?.gate else { throw invalid("--auto-land: o \(ProjectWorkConfig.fileName) commitado não tem 'gate'; o auto-land exige portão") }
+        guard review, !noReview else { throw invalid("--auto-land exige revisão: tire --no-review ou ligue factory.review no perfil (ou use --review)") }
+        return WorkLoopState.AutoLand(gate: gate, ci: config?.factory?.autolandCI ?? WorkLoopState.AutoLand.defaultCI,
+                                      timeout: config?.factory?.autolandTimeout ?? WorkLoopState.AutoLand.defaultTimeout)
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
@@ -382,6 +396,7 @@ extension CommandRouter {
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + review
+            + (l.autoLand.map { "AUTO-LAND no fim: portão \(quoted($0.gate)), CI \(quoted($0.ci)) (até \($0.timeout) s), então paddock land por merge local, sem push. " } ?? "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {
@@ -689,6 +704,23 @@ extension CommandRouter {
 
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
+    /// A4: the paddock carries the factory mark (A2) now.
+    func loopFactory(_ paddock: UUID) -> Bool { ws.paddocks.first { $0.id == paddock }?.factory == true }
+
+    /// A4, `work run --auto-land`: `paddock land` of the loop's paddock by the command's own path (`landPaddock`), only
+    /// `merge` (never a push nor a PR), only while it is a factory's. The base branch's commit before and after.
+    func loopLand(_ paddock: UUID, mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+        guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
+        guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
+        guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
+        let base = try await GitRunner.run(["rev-parse", "--verify", "refs/heads/\(f.baseBranch)"], in: URL(fileURLWithPath: f.repoRoot))
+        guard base.status == 0 else { throw ProtocolError(code: .invalidArgs, message: "base branch '\(f.baseBranch)' not found") }
+        do {
+            let res = try await landPaddock(&f, mode: .merge, message: message)
+            return (base.stdout.trimmingCharacters(in: .whitespacesAndNewlines), res.commit)
+        } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
+    }
+
     func loopDismiss(_ id: UUID) async {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
         loopReviewers.remove(id)
@@ -877,6 +909,11 @@ struct RouterLoopHost: LoopHost {
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
+    func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+        try await router.loopLand(paddock, mode: mode, message: message)
+    }
+    func notifyOwner(_ line: String) async { await router.hub.emit(.notify(starter, message: String(line.prefix(2000)))) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
     func profile() throws(ProtocolError) -> URL? {

@@ -453,6 +453,7 @@ public enum Commands {
                              ParamSpec("no-review", .flag, help: "No review, even when collie-work.json's factory.review turns it on (an explicit flag wins over the profile)"),
                              ParamSpec("personas", .string, help: "With --review: auto (default, the router picks) or persona names, comma-separated"),
                              ParamSpec("reviewer-model", .string, help: "With --review: the model of every persona (default: each persona's, else the loop's)"),
+                             ParamSpec("auto-land", .flag, help: "Only in a factory paddock, with the committed profile's gate and the review on: once every task is done, the gate, a clean review of each task, the local CI and a clean tree, then paddock land by merge (never a push nor a PR); any failure stops the loop and calls the owner"),
                              ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)")],
                     timeoutSeconds: 60, shepherdOnly: true),
         CommandSpec(name: "work.stop", summary: "Stop the active work's loop after the current attempt's verdict",

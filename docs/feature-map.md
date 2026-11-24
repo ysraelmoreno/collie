@@ -266,8 +266,17 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   MCP): `collie paddock create <nome> --factory` e `collie paddock factory <nome> on|off`. Ligar roda o núcleo do
   doutor da fábrica no `collie-work.json` do cercado e recusa com `static` ou `judge` abaixo de 1 ou perfil inválido;
   desligar nunca recusa. `paddock list/status` trazem `factory` ("fábrica" ao lado do nome); `factory doctor` mostra
-  "cercado fábrica: sim/não". O laço ainda não usa a marca (A4). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
+  "cercado fábrica: sim/não". O laço usa a marca no `--auto-land` (A4, abaixo). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
   `Sources/CollieDaemonKit/FactoryCommands.swift`; testes em `Tests/CollieDaemonKitTests/PaddockFactoryTests.swift`.
+- **Auto-land (A4, `collie work run --auto-land`):** só em cercado fábrica, com `gate` no `collie-work.json` commitado
+  e revisão ligada (senão recusa). Com todas as tarefas feitas, em ordem: marca de fábrica, portão no HEAD, parecer
+  limpo na última tentativa de cada tarefa (mudo ou inválido não aprova), CI local (`factory.autoland.ci`, padrão
+  `scripts/ci/run-tests.sh`; `factory.autoland.timeoutSeconds`, padrão 1800), árvore limpa sem outro agente, então
+  `paddock land` por merge local (nunca push nem PR). Cada falha para com `stopReason` próprio (`landGateRed`,
+  `landReviewVeto`, `landCiRed`, `landDirty`, `landConflict`, `landNotFactory`); sucesso é `landed`, com o commit da
+  base antes e depois na nota. Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
+  (`autoLand`), `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`loopAutoLand`, `loopLand`); testes em
+  `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos

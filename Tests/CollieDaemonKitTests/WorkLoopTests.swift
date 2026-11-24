@@ -90,6 +90,20 @@ actor LoopFakeHost: LoopHost {
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
     func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
+    /// A4 (AutoLandTests): the paddock's factory mark, every land asked (only `merge` is accepted: anything else is an
+    /// issue and refused), the error a land throws (nil: it lands), and each line the owner got (`notifyOwner`).
+    var isFactory = false, lands: [LandMode] = [], landError: ProtocolError?, ownerNotices: [String] = []
+    static let landedBefore = String(repeating: "a", count: 40), landedAfter = String(repeating: "b", count: 40)
+    func setFactory(_ f: Bool) { isFactory = f }
+    func setLandError(_ e: ProtocolError?) { landError = e }
+    func factoryPaddock() async -> Bool { isFactory }
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+        lands.append(mode)
+        guard mode == .merge else { Issue.record("land by \(mode)"); throw ProtocolError(code: .invalidArgs, message: "only merge") }
+        if let landError { throw landError }
+        return (Self.landedBefore, Self.landedAfter)
+    }
+    func notifyOwner(_ line: String) async { ownerNotices.append(line) }
     /// M3.8: names a live terminal already has (the attempt's agent takes another).
     var taken: Set<String> = []
     func setTaken(_ n: Set<String>) { taken = n }

@@ -88,6 +88,13 @@ protocol LoopHost: Sendable {
     func startedOpen(_ agent: UUID) async -> Bool
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
+    /// A4: the loop's paddock carries the factory mark (A2), read now.
+    func factoryPaddock() async -> Bool
+    /// A4: `paddock land` of the loop's paddock by the command's own path (`PaddockManager.land`): the base branch's
+    /// commit before and after. The engine only ever asks `.merge`: it never pushes nor opens a PR.
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String)
+    /// A4: one line for the owner (`notify`).
+    func notifyOwner(_ line: String) async
 }
 
 extension LoopHost {
@@ -126,6 +133,12 @@ extension LoopHost {
     /// The tests' fakes: never the user's `~/.claude.json`.
     func trustReviewers() async -> String? { nil }
     func startedOpen(_ agent: UUID) async -> Bool { false }
+    /// A host with no paddock to land (the tests' fakes): never a factory's, and its land refuses.
+    func factoryPaddock() async -> Bool { false }
+    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String) {
+        throw ProtocolError(code: .unavailable, message: "this host lands nothing")
+    }
+    func notifyOwner(_ line: String) async {}
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -257,6 +270,8 @@ actor WorkLoop {
             try? await store.update(id) { x in let was = x.loop?.spent ?? 0; x.loop?.spent = was + secs }
             if case .stop(let s) = ended { stop = s; break }
         }
+        // A4: the run finished with `--auto-land`: the land's conditions, then the land, or a stop of its own
+        if end == .finished, !stopping.contains(id), let al = (try? await store.get(id))?.loop?.autoLand { (end, stop) = await autoLand(work: id, al, dir: dir) }
         stopping.remove(id)
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
@@ -267,7 +282,7 @@ actor WorkLoop {
             // always one summary note, after the path's own longer one (if any)
             if outside == nil, let why {
                 w.notes.append(WorkNote(at: now, text: why.note))
-                w.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
+                w.record(LoopEvent(at: now, kind: why.code == .landed ? .landed : .stopped, detail: Self.eventDetail(why.code == .landed ? why.detail ?? "" : why.label)))
             }
         }
         return end
@@ -311,6 +326,7 @@ actor WorkLoop {
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
+                x.tasks[i].reviewClean = nil   // A4: only this attempt's own review can make it clean
                 // where a fall resumes from; `forget` clears it when the attempt ends
                 // M2c: an adoption keeps the `resumeAt` it was judged by (when the attempt was first left): cancelled
                 // or fallen again, a commit made during it is still after that, and never adopted
@@ -724,9 +740,11 @@ actor WorkLoop {
             // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
             if Task.isCancelled { return .cancelled }
             let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
+            // A4: clean only with every persona answering, none mute or invalid, no veto, the tree as judged
+            let clean = !touched && approved && ran.outcome.silent == nil && !ran.outcome.notes.contains { $0.hasPrefix(ReviewVerdict.reviewAdvisoryNone) }
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
-                    x.tasks[i].review = line
+                    x.tasks[i].review = line; x.tasks[i].reviewClean = clean ? true : nil
                     // F2 Y2a: a touched tree was not judged: no refusal to count
                     if !touched { x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1 }
                 }
@@ -1196,5 +1214,80 @@ actor WorkLoop {
         lines.append("")
         lines.append(spec ?? task.title)
         return lines.joined(separator: "\n")
+    }
+}
+
+/// A4, `work run --auto-land`: once every task is done, the land's conditions in order, stopping at the first that fails:
+/// the paddock still a factory's, the gate of the profile committed at the base green on the paddock's HEAD, the last
+/// attempt of every task reviewed clean, the local CI green, a clean tree with no other agent busy and HEAD where the
+/// gate and the CI judged it, then `paddock land` (merge only) by the command's own path. Fail closed: each failure stops
+/// the loop with its own code and lands nothing; every outcome calls the owner (`notifyOwner`).
+extension WorkLoop {
+    static let autoLandHint = "collie work status"
+
+    func autoLand(work id: UUID, _ al: WorkLoopState.AutoLand, dir: URL) async -> (WorkLoopState.State, WorkLoopState.Stop?) {
+        guard let w = try? await store.get(id) else { return (.stopped, .init(.workGone)) }
+        let title = RerailText.clean(w.title, max: 80)
+        func tell(_ s: WorkLoopState.Stop) async { await host.notifyOwner("Collie: laço \"\(title)\": \(s.label). Veja: \(Self.autoLandHint)") }
+        // ponytail: a task deferred (or still open) is no land and no stop: the loop finished as always, the owner is told
+        let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }
+        guard left.isEmpty else {
+            await note(id, "[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado")
+            await host.notifyOwner("Collie: laço \"\(title)\" terminou sem integrar: \(left.count) tarefa(s) não feitas. Veja: \(Self.autoLandHint)")
+            return (.finished, nil)
+        }
+        let stop = await landConditions(id, w, al, dir)
+        await phase(id, nil)
+        guard let stop else { return (.finished, nil) }
+        await tell(stop)
+        return (stop.code == .landed ? .finished : .stopped, stop)
+    }
+
+    private func phase(_ id: UUID, _ p: WorkLoopState.Phase?) async {
+        let at = host.now()
+        try? await store.update(id) { $0.loop?.show(p, at: at) }
+    }
+
+    /// The first condition that fails, or the land's own `landed` (nil: never; a land always says how it went).
+    private func landConditions(_ id: UUID, _ w: Work, _ al: WorkLoopState.AutoLand, _ dir: URL) async -> WorkLoopState.Stop? {
+        func run(_ command: String, _ timeout: Duration) async -> String? {
+            do {
+                let r = try await host.check(command, in: dir, timeout: timeout)
+                if r.status == 0 { return nil }
+                let tail = (r.stdout + r.stderr).split(separator: "\n").suffix(20).joined(separator: "\n")
+                return "exit \(r.status)" + (tail.isEmpty ? "" : ":\n" + tail)
+            } catch { return error.code == .timeout ? "timeout" : "não rodou: \(error.message)" }
+        }
+        func failed(_ code: WorkLoopState.Stop.Code, _ what: String, _ why: String) async -> WorkLoopState.Stop {
+            await note(id, LotBoards.scrub(String("[loop] auto-land: \(what) (\(why)); nada integrado".prefix(Self.noteChars))))
+            return .init(code, detail: Self.eventDetail(why))
+        }
+        guard await host.factoryPaddock() else { return .init(.landNotFactory) }
+        guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
+        await phase(id, .gate)
+        if let why = await run(al.gate, checkTimeout) { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
+        // parecer mudo/inválido or a task with no review in its last attempt is no approval
+        if let t = w.tasks.first(where: { $0.state == .done && $0.reviewClean != true }) {
+            return await failed(.landReviewVeto, "revisão sem aprovação limpa", RerailText.clean(t.title, max: 80) + ": " + (t.review ?? "sem revisão"))
+        }
+        await phase(id, .check)
+        if let why = await run(al.ci, .seconds(al.timeout)) { return await failed(.landCiRed, "CI local vermelho", why) }
+        await phase(id, nil)
+        guard let status = await out(["status", "--porcelain"], dir) else { return await failed(.gitFailed, "git falhou", "status") }
+        if !status.isEmpty { return await failed(.landDirty, "árvore do cercado suja", String(status.prefix(300))) }
+        if await out(["rev-parse", "HEAD"], dir) != head { return await failed(.landDirty, "o HEAD mudou durante o portão ou o CI", "era \(head.prefix(12))") }
+        if let who = await host.othersWorking() { return await failed(.landDirty, "outro agente trabalhando no cercado", who) }
+        do {
+            let (before, after) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
+            let at = host.now()
+            try? await store.update(id) { x in
+                x.loop?.autoLand?.before = before; x.loop?.autoLand?.after = after
+                x.notes.append(WorkNote(at: at, text: "[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
+                    + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))", decision: true))
+            }
+            return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))")
+        } catch {
+            return await failed(.landConflict, "o land (merge) falhou", error.message)
+        }
     }
 }

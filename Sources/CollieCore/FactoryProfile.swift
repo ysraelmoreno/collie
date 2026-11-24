@@ -29,6 +29,8 @@ public struct FactoryProfile: Sendable, Equatable {
     // guardrails: nil = the engine's default
     public var budgetSeconds: Int?, maxTries: Int?
     public var destructive: [String] = [], land: Land = .manual
+    // A4, `autoland`: the local CI the auto-land runs (nil: `scripts/ci/run-tests.sh`) and its timeout (nil: 1800 s)
+    public var autolandCI: String?, autolandTimeout: Int?
     // prose
     public var traps: [String] = []
 
@@ -77,7 +79,7 @@ public struct FactoryProfile: Sendable, Equatable {
 
     private static func read(_ factory: Any) throws -> FactoryProfile {
         var p = FactoryProfile()
-        let f = try object(factory, "factory", known: ["version", "static", "verification", "review", "guardrails", "prose"])
+        let f = try object(factory, "factory", known: ["version", "static", "verification", "review", "guardrails", "prose", "autoland"])
         guard let v = f["version"] else { throw ProfileError.missingField("factory.version") }
         guard let n = v as? NSNumber, !isBool(n) else { throw ProfileError.wrongType(path: "factory.version", expected: "número") }
         guard n.doubleValue == 1 else { throw ProfileError.unsupportedVersion(n.stringValue) }
@@ -143,6 +145,11 @@ public struct FactoryProfile: Sendable, Equatable {
                 }
             }
             if let l = g["land"] { p.land = try choice(l, "factory.guardrails.land") }
+        }
+        if let a = f["autoland"] {
+            let a = try object(a, "factory.autoland", known: ["ci", "timeoutSeconds"])
+            if let c = a["ci"] { p.autolandCI = try command(c, "factory.autoland.ci") }
+            if let t = a["timeoutSeconds"] { p.autolandTimeout = try integer(t, "factory.autoland.timeoutSeconds", budgetRange) }
         }
         if let pr = f["prose"] {
             let pr = try object(pr, "factory.prose", known: ["traps"])

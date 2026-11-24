@@ -98,7 +98,7 @@ extension CommandRouter {
         if let model {
             try ClaudeModel.validate(model)
             let probe = TerminalRecord(id: UUID(), name: name, preset: preset, command: command, cwd: "/", isShepherd: false)
-            guard preset == .claude || AgentLaunch.isClaude(probe) || AgentLaunch.isCursor(probe) else {
+            guard preset == .claude || AgentLaunch.isClaude(probe) || Self.agentName(probe) == "cursor" else {
                 throw ProtocolError(code: .invalidArgs, message: "--model is for claude; '\(name)' would run \(preset.rawValue)")
             }
         }

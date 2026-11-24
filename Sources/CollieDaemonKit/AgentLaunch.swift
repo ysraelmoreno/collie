@@ -96,12 +96,6 @@ public enum AgentLaunch {
         return (rec.preset == .claude || rec.preset == .custom) && EssentialPaths.commandAgent(c)?.name == "claude"
     }
 
-    /// The preset `cursor`, or a custom command whose program is `cursor-agent`.
-    static func isCursor(_ rec: TerminalRecord) -> Bool {
-        guard let c = rec.command else { return rec.preset == .cursor }
-        return (rec.preset == .cursor || rec.preset == .custom) && EssentialPaths.commandAgent(c)?.name == "cursor-agent"
-    }
-
     /// `env` is used verbatim as the child environment; hooks are wired by flag only (no global config touched).
     /// `codexMCP`: also give Codex the collie MCP server (opt-in, `COLLIE_CODEX_MCP=1` in the daemon env: its `env_vars` key is
     /// unverified against an installed codex, and an unknown key could stop Codex from launching).

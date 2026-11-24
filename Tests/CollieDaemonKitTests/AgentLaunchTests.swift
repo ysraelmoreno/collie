@@ -182,8 +182,8 @@ import CollieProtocol
         let c2 = rec(.custom, "cursor-agent")
         #expect(try AgentLaunch.launchSpec(for: c2, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
             .arguments[1].contains(" --trust"))
-        #expect(AgentLaunch.isCursor(rec(.cursor)) && AgentLaunch.isCursor(rec(.custom, "env A=1 cursor-agent -x")))
-        #expect(!AgentLaunch.isCursor(rec(.codex)) && !AgentLaunch.isCursor(rec(.custom, "codex")))
+        #expect(CommandRouter.agentName(rec(.cursor)) == "cursor" && CommandRouter.agentName(rec(.custom, "env A=1 cursor-agent -x")) == "cursor")
+        #expect(CommandRouter.agentName(rec(.codex)) != "cursor" && CommandRouter.agentName(rec(.custom, "codex")) != "cursor")
     }
     /// Cursor gets Collie's orientation (sessionStart → additional_context) and the collie MCP server through a
     /// per-terminal `--plugin-dir` in Collie's data; the MCP env carries names only (cursor gives a stdio MCP child

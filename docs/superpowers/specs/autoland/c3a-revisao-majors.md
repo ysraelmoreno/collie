@@ -1,0 +1,14 @@
+# C3a: majors da revisão independente do bloco C1, A3-A6
+
+Origem: revisão de 2026-11-24 (reject por 2 majors). Cada ponto com teste que FALHE sem a correção. Regra de ouro do auto-land: tudo que o motor decide vem do commit base/HEAD commitado, nunca da árvore que o agente edita; contadores de teto são duráveis e não vivem no estado do laço.
+
+1. **Doctor lido da árvore do agente (major).** `RouterLoopHost.doctorRefusal` (`Sources/CollieDaemonKit/WorkLoopCommands.swift`, ~l.989) chama `FactoryDoctorReader.factoryRefusal(root: dir)` sobre a árvore do agente: o agente edita `collie-work.json` e mascara `landDoctorRegressed`. O mesmo para o `doctor` impresso em
+   `AutoLandSummary.swift` (`autoLandSummary` → `FactoryDoctorReader.snapshot(root: dir)`). Leia o doctor do COMMIT HEAD (como `loopFileDefaults` lê `WorkConfigFile.read(base:)`: use a leitura por `git show`/worktree limpo que o `paddock factory on` já usa, `factoryDirty`+base) e, se a árvore difere do HEAD
+   nos arquivos que o doctor lê, recuse com `landDoctorRegressed` em vez de aceitar. Teste: agente que melhora o perfil só na árvore não passa; o commit base é o que vale.
+2. **Teto diário contornável (major).** `landsToday` (`Work/WorkLoop.swift` ~1122) conta eventos `.landed` do `loop.events` de cada trabalho; um novo `work run` no mesmo trabalho (`$0.loop = loop`) zera os eventos, e `work_reopen`+`trustLoops` burla `autoLandPerDay`; trabalhos fechados também são podados (`maxClosed` 200).
+   Crie um registro DURÁVEL por cercado (no `Paddock` ou num diário do daemon próprio, `landedAt` com data), gravado pelo motor no momento do land e lido para o teto; nada que o agente alcance. Teste: land, reopen, novo run no mesmo trabalho: o teto continua contando; poda de trabalhos fechados não zera o teto.
+3. **`before` errado em "Already up to date" (minor, perigoso).** `loopLand`: se o merge `--no-ff` não cria commit (cercado sem commits novos ou já integrado), `after` é o HEAD antigo e `after^1` aponta para o pai: o resumo diz "integrado" e sugere `git reset --hard` que apagaria commit alheio. Leia `before` (rev-parse HEAD da base) dentro do `claim`, imediatamente antes do merge, e compare com `after`: se iguais, `stopReason` próprio `landNothing` ("nada a integrar"), SEM contar no teto nem na corrente. Teste com git real num repositório temporário (caso novo e caso já integrado).
+4. **`reviewClean` sem SHA (minor).** Grave o HEAD revisado junto de `reviewClean` e compare com o HEAD atual no land; diferente ⇒ `landReviewVeto` com a nota "commits depois da revisão". Teste.
+5. **Próximo trabalho sem rechecar a fábrica (minor).** `chainLoop` confere de novo `paddock.factory` e o doctor (HEAD) ANTES de rodar agentes do trabalho seguinte; falhou ⇒ o trabalho volta a `queued` e a corrente para com a razão. Teste.
+
+Check: `scripts/check-autoland-loop.sh c3a`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.

@@ -1,0 +1,10 @@
+# C3b: minors e testes da revisão independente do bloco C1, A3-A6
+
+1. **Scripts do gate/CI editados pelo agente.** O gate e o CI (`scripts/ci/run-tests.sh` ou `factory.autoland.ci`) rodam da árvore do agente: o agente pode editá-los para sair com 0. Antes do land, compare com o commit base (diff) os arquivos: `collie-work.json`, o script de CI, e os scripts citados no `gate` do perfil (mesma extração que o `tampered` já usa);
+   qualquer diferença ⇒ `landGateRed` com a nota "o agente alterou <arquivo> que julga o land" (não mude o `tampered` das tentativas). Teste por arquivo.
+2. **Gate/CI sobre o resultado do merge.** Se a base andou desde que a tentativa começou, a condição "HEAD parado" já existe; acrescente: base mudou ⇒ para com `landBaseMoved` (o dono refaz), em vez de mesclar sem validar. Teste.
+3. **`work stop` num trabalho `queued`.** `workStop` só olha `workLoops`; trabalho em fila (A5) não é alcançável. Faça `work stop <trabalho>` devolver o trabalho `queued` ao estado "aprovado, fora da fila" (campo claro) para que a corrente não o rode; corrija a ordem da fila para a hora da APROVAÇÃO do dono (comentário "oldest approval first"), não `loop.startedAt`. Teste.
+4. **`scrub` de nomes (C1).** O `scrub` só pega nomes que TERMINAM em `token|secret|key|edit|url|password`; passe a pegar nomes que CONTÊM `URL|TOKEN|SECRET|PASSWORD|KEY` (`API_KEY_ID=`, `TOKEN_FILE=`). Teste de cada.
+5. **Testes que passariam com código quebrado.** (a) `AutoLandTests`: teste do `CommandRouter.loopLand` (recusa modo ≠ merge, recusa cercado não-fábrica, `before/after`) com git real em repo temporário; (b) teste de ORDEM das condições: portão e CI vermelhos juntos esperam `landGateRed` e o CI NÃO roda; revisão muda + CI vermelho esperam `landReviewVeto` e o CI não roda; (c) teste do teto diário que passa por `work run` de verdade (sem semear eventos direto).
+
+Check: `scripts/check-autoland-loop.sh c3b`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.

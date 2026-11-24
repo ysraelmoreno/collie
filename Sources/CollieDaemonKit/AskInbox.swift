@@ -15,6 +15,8 @@ actor AskInbox {
         var askedAt = Date(), deliveredAt: Date?, completedAt: Date?
         /// The target was in a turn when asked: the prompt waited in its queue (optional: older files lack it).
         var targetBusy: Bool?
+        /// The asker read the reply with `ask result <id>` (optional: older files lack it); no `[collie] Reply from` after that.
+        var readAt: Date?
     }
     static let keep = 20, inlineMax = 300, previewMax = 120
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
@@ -74,6 +76,13 @@ actor AskInbox {
         return nil
     }
 
+    /// `ask result <id>` of a finished ask: marks it read (the first time). Returns the entry as it stands, nil when gone.
+    func markRead(id: String, from: UUID) -> Entry? {
+        guard let i = byAsker[from]?.firstIndex(where: { $0.id == id }) else { return nil }
+        if byAsker[from]![i].status != .pending, byAsker[from]![i].readAt == nil { byAsker[from]![i].readAt = Date(); save() }
+        return byAsker[from]![i]
+    }
+
     func get(id: String, from: UUID) -> Entry? { byAsker[from]?.first { $0.id == id } }
     /// Newest first.
     func recent(from: UUID) -> [Entry] { (byAsker[from] ?? []).reversed() }
@@ -103,6 +112,7 @@ actor AskInbox {
         o["askedAt"] = .string(f.string(from: e.askedAt))
         if let d = e.deliveredAt { o["deliveredAt"] = .string(f.string(from: d)) }
         if let d = e.completedAt { o["completedAt"] = .string(f.string(from: d)) }
+        if let d = e.readAt { o["readAt"] = .string(f.string(from: d)) }
         return .object(o)
     }
 }

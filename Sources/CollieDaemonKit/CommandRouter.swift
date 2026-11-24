@@ -116,6 +116,8 @@ actor CommandRouter {
     var pluginTurn = PluginTurn()
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
     var turnNotices: [UUID: [String]] = [:]
+    /// `ask --no-wait` tasks that will type the reply notice, by ask id: `ask result` cancels the notice (the reply was read).
+    var askNotices: [String: Task<Void, Never>] = [:]
     /// Shepherds' open leash requests (cards), oldest first. ponytail: in memory, a restart drops them (asked again).
     var leashRequests: [LeashRequest] = []
     /// Apps do cercado: open cards (approvals, confirm calls), the confirm calls waiting on them, and the approved apps
@@ -486,7 +488,8 @@ actor CommandRouter {
                     "targetBusy": .bool(busy)]))
             case "ask.result":   // the asker's own asks only: another terminal's id is notFound
                 guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
-                guard let e = await inbox.get(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
+                guard let e = await inbox.markRead(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
+                if e.status != .pending { askNotices.removeValue(forKey: id)?.cancel() }   // read: the notice would only cost a turn
                 return Response(id: req.id, ok: true, result: AskInbox.json(e))
             case "reply":
                 try await asks.reply(terminal: tid, message: try need(req, "message"))
@@ -560,18 +563,21 @@ actor CommandRouter {
         let id = await inbox.open(from: from, target: t.name, targetBusy: busy)
         let asks = asks, inbox = inbox, target = t.id
         let typed = ws.terminals.first { $0.id == from }.map { Self.isAgent($0) } ?? false
-        Task {
+        askNotices[id] = Task {
             let r: Result<AskResult, ProtocolError>
             do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id,
                                                                 onDelivered: { Task { await inbox.delivered(id: id) } })) }
             catch { r = .failure(error) }
             // nil: the asker was removed meanwhile — nothing to type
             // an approval prompt on the asker holds the reply until it is resolved; after 30 min it stays only in the inbox
-            guard let e = await inbox.close(id: id, r), typed else { return }
+            defer { Task { await self.noticeDone(id) } }
+            guard let e = await inbox.close(id: id, r), typed, e.readAt == nil, !Task.isCancelled else { return }
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
         return .object(["askId": .string(id), "target": .string(t.name), "targetBusy": .bool(busy)])
     }
+
+    private func noticeDone(_ id: String) { askNotices[id] = nil }
 
     /// The target is in a turn (its badge `working`, or an ask, capture or Claude turn holds it): a prompt waits in its queue.
     func targetBusy(_ id: UUID) async -> Bool {

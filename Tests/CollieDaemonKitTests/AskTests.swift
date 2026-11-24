@@ -688,11 +688,43 @@ extension AskTests {
             try await connect(d, p, "A", "B")
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
-            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            #expect(await waitFor(10) { await d.router.inbox.get(id: id, from: UUID(uuidString: a.id)!)?.status == .done })
             let aid = UUID(uuidString: a.id)!
             #expect(await waitFor(20) { await d.scrollbackText(aid).contains("[collie] Reply from B") })
             let text = await d.scrollbackText(aid)
             #expect(text.range(of: "tick", options: .backwards)!.lowerBound < text.range(of: "[collie] Reply from B")!.lowerBound)
+        }
+    }
+
+    /// A5: the asker reads the reply with `ask result` while it is still busy: the notice is never typed.
+    @Test func noWaitReadBeforeQuietTypesNoNotice() async throws {
+        try await withHookDaemon { d, p in
+            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 20 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
+            let a = try await term(d, p, "A", preset: "claude", command: busy)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })   // this read marks it
+            try await Task.sleep(for: .seconds(4))   // past the busy stretch and the quiet window
+            #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!)).contains("[collie] Reply from B"))
+            #expect(field(try await askResult(p, a, id), "readAt") != nil)
+        }
+    }
+
+    /// A5: a still-pending ask is never marked read; an unread reply is typed as before, and the list (no id) marks nothing.
+    @Test func noWaitPendingAndListDoNotMarkRead() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            #expect(field(try await askResult(p, a, id), "readAt") == nil)   // pending
+            try await hook(d, p, b, "done")
+            let aid = UUID(uuidString: a.id)!
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B") })
+            _ = try await send(p, Request(id: "al", terminalId: a.id, token: a.token, command: "ask.result", args: [:]))
+            #expect(await d.router.inbox.get(id: id, from: aid)?.readAt == nil)
         }
     }
 
@@ -757,7 +789,7 @@ extension AskTests {
             try await connect(d, p, "A", "B")
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
-            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            #expect(await waitFor(10) { await d.router.inbox.get(id: id, from: UUID(uuidString: a.id)!)?.status == .done })
             try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!).contains("[collie]")))
             #expect(field(try await askResult(p, a, id), "output") == "done")
@@ -777,7 +809,7 @@ extension AskTests {
             let approval = try #require(await d.router.asks.pendingApproval(aid))
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
-            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            #expect(await waitFor(10) { await d.router.inbox.get(id: id, from: UUID(uuidString: a.id)!)?.status == .done })
             try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
             let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
@@ -866,6 +898,32 @@ extension AskTests {
         let p = try #require(await b.get(id: pending, from: me))
         #expect(p.status == .failed && p.error?.contains("restarted") == true, "\(p)")
         #expect(await AskInbox(file: nil).recent(from: me).isEmpty, "no file: memory only (tests)")
+    }
+
+    /// A5: `readAt` is set once, only on a finished ask, shown in the json and kept across a restart; an old file lacks it.
+    @Test func readAtMarksOnceAndLoadsFromOldFiles() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("inbox-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let me = UUID()
+        let a = AskInbox(file: file)
+        let id = await a.open(from: me, target: "B")
+        #expect(await a.markRead(id: id, from: me)?.readAt == nil, "pending: not marked")
+        await a.close(id: id, .success(AskResult(output: "x", source: .hook, truncated: false)))
+        #expect(await a.get(id: id, from: me)?.readAt == nil)
+        let first = try #require(await a.markRead(id: id, from: me)?.readAt)
+        #expect(await a.markRead(id: id, from: me)?.readAt == first)
+        #expect(await AskInbox(file: file).get(id: id, from: me)?.readAt != nil)
+        guard case .object(let o) = AskInbox.json(try #require(await a.get(id: id, from: me))) else { return }
+        #expect(o["readAt"] != nil)
+        // a file written before `readAt` existed: nil is omitted by the encoder, the same shape
+        let old = FileManager.default.temporaryDirectory.appendingPathComponent("inbox-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: old) }
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        let data = try enc.encode([me: [AskInbox.Entry(id: "abcd1234", target: "B", status: .done, output: "x")]])
+        #expect(!String(decoding: data, as: UTF8.self).contains("readAt"))
+        try data.write(to: old)
+        let e = try #require(await AskInbox(file: old).get(id: "abcd1234", from: me))
+        #expect(e.status == .done && e.readAt == nil)
     }
 }
 

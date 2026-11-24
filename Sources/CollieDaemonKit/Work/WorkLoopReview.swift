@@ -547,7 +547,7 @@ extension WorkLoop {
             // F2 X4: a diff that touches a persona or a spec of the work's tasks (what judges the next attempts) calls seguranca
             personas = try PersonaRouter(catalog: try await basePersonas(before, dir))
                 .select(changedPaths: paths, diffLines: lines, diffText: diff, requested: loop.personas,
-                        specs: work.tasks.compactMap { $0.spec.map { Self.repoRelative($0, dir) } })
+                        specs: work.tasks.compactMap { $0.spec.map { Self.repoRelative($0, dir) } }, only: loop.reviewOnly)
         } catch {
             // A1 (reviewAdvisory): no catalog to judge with is no opinion, not a veto: the check and the gate decide
             let outcome = ReviewVerdict.silent("sem personas no commit base (\(error))")
@@ -628,7 +628,7 @@ extension WorkLoop {
         // nothing above throws: the folders go whatever happened, a cancelled loop included
         for case let s? in scratch { Self.dropScratch(s) }
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
-        let outcome = ReviewVerdict.aggregate(verdicts)
+        let outcome = ReviewVerdict.aggregate(verdicts, threshold: loop.reviewThreshold)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }
         let line = Self.reviewAdvisoryLine(outcome, "personas: \(personas.map(\.name).joined(separator: ", ")); \(found) "
             + (found == 1 ? "achado" : "achados"))

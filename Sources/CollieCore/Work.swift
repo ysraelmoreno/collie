@@ -182,6 +182,14 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// names chosen (nil: auto, R5's router picks); `reviewerModel` the model that overrides every persona's (nil: each
     /// persona's own, else the loop's). Only recorded and shown for now.
     public var review: Bool?; public var personas: [String]?; public var reviewerModel: String?
+    /// A1: from `factory.review` of the base's `collie-work.json`. `reviewOnly`: the profile's personas, which restrict
+    /// the "auto" choice (nil: no restriction); `reviewThreshold`: "blocker" (only a blocker vetoes) or "major" (nil: major).
+    public var reviewOnly: [String]?; public var reviewThreshold: String?
+    /// A1: where review, budget and tries came from: key ("review", "budget", "tries") → "perfil", "flag" or "padrão".
+    /// nil: the base has no `factory` (the loop as before).
+    public var origins: [String: String]?
+    /// A1: how many `factory.guardrails.destructive` patterns the profile has; shown as a warning only, never enforced.
+    public var destructive: Int?
     /// F2 U1 (`--review`): `~/.claude.json` as the loop began, before its first judged agent: its hash
     /// (`reviewGlobalConfigHash`) and its `env`/`autoConnectIde` (`reviewGlobalConfigRisky`). Every attempt of the run is
     /// compared with these, never with a base taken after an agent ran. nil: not taken (no review, or a loop from before).
@@ -327,6 +335,10 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         review = (try? c.decodeIfPresent(Bool.self, forKey: .review)) ?? nil   // F2 R1: tolerant, like the newer ones
         personas = (try? c.decodeIfPresent([String].self, forKey: .personas)) ?? nil
         reviewerModel = (try? c.decodeIfPresent(String.self, forKey: .reviewerModel)) ?? nil
+        reviewOnly = (try? c.decodeIfPresent([String].self, forKey: .reviewOnly)) ?? nil   // A1: tolerant too
+        reviewThreshold = (try? c.decodeIfPresent(String.self, forKey: .reviewThreshold)) ?? nil
+        origins = (try? c.decodeIfPresent([String: String].self, forKey: .origins)) ?? nil
+        destructive = (try? c.decodeIfPresent(Int.self, forKey: .destructive)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

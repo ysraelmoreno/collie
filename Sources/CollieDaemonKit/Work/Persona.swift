@@ -82,9 +82,10 @@ struct PersonaRouter: Sendable {
 
     /// `diffText`: the diff itself, only read for the async/await/Task rule. `requested` (the task's explicit list)
     /// wins over the rules but must name catalog personas; `correcao` is never cut, by either path.
-    /// `specs`: the repo-relative spec paths of the work's tasks.
+    /// `specs`: the repo-relative spec paths of the work's tasks. A1 `only` (`factory.review.personas`): the "auto"
+    /// choice keeps only these names (an explicit `requested` wins over it); `correcao` still stays.
     func select(changedPaths: [String], diffLines: Int, diffText: String = "", requested: [String]? = nil,
-                max: Int = 4, specs: [String] = []) throws -> [Persona] {
+                max: Int = 4, specs: [String] = [], only: [String]? = nil) throws -> [Persona] {
         let byName = Dictionary(catalog.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
         var names: Set<String>
         if let requested {
@@ -100,6 +101,7 @@ struct PersonaRouter: Sendable {
                 default: Self.matches(persona.paths, any: changedPaths)
                 }
             }.map(\.name))
+            if let only, !only.isEmpty { names.formIntersection(only) }
         }
         if byName[Self.always] != nil { names.insert(Self.always) }
         let ordered = names.sorted { Self.rank($0) == Self.rank($1) ? $0 < $1 : Self.rank($0) < Self.rank($1) }

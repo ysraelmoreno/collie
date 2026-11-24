@@ -138,14 +138,15 @@ enum ReviewVerdict {
     /// valid reject with at least one `confirmed` finding. Anything else is a note: an approve, a reject with only
     /// minor/nit (or a blocker without file and line), a mute or invalid persona ("sem parecer: [p] ..."). No valid
     /// verdict at all (none answered, all mute or invalid) is `silent`, the note "sem parecer: <motivo>".
-    static func aggregate(_ verdicts: [PersonaVerdict]) -> ReviewOutcome {
+    /// A1: `threshold` "blocker" (`factory.review.threshold`): only a blocker vetoes, a major is a note; else (nil, "major") as before.
+    static func aggregate(_ verdicts: [PersonaVerdict], threshold: String? = nil) -> ReviewOutcome {
         let vetoes = verdicts.compactMap { v -> String? in
-            let found = v.invalid == nil && !v.approved ? v.findings.filter(confirmed) : []
+            let found = v.invalid == nil && !v.approved ? v.findings.filter { confirmed($0, threshold: threshold) } : []
             return found.isEmpty ? nil : "[\(v.persona)] " + found.map(\.text).joined(separator: "; ")
         }
         let notes = verdicts.flatMap { v -> [String] in
             if let invalid = v.invalid { return ["\(reviewAdvisoryNone): [\(v.persona)] \(invalid)"] }
-            return v.findings.filter { v.approved || !confirmed($0) }.map { "[\(v.persona)] \($0.text)" }
+            return v.findings.filter { v.approved || !confirmed($0, threshold: threshold) }.map { "[\(v.persona)] \($0.text)" }
         }
         guard vetoes.isEmpty else {
             return ReviewOutcome(approved: false, reason: "revisor recusou: " + vetoes.joined(separator: " | "), notes: notes)
@@ -155,8 +156,8 @@ enum ReviewVerdict {
     }
 
     /// A1: a finding that can veto: blocker or major, with file, line and claim filled in.
-    static func confirmed(_ f: ReviewFinding) -> Bool {
-        f.severity.blocks && f.line != nil && !(f.file ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+    static func confirmed(_ f: ReviewFinding, threshold: String? = nil) -> Bool {
+        (threshold == "blocker" ? f.severity == .blocker : f.severity.blocks) && f.line != nil && !(f.file ?? "").trimmingCharacters(in: .whitespaces).isEmpty
             && !f.claim.trimmingCharacters(in: .whitespaces).isEmpty
     }
 

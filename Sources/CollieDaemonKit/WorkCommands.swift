@@ -587,6 +587,7 @@ extension CommandRouter {
         if let n = WorkStatusText.notifyLine(w) { lines.append(n) }
         if let n = WorkStatusText.modelLine(w) { lines.append(n) }   // M5.6
         if let n = WorkStatusText.reviewLine(w) { lines.append(n) }   // F2 R1
+        lines += WorkStatusText.originLines(w)   // A1: none without a factory profile
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),

@@ -138,7 +138,18 @@ public enum WorkStatusText {
     public static func reviewLine(_ w: Work) -> String? {
         guard let l = w.loop, l.review == true else { return nil }
         return "revisão: ligada, personas " + (l.personas.map { RerailText.clean($0.joined(separator: ", "), max: 200) } ?? "auto")
+            + (l.reviewOnly.map { " (só " + RerailText.clean($0.joined(separator: ", "), max: 200) + ")" } ?? "")
+            + (l.reviewThreshold.map { ", veto a partir de " + RerailText.clean($0, max: 10) } ?? "")
             + (l.reviewerModel.map { ", revisor " + RerailText.clean($0, max: 100) } ?? "")
+    }
+    /// A1: one short line per value the base's `factory` could set, saying where it came from ("revisão: perfil"), then
+    /// the `destructive` warning. None: the base had no `factory` (the loop as before).
+    public static func originLines(_ w: Work) -> [String] {
+        guard let l = w.loop, let o = l.origins else { return [] }
+        let lines = [("review", "revisão"), ("budget", "orçamento"), ("tries", "tentativas")].compactMap { k, label in
+            o[k].map { "origem \(label): " + RerailText.clean($0, max: 10) }
+        }
+        return lines + (l.destructive.map { ["aviso: factory.guardrails.destructive tem \($0) padrão(ões); ainda não bloqueia comando"] } ?? [])
     }
     /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
     public static func workerLabel(_ t: WorkTask) -> String {

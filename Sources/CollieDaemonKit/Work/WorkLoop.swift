@@ -236,6 +236,7 @@ actor WorkLoop {
     func run(work id: UUID, dir: URL) async -> WorkLoopState.State {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
+        let started = host.now()   // A6: the auto-land summary's start
         // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
         // F2 U1: reviewLoopConfigBase, `~/.claude.json` before the run's first judged agent: one base for every attempt
         // F2 V3: the reviewers' folder trusted first, so the write never counts as "changed during the attempt"
@@ -272,6 +273,8 @@ actor WorkLoop {
         }
         // A4: the run finished with `--auto-land`: the land's conditions, then the land, or a stop of its own
         if end == .finished, !stopping.contains(id), let al = (try? await store.get(id))?.loop?.autoLand { (end, stop) = await autoLand(work: id, al, dir: dir) }
+        // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line
+        await autoLandSummary(work: id, started: started, stop: stop, dir: dir)
         stopping.remove(id)
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
@@ -1221,25 +1224,21 @@ actor WorkLoop {
 /// the paddock still a factory's, the gate of the profile committed at the base green on the paddock's HEAD, the last
 /// attempt of every task reviewed clean, the local CI green, a clean tree with no other agent busy and HEAD where the
 /// gate and the CI judged it, then `paddock land` (merge only) by the command's own path. Fail closed: each failure stops
-/// the loop with its own code and lands nothing; every outcome calls the owner (`notifyOwner`).
+/// the loop with its own code and lands nothing; A6: the run's end calls the owner once (`autoLandSummary`).
 extension WorkLoop {
     static let autoLandHint = "collie work status"
 
     func autoLand(work id: UUID, _ al: WorkLoopState.AutoLand, dir: URL) async -> (WorkLoopState.State, WorkLoopState.Stop?) {
         guard let w = try? await store.get(id) else { return (.stopped, .init(.workGone)) }
-        let title = RerailText.clean(w.title, max: 80)
-        func tell(_ s: WorkLoopState.Stop) async { await host.notifyOwner("Collie: laço \"\(title)\": \(s.label). Veja: \(Self.autoLandHint)") }
         // ponytail: a task deferred (or still open) is no land and no stop: the loop finished as always, the owner is told
         let left = w.tasks.filter { $0.state != .done && $0.state != .abandoned }
         guard left.isEmpty else {
             await note(id, "[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado")
-            await host.notifyOwner("Collie: laço \"\(title)\" terminou sem integrar: \(left.count) tarefa(s) não feitas. Veja: \(Self.autoLandHint)")
             return (.finished, nil)
         }
         let stop = await landConditions(id, w, al, dir)
         await phase(id, nil)
         guard let stop else { return (.finished, nil) }
-        await tell(stop)
         return (stop.code == .landed ? .finished : .stopped, stop)
     }
 

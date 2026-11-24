@@ -280,6 +280,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         public static let defaultCI = "scripts/ci/run-tests.sh", defaultTimeout = 1800
         public var gate: String; public var ci: String; public var timeout: Int
         public var before: String?, after: String?
+        /// A6: the absolute path of the run's summary (`<daemon root>/work-loops/<work>/autoland/<stamp>.md`, 0444);
+        /// nil: none written yet.
+        public var summary: String?
         public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout) { self.gate = gate; self.ci = ci; self.timeout = timeout }
     }
     public var autoLand: AutoLand?

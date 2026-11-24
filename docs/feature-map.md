@@ -179,6 +179,28 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
   usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
   aviso "Laço iniciado" dizem "portão (collie-work.json)".
+- **Doutor da fábrica (U3):** `collie factory doctor [--json] [--min 0-3] [--terminal]` (só CLI) dá nota 0 a 3 por
+  camada (`static`, `judge`, `verification`, `review`, `prose`, `guardrails`; FRACO 0-1, OK 2, FORTE 3) com evidência
+  e próxima ação, lendo `collie-work.json` (com `factory`, U1), os scripts que os comandos citam e os `check-*.sh` (até
+  20, 64 KB cada), caminhos até profundidade 4, CI (`.github/workflows/*.yml`, `Makefile`) e `.gitignore`. Núcleo puro
+  `FactoryDoctor` em CollieCore; leitor `FactoryDoctorReader` em `FactoryCommands.swift` com as regras de
+  `WorkConfigFile` (sem link simbólico, arquivo regular, limite). Sai 1 se alguma camada < `--min` (padrão 1); `--json`
+  imprime o `Report`. Só leitura: nunca executa nada.
+- **Catraca da fábrica (U5):** `collie factory ratchet <check|update|raise> <nome> [--reason] [--terminal]` (só CLI):
+  roda o `measure` de `factory.static.ratchets` uma vez (bash no projeto, `RouterLoopHost.runCheck` sem sandbox, 600 s),
+  lê a saída como linhas `<chave> <n>` e compara com o arquivo `baseline`. `check` sai 0 só se igual (melhorou também sai
+  1, como `scripts/ci/lint.sh`: rode `update` e commite); `update` só abaixa; `raise` sobe com razão registrada como
+  `# <data>: <chave> <antes> -> <depois>: <razão>` no arquivo. Núcleo puro `Ratchet` em CollieCore (também modo lista,
+  `compareList`, para o `ci-skip`); `FactoryRatchet` em `FactoryCommands.swift`: baseline confinado ao projeto (sem `..`,
+  sem link simbólico) e gravado atomicamente (temporário + `rename`). `lint.sh`/`ci-skip.txt` ainda não migrados.
+- **Tarefa-isca da fábrica (U4):** `collie factory bait <list|report> [--json] [--terminal]` (só CLI, só leitura):
+  `list` mostra o catálogo `docs/fabrica/iscas/catalogo.json` do projeto (5 iscas: `logica`, `teste-fraco`,
+  `segredo-no-diff`, `corrida`, `spec-editado`; patches em `docs/fabrica/iscas/patches/`, base do check em
+  `docs/fabrica/iscas/base/`); `report` dá a taxa de captura por camada e por persona, as iscas que passaram e o custo,
+  de `.collie/factory/bait-results.json`. O doctor lê o mesmo arquivo: cada isca que passou tira 1 da camada dela.
+  Núcleo puro `FactoryBait`/`BaitResults` em `Sources/CollieCore/FactoryBait.swift` (estrito, `version` 1, caminhos
+  com a regra da U1). A execução é a skill `docs/fabrica/skill/factory-bait/SKILL.md` (cópia `git clone --local` fora
+  do repositório, ciclo normal com `--review`, nunca push).
 - **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
   não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
   conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.

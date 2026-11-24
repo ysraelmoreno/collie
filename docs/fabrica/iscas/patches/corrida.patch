@@ -1,0 +1,16 @@
+diff --git a/Sources/Isca/Contador.swift b/Sources/Isca/Contador.swift
+new file mode 100644
+index 0000000..3148d51
+--- /dev/null
++++ b/Sources/Isca/Contador.swift
+@@ -0,0 +1,10 @@
++import Foundation
++
++/// Conta eventos vindos de várias threads.
++public final class Contador: @unchecked Sendable {
++    public private(set) var total = 0
++    public init() {}
++    public func registrar(_ n: Int) {
++        DispatchQueue.concurrentPerform(iterations: n) { _ in total += 1 }
++    }
++}

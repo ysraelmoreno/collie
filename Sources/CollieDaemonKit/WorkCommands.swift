@@ -516,6 +516,13 @@ extension CommandRouter {
         case "work.stop": return try await workStop(try target())
 
         case "work.config": return try workConfig(try target())   // M13.1: read only, runs nothing
+        case "factory.doctor":   // U3: routed here for the same reach rules; read only, runs nothing
+            return try factoryDoctor(try target(), min: Int(try num(r, "min", min: 0, max: 3) ?? 1))
+        case "factory.bait.list", "factory.bait.report":   // U4: read only, runs nothing
+            return try factoryBait(try target(), report: r.command == "factory.bait.report")
+        case "factory.ratchet.check", "factory.ratchet.update", "factory.ratchet.raise":   // U5: runs the ratchet's measure once
+            let action = FactoryRatchet.Action(rawValue: String(r.command.dropFirst("factory.ratchet.".count)))!
+            return try await factoryRatchet(try target(), action, name: try text("name"), reason: str(r, "reason"))
 
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }

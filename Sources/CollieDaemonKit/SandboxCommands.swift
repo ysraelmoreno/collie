@@ -19,6 +19,8 @@ extension CommandRouter {
         switch r.command {
         case "access.request":
             guard let me = caller else { throw ProtocolError(code: .invalidArgs, message: "'access.request' is sent from a terminal") }
+            // F4 1: a loop's reviewer has no card to show (`raise` hushes it, V4): say so, never "mostrado ao usuário"
+            if loopReviewers.contains(me.id) { return .object(["shown": .bool(false), "message": .string(Self.reviewerAccessMessage)]) }
             guard sandboxed(me) else { throw ProtocolError(code: .invalidArgs, message: "'\(me.name)' has no sandbox (terminal livre)") }
             let read = flag(r, "read"), write = flag(r, "write")
             guard read != write else { throw ProtocolError(code: .invalidArgs, message: "pass one of --read or --write") }
@@ -148,6 +150,8 @@ extension CommandRouter {
         }
         return .object(["mode": .string(sandboxMode.rawValue)])
     }
+
+    static let reviewerAccessMessage = "revisor do laço: nada é liberado durante a revisão"
 
     var sandboxHomeDir: URL { config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()) }
 

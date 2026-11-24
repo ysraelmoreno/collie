@@ -497,9 +497,43 @@ extension WorkCommandTests {
             let path = repo.appendingPathComponent("x.txt").path
             await d.router.raiseForTests(SandboxDenial(terminal: rev, op: "write", path: path))
             await d.router.raiseForTests(SandboxDenial(terminal: other.uuid, op: "write", path: path))
+            // F4 2: a lane (strict, no reviewer) keeps today's way: its denial is a card too
+            let pad = Paddock(id: UUID(), name: "p", repoRoot: repo.path, path: repo.path, branch: "collie/p", baseBranch: "main")
+            await d.router.f4AddPaddock(pad)
+            let lanePath = scratch.appendingPathComponent("paddocks/lane-v4-a").path
+            let lane = TerminalRecord(id: UUID(), name: "w-a-t1", preset: .shell, command: nil, cwd: lanePath, isShepherd: false,
+                                      paddockId: pad.id, projectRoot: lanePath)
+            await d.router.f4AddTerminal(lane)
+            #expect(await d.router.lanePaddock(of: lane) != nil)
+            await d.router.raiseForTests(SandboxDenial(terminal: lane.id, op: "write", path: lanePath + "/y.txt"))
             let cards = await d.router.accessCards
             #expect(cards.cards.keys.allSatisfy { $0.terminal != rev }, "the reviewer's denial made a card")
             #expect(cards.silent[rev] == 1)
+            // F4 2: fails if `raise` hushed every terminal while a reviewer stands
+            #expect(cards.cards.keys.contains { $0.terminal == other.uuid }, "the ordinary terminal's denial made no card")
+            #expect(cards.silent[other.uuid] == nil)
+            #expect(cards.cards.keys.contains { $0.terminal == lane.id }, "the lane's denial made no card")
+            #expect(cards.silent[lane.id] == nil)
+            await d.router.loopDismiss(rev)
+        }
+    }
+
+    /// F4 1: a loop reviewer's `access.request` is not shown (its denials are hushed, V4): `shown: false`, its own message.
+    @Test func reviewerAccessRequestIsNotShown() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("f4-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true)
+            let r = Request(id: "loop", terminalId: s.id, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let rev = try await d.router.loopSummon(r, as: s.uuid, scratch: scratch)
+            let t = Term(id: rev.uuidString, token: try await tokenOf(d, rev.uuidString))
+            let res = try await work(d, p, t, "access.request", ["path": repo.appendingPathComponent("x.txt").path], flags: ["write"])
+            guard case .object(let o)? = res.result else { Issue.record("\(res)"); return }
+            #expect(o["shown"] == .bool(false))
+            #expect(o["message"] == .string(CommandRouter.reviewerAccessMessage))
+            #expect(await d.router.accessCards.cards.isEmpty)
             await d.router.loopDismiss(rev)
         }
     }
@@ -573,3 +607,5 @@ extension WorkCommandTests {
         }
     }
 }
+
+private extension CommandRouter { func f4AddPaddock(_ p: Paddock) { ws.paddocks.append(p) }; func f4AddTerminal(_ t: TerminalRecord) { ws.terminals.append(t) } }

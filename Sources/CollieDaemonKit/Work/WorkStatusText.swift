@@ -146,9 +146,11 @@ public enum WorkStatusText {
     /// the `destructive` warning. None: the base had no `factory` (the loop as before).
     public static func originLines(_ w: Work) -> [String] {
         guard let l = w.loop, let o = l.origins else { return [] }
-        let lines = [("review", "revisão"), ("budget", "orçamento"), ("tries", "tentativas")].compactMap { k, label in
-            o[k].map { "origem \(label): " + RerailText.clean($0, max: 10) }
-        }
+        let lines = [("review", "revisão"), ("budget", "orçamento"), ("tries", "tentativas")].compactMap { k, label -> String? in
+            // nit (B1): --no-review is "revisão: desligada", never "origem revisão: flag"
+            if k == "review", o[k] == "flag", l.review != true { return "revisão: desligada (--no-review)" }
+            return o[k].map { "origem \(label): " + RerailText.clean($0, max: 10) }
+        } + (o["budgetCut"].map { ["orçamento do perfil (\(RerailText.clean($0, max: 10)) s) cortado para \(l.budget ?? 0) s, o teto do laço"] } ?? [])
         return lines + (l.destructive.map { ["aviso: factory.guardrails.destructive tem \($0) padrão(ões); ainda não bloqueia comando"] } ?? [])
     }
     /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
@@ -237,13 +239,27 @@ public enum WorkStatusText {
     /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits
     /// (`--parallel` when over 1), then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     /// `gateFromFile` (M13.2): the gate came from `collie-work.json`, not `--gate`: the first line names it and its source.
-    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState, gateFromFile: Bool = false) -> String {
+    /// B1: `profileReviewOff`: the profile asks for a review `--no-review` turned off. The review as it runs (its
+    /// personas, the profile's "só", its threshold) is told here as on the card.
+    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState, gateFromFile: Bool = false, profileReviewOff: Bool = false) -> String {
         let gate = gateFromFile ? l.gate.map { ", portão (\(ProjectWorkConfig.fileName)) «\(RerailText.clean($0, max: 200))»" } ?? "" : ""
         var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
-            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate + ". Parar: collie work stop."]
+            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate
+            + reviewText(l, profileReviewOff: profileReviewOff) + ". Parar: collie work stop."]
         lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
         return bounded(lines, limit: RerailText.limit)
+    }
+
+    /// ", revisão …" for the trusted notice; "" with no review and no profile review turned off.
+    static func reviewText(_ l: WorkLoopState, profileReviewOff: Bool) -> String {
+        let file = " (\(ProjectWorkConfig.fileName))"
+        if l.review == true {
+            return ", revisão por personas: " + (l.personas.map { $0.map { "«\(RerailText.clean($0, max: 60))»" }.joined(separator: " ") } ?? "auto")
+                + (l.reviewOnly.map { " (só " + $0.map { "«\(RerailText.clean($0, max: 60))»" }.joined(separator: " ") + ")" } ?? "")
+                + (l.reviewThreshold == "blocker" ? ", veto só por blocker\(file)" : "")
+        }
+        return profileReviewOff ? ", sem revisão: --no-review desliga a do perfil\(file)" : ""
     }
 
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".

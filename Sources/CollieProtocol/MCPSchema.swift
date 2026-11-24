@@ -1,4 +1,14 @@
 public enum MCPSchema {
+    /// B1: params of an MCP tool that are the owner's alone ("never by MCP"): left out of the schema, and a call that
+    /// passes one anyway is refused (`refusal`) before it reaches the daemon.
+    public static let ownerOnlyParams: [String: Set<String>] = ["paddock.create": ["factory"]]
+
+    /// Why an MCP call of `command` with `args` is refused here; nil: it goes on to the daemon.
+    public static func refusal(command: String, args: [String: JSONValue]) -> String? {
+        guard let bad = ownerOnlyParams[command]?.first(where: { args[$0] != nil }) else { return nil }
+        return "'\(bad)' of '\(command)' is the owner's alone (the app or the owner's CLI), never by MCP"
+    }
+
     /// `shepherd`: also list the Shepherd-only tools (the daemon still decides who may call them).
     /// `plugins`: plug-in ids whose panel-bound commands to list (nil = all); core, `paddock.*`, `memory.*`, `panel.*`
     /// and panel-free plug-in commands always.
@@ -11,7 +21,7 @@ public enum MCPSchema {
         return (Commands.core + all.flatMap(\.commands)).filter { $0.exposedToMCP && (shepherd || !$0.shepherdOnly) && !hidden.contains($0.name) }.map { c in
             let ext = external[c.name]
             var props: [String: JSONValue] = [:]
-            for p in c.params {
+            for p in c.params where !(ownerOnlyParams[c.name]?.contains(p.name) ?? false) {
                 let type = p.kind == .int ? "integer" : p.kind == .flag ? "boolean" : p.kind == .list ? "array" : "string"
                 var prop: [String: JSONValue] = ["type": .string(type), "description": .string(ext.map { String(("[plug-in \($0)] " + p.help).prefix(200)) } ?? p.help)]
                 if p.kind == .list { prop["items"] = .object(["type": .string("string")]) }

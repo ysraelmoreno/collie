@@ -81,7 +81,8 @@ extension CommandRouter {
         // (the loop's base), never the tree's: an agent's edit, committed or not, never picks the gate
         // A1: read always now (the `factory` block applies whatever the flags); its warnings only when a flag was left out,
         // as before. An invalid `factory` is the one refusal, before the card.
-        let file = await Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        // B1: its warnings always now (a file ignored drops the review, budget and tries too, flags or not)
+        let file = await Self.loopFileDefaults(dir)
         if let refusal = file.refusal { throw invalid(refusal) }
         let fileConfig = file.config, factory = file.config?.factory
         let gate = gateFlag ?? fileConfig?.gate, precheck = precheckFlag ?? fileConfig?.precheck
@@ -98,7 +99,8 @@ extension CommandRouter {
         let reviewFlag = flag(r, "review"), noReview = flag(r, "no-review")
         if reviewFlag && noReview { throw invalid("--review and --no-review together: choose one") }
         let fromProfile = factory != nil && file.reviewPresent && !reviewFlag && !noReview
-        let review = try await Self.loopReview(review: reviewFlag || fromProfile, personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
+        let review = try await Self.loopReview(review: reviewFlag || fromProfile, personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir,
+                                               fromProfile: fromProfile, only: fromProfile ? factory?.personas ?? [] : [])
         let triesFlag = try num(r, "tries", max: Self.loopTriesMax), budgetFlag = try num(r, "budget", max: Self.loopBudgetMax)
         // ponytail: the profile allows a budget up to 86400 s, the engine's ceiling is lower: capped, not refused
         let profileBudget = factory?.budgetSeconds.map { min(Double($0), Self.loopBudgetMax) }
@@ -112,6 +114,8 @@ extension CommandRouter {
                                  spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck,
                                  review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel)
         var warning = file.warning
+        // B1: the profile asks for a review the flag turned off: the card and the trusted notice say so
+        let profileReviewOff = factory != nil && file.reviewPresent && noReview
         if let factory {
             func origin(_ flag: Bool, _ profile: Bool) -> String { flag ? "flag" : profile ? "perfil" : "padrão" }
             loop.origins = ["review": origin(reviewFlag || noReview, file.reviewPresent), "budget": origin(budgetFlag != nil, profileBudget != nil),
@@ -119,14 +123,17 @@ extension CommandRouter {
             if review.on, file.reviewPresent, review.personas == nil, !factory.personas.isEmpty { loop.reviewOnly = factory.personas }
             if review.on, file.reviewPresent { loop.reviewThreshold = factory.threshold.rawValue }
             if !factory.destructive.isEmpty { loop.destructive = factory.destructive.count }
-            // ponytail: no paddock carries the factory mark until A2/A4: factory-paddock is always only a warning here
+            // nit (B1): the engine's ceiling cuts the profile's budget; `work status` says so
+            if let b = factory.budgetSeconds, Double(b) > Self.loopBudgetMax, budgetFlag == nil { loop.origins?["budgetCut"] = String(b) }
+            // ponytail: auto-land is A4; until then factory-paddock only warns, by the mark (A2) the paddock carries or not
             if factory.land == .factoryPaddock {
-                let w = "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
+                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock', mas o auto-land ainda não existe (A4); segue manual"
+                    : "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
                 warning = [warning, w].compactMap { $0 }.joined(separator: "; ")
             }
         }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
-        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
+        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from, profileReviewOff: profileReviewOff) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
@@ -138,7 +145,7 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "the loop did not start")
             }
             started = true   // the reservation now belongs to the loop
-            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate)
+            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate, profileReviewOff: profileReviewOff)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
             return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], warning)
         }
@@ -160,19 +167,19 @@ extension CommandRouter {
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
-    /// invalid one nil with its one-line warning (only when `needed`: a flag was left out). M13.3: read from the commit at
+    /// invalid one nil with its one-line warning (B1: always, flags or not). M13.3: read from the commit at
     /// HEAD (by its sha), never from the working tree. A1: read always; an invalid `factory` is `refusal` (the strict
     /// reader's line), never a warning; `reviewPresent`: the base's `factory` has a `review` key.
-    static func loopFileDefaults(_ dir: URL, needed: Bool) async -> (config: ProjectWorkConfig?, warning: String?, refusal: String?, reviewPresent: Bool) {
+    static func loopFileDefaults(_ dir: URL) async -> (config: ProjectWorkConfig?, warning: String?, refusal: String?, reviewPresent: Bool) {
         let base = (try? await GitRunner.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], in: dir, timeout: .seconds(30)))?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         // review A2: the loop reads the commit, so an edit or a new file the owner has not committed is not what runs
-        let dirty = needed ? (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
-                                                       in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" : ""
+        let dirty = (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
+                                              in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let uncommitted = dirty.isEmpty ? nil : "aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas"
         func ignored(_ m: String) -> String? {
-            needed ? "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
-                + RerailText.clean(m, max: 300).replacingOccurrences(of: "\n", with: " ") : nil
+            [uncommitted, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão, pré-check, revisão, orçamento nem tentativas "
+                + "vindos do arquivo): " + RerailText.clean(m, max: 300).replacingOccurrences(of: "\n", with: " ")].compactMap { $0 }.joined(separator: "; ")
         }
         switch await WorkConfigFile.read(base: base, dir: dir) {
         case .absent: return (nil, uncommitted, nil, false)
@@ -230,7 +237,10 @@ extension CommandRouter {
     /// at HEAD is refused. Either without `--review`, a persona whose
     /// name is no file in `docs/fabrica/personas/` AS COMMITTED AT HEAD (the loop's base: the worktree's edits never pick
     /// who judges), or a model that is no model name: invalidArgs. `personas` nil: auto.
-    static func loopReview(review: Bool, personas: String?, reviewerModel: String?, dir: URL) async throws(ProtocolError)
+    /// B1: `fromProfile`: the profile's `factory.review` turned it on (its refusal says so); `only`: its persona names,
+    /// checked against the catalog at HEAD like `--personas`.
+    static func loopReview(review: Bool, personas: String?, reviewerModel: String?, dir: URL,
+                           fromProfile: Bool = false, only: [String] = []) async throws(ProtocolError)
         -> (on: Bool, personas: [String]?, reviewerModel: String?) {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         guard review else {
@@ -240,7 +250,14 @@ extension CommandRouter {
         if let reviewerModel { try ClaudeModel.validate(reviewerModel) }
         // F2 X4: no catalog at HEAD is refused now, not after an agent's whole turn
         let known = await committedPersonas(dir)
-        guard !known.isEmpty else { throw invalid("--review: sem personas em docs/fabrica/personas no HEAD") }
+        guard !known.isEmpty else {
+            throw invalid(fromProfile ? "factory.review do \(ProjectWorkConfig.fileName) liga a revisão, mas não há personas em HEAD (docs/fabrica/personas)"
+                          : "--review: sem personas em docs/fabrica/personas no HEAD")
+        }
+        if let bad = only.first(where: { !known.contains($0) }) {
+            throw invalid("factory.review.personas do \(ProjectWorkConfig.fileName): persona desconhecida '\(RerailText.clean(bad, max: 60))'; "
+                          + "conhecidas (\(personasDir), em HEAD): " + known.sorted().joined(separator: ", "))
+        }
         guard let personas, personas != "auto" else { return (true, nil, reviewerModel) }
         let names = TaskScheduler.list(personas)
         if let bad = names.first(where: { !known.contains($0) }) {
@@ -333,7 +350,7 @@ extension CommandRouter {
     /// and nothing the owner would not see is ever approved.
     /// `fromFile`: the gate / pre-check came from `collie-work.json` (M13.2), not from the flag: the card says so.
     static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String,
-                             fromFile: (gate: Bool, precheck: Bool) = (false, false)) -> String? {
+                             fromFile: (gate: Bool, precheck: Bool) = (false, false), profileReviewOff: Bool = false) -> String? {
         let file = " (\(ProjectWorkConfig.fileName))"
         func quoted(_ x: String) -> String {
             "«" + x.replacingOccurrences(of: "«", with: "‹").replacingOccurrences(of: "»", with: "›") + "»"
@@ -345,7 +362,10 @@ extension CommandRouter {
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + (l.review == true ? "revisão por personas: \(l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto")"
-               + (l.reviewerModel.map { ", revisor \(quoted($0))" } ?? "") + ". " : "")
+               + (l.reviewOnly.map { " (só " + $0.map(quoted).joined(separator: " ") + ")" } ?? "")
+               + (l.reviewThreshold == "blocker" ? ", veto só por blocker\(file)" : "")
+               + (l.reviewerModel.map { ", revisor \(quoted($0))" } ?? "") + ". "
+               : profileReviewOff ? "sem revisão: --no-review desliga a do perfil\(file). " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {

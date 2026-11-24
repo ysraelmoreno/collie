@@ -352,7 +352,8 @@ import CollieProtocol
         #expect(w.loop?.events?.contains { $0.kind == .landed } != true)
         #expect(w.loop?.autoLand?.after == nil && !w.notes.contains { $0.text.contains("git reset --hard") })
         #expect(w.notes.contains { $0.text.contains("nada a integrar") })
-        #expect(await r.host.autoLands().isEmpty && r.loop.takeNext(after: r.work) == nil)
+        #expect(await r.host.autoLands().isEmpty)
+        #expect(await r.loop.takeNext(after: r.work) == nil)
     }
 
     /// C3a: the clean review carries the HEAD it judged; a land whose HEAD is past it (commits after the review) vetoes.
@@ -560,7 +561,8 @@ private extension CommandRouter {
             await d.router.setFactoryMark(r.paddock, false)
             await d.router.loopEnded(r.a, starter: UUID(), paddock: r.paddock, next: r.chain)
             #expect(try await d.router.work.get(r.b)?.loop?.state == .queued)
-            #expect(await d.router.loopTask(r.b) == nil && !d.router.reserved(r.paddock))
+            #expect(await d.router.loopTask(r.b) == nil)
+            #expect(await !d.router.reserved(r.paddock))
             #expect(try await d.router.work.get(r.a)?.notes.last?.text.contains("não está mais marcado como fábrica") == true)
         }
         try await withDaemon { d, _ in
@@ -570,7 +572,8 @@ private extension CommandRouter {
             try await commit("collie-work.json", factoryProfileText(gate: false), in: repo)
             await d.router.loopEnded(r.a, starter: UUID(), paddock: r.paddock, next: r.chain)
             #expect(try await d.router.work.get(r.b)?.loop?.state == .queued)
-            #expect(await d.router.loopTask(r.b) == nil && !d.router.reserved(r.paddock))
+            #expect(await d.router.loopTask(r.b) == nil)
+            #expect(await !d.router.reserved(r.paddock))
             #expect(try await d.router.work.get(r.a)?.notes.last?.text.contains("factory doctor") == true)
         }
     }

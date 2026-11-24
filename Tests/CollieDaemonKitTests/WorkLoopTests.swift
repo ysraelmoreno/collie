@@ -121,7 +121,14 @@ actor LoopFakeHost: LoopHost {
     /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
     var reviewTimeouts: Set<String> = []
     func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    /// P1: answers (by name or persona) taken one per ask, before `reviewAnswers` (a retried review gets the next one).
+    var reviewAnswerQueue: [String: [String?]] = [:]
+    func queueReviewAnswers(_ who: String, _ texts: [String?]) { reviewAnswerQueue[who] = texts }
+    /// P1: reviewers (by name) whose summon the router refuses.
+    var reviewSummonRefusals: Set<String> = []
+    func refuseReviewSummon(_ name: String) { reviewSummonRefusals.insert(name) }
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        if reviewSummonRefusals.contains(name) { throw ProtocolError(code: .unavailable, message: "sem vaga\u{1b}[31m") }
         let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
         events.append("reviewer \(name)")
         reviewerModels[name] = loop.model ?? "-"
@@ -152,6 +159,12 @@ actor LoopFakeHost: LoopHost {
         if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
         let nonce = Self.nonce(in: prompt)
+        let queued = reviewAnswerQueue[name] != nil ? name : persona
+        if var q = reviewAnswerQueue[queued], !q.isEmpty {
+            let next = q.removeFirst(); reviewAnswerQueue[queued] = q
+            guard let next else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+            return next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? next : prompt + "\n" + next.replacingOccurrences(of: "<NONCE>", with: nonce)
+        }
         guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {
             return prompt + "\n" + ReviewPrompt.endMarker(nonce) + "\n" + #"{"persona":"\#(persona)","nonce":"\#(nonce)","verdict":"approve","findings":[]}"#
         }

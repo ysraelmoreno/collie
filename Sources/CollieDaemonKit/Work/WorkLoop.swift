@@ -629,6 +629,7 @@ actor WorkLoop {
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, configSilenced: configSilenced, agentOpen: r.agentOpen, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
             if ran.budgetOut { return .reviewBudgetOut }
+            r.pending += ran.events   // P1: the mute causes and the retry, written with the review's own record
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
             // F2 Z3b: and the agent configs by their metadata (a file inside an ignored folder the status shows as one line)

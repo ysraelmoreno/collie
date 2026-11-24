@@ -146,6 +146,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case integrated, integrationRetry
         /// M10.2: the work's `--precheck` failed / passed at the end of a turn (detail: `exit n` or `timeout`).
         case precheckFailed, precheckPassed
+        /// P1: a persona gave no review answer (detail: why) / every persona did and the review ran once more (detail: that).
+        case reviewerMute, reviewRetried
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

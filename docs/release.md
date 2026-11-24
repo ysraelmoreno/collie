@@ -2,6 +2,27 @@
 
 Só para distribuir a outros Macs. Uso local: `scripts/bundle-app.sh` (identidade `Collie Local`).
 
+## Versionamento
+
+A versão vem da tag anotada `vX.Y.Z` (não há arquivo de versão). Enquanto estivermos antes do 1.0, a regra é SemVer com o
+sentido abaixo. O número diz ao usuário o tamanho da mudança; ele não é um contador de releases.
+
+| Sobe | Quando | Exemplo |
+|---|---|---|
+| **Minor** (`0.2.0`, `0.3.0`) | entra funcionalidade nova, ou muda um comportamento que o usuário vê (comando, flag, tela, formato de arquivo) | a Fábrica (`work run --review`, `factory doctor/ratchet/bait/init`) |
+| **Patch** (`0.2.1`) | só correção, sem funcionalidade nova e sem mudar comportamento documentado | o conserto de um painel em branco |
+| **Major** (`1.0.0`) | quando o dono declarar a API estável (comandos, protocolo, formatos de arquivo) | não antes disso |
+
+- Uma seção **Added** no CHANGELOG sempre pede minor. Se a seção `[Unreleased]` tem **Added**, o próximo número NÃO é um patch.
+- **Mudança que quebra** (remove ou renomeia comando, flag ou campo de arquivo; muda formato) antes do 1.0 também sobe o minor e vai
+  em **Changed** com a palavra "quebra", com o caminho de migração.
+- **Preview:** uma funcionalidade grande que ainda não foi validada em projeto real entra marcada "(preview)" no CHANGELOG e na
+  nota da release; ela pode mudar entre minors sem aviso de migração. Tirar o "preview" é decisão do dono, depois da validação.
+- **Esquemas de arquivo têm versão própria**, independente da do app: `collie-work.json` e o perfil `factory` (`"version": 1`) mudam
+  de versão só quando o formato muda de forma incompatível. O CHANGELOG cita as duas quando for o caso.
+- Antes da tag: a seção `[Unreleased]` vira `[X.Y.Z] — data`, o número segue a tabela acima (confira o **Added**), a varredura de
+  segredos passa e o push da `main` vai sem force. Tag e release são sempre do dono.
+
 ## Uma vez só
 
 1. Apple Developer Program ativo (US$ 99/ano): <https://developer.apple.com/programs/>.

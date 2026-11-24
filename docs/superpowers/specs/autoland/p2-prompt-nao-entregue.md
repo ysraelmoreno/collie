@@ -20,3 +20,13 @@ As 3 tentativas do B1 coincidiram com a máquina em carga 21 (um build de releas
 Não mude `maxTries`, `deadline` nem a semântica de `usageLimit`.
 
 Check: `scripts/check-autoland-loop.sh p2`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.
+
+## Segunda tentativa: o que a revisão vetou nas tentativas 2 e 3 (leia antes de começar)
+
+Dois defeitos reais, achados pelas personas `correcao` e `simplicidade`; o resto da implementação anterior estava certo. Corrija exatamente estes dois pontos e cubra cada um com teste que FALHE sem a correção.
+
+1. **O teto de 2 refeitas é por TAREFA, não por tentativa.** `promptRetries` ficou no `AttemptMachine.State`, que é criado de novo a cada tentativa (init com `n` e `tries`): com `tries = 3` uma tarefa gastaria até 6 refeitas sem contar. O contador mora no nível da tarefa, no estado de execução do laço (`Run` em
+   `WorkLoop.perform`, ou o que já atravessa as tentativas da mesma tarefa, como o contador de tentativas) e é passado ao `State` inicial de cada tentativa; a refeita incrementa o contador da TAREFA. O aviso "não entregue 3 vezes seguidas" vale por tarefa. Teste: duas refeitas na tentativa 1 e uma não entregue na tentativa 2 contam como tentativa normal
+   (o total de refeitas grátis da tarefa nunca passa de 2).
+2. **Só o prompt INICIAL da tentativa.** O ramo `promptNotDelivered` NÃO vale para o `nudge` nem para o `precheckNudge` (que voltam à fase `.turn` por `talk()`): um agente que já fez um turno inteiro, ou já commitou e falhou no pré-check, não pode ser descartado e refeito só porque o prompt de nudge não chegou. Aplique o ramo só quando
+   `s.nudged == false && s.prechecked == false` (o prompt inicial); nos nudges o `.timeout` segue como antes (`turnTimedOut`/`turnFailed`, "o check decide"). Teste: não entregue num nudge e num precheckNudge NÃO refaz nem descarta o agente.

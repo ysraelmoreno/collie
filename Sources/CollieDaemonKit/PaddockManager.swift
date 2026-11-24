@@ -6,6 +6,8 @@ struct LandResult: Codable, Sendable {
     var mode: LandMode
     var commit: String?
     var prURL: String?
+    /// C3a: the base branch's HEAD read right before the merge (under the caller's claim); nil for a pr.
+    var before: String? = nil
 }
 
 /// Worktree-based paddocks over a git repo (the "pasture"), and folder paddocks (no git). No workspace state.
@@ -89,6 +91,8 @@ enum PaddockManager {
         }
         let cur = try await currentBranch(pasture)
         guard cur == fl.baseBranch else { throw fail("pasture is on '\(cur)', expected base branch '\(fl.baseBranch)'") }
+        // C3a: read here, right before the merge: equal to the commit after, the land made no commit (nothing to integrate)
+        let before = mode == .pr ? nil : try await git(["rev-parse", "HEAD"], in: pasture)
 
         /// On failure: list conflicted files, abort, throw.
         func run(_ args: [String], in dir: URL, abort: [String]) async throws(ProtocolError) {
@@ -128,7 +132,7 @@ enum PaddockManager {
         }
         let commit = try await git(["rev-parse", "HEAD"], in: pasture)
         f.status = .done; f.landedAt = Date()
-        return LandResult(mode: mode, commit: commit, prURL: nil)
+        return LandResult(mode: mode, commit: commit, prURL: nil, before: before)
     }
 
     /// The paddock's memory travels with its land: commits `.collie/memory` (or a legacy `.orq/memory`; only it) when it has changes.

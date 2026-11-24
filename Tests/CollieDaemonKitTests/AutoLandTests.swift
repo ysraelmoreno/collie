@@ -317,16 +317,65 @@ import CollieProtocol
         #expect(try JSONDecoder().decode(WorkArchive.self, from: a.encoded()).stopDetail == "1 de 1")
     }
 
-    /// The paddock's landed journal of the last 24 h (the fake clock's): one land an hour ago counts, one 25 h ago not.
+    /// The paddock's durable land record of the last 24 h (the fake clock's): one land an hour ago counts, one 25 h ago not.
     private static func pastLands(_ r: LoopRig, hoursAgo: [Double]) async throws {
-        let pid = try await r.get().paddockId
-        let old = try await r.store.start(title: "Antigo", terminal: UUID(), paddockId: pid, branch: "main")
         let now = r.host.now()
-        try await r.store.update(old.id) { w in
-            w.loop = WorkLoopState(tries: 1, timeout: 60, tasks: []); w.loop?.state = .finished
-            for h in hoursAgo { w.record(LoopEvent(at: now.addingTimeInterval(-h * 3600), kind: .landed, detail: "x -> y")) }
-            w.closedAt = now
+        await r.host.addLands(hoursAgo.map { now.addingTimeInterval(-$0 * 3600) })
+    }
+
+    /// C3a: the cap counts the paddock's own record, never a work's journal: a land, then the same work reopened and
+    /// run again (`$0.loop = loop`, its events gone) with the closed works pruned, still meets the cap.
+    @Test func theDailyCapSurvivesANewRunOfTheSameWorkAndThePruning() async throws {
+        let r = try await Self.rig(perDay: 1); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        #expect(await r.host.autoLands().count == 1)
+        try await r.store.update(r.work) {
+            var l = WorkLoopState(tries: 1, timeout: 60, tasks: ["a"]); l.review = true
+            l.autoLand = WorkLoopState.AutoLand(gate: "true", ci: "true", timeout: 60, perDay: 1)
+            $0.loop = l; $0.closedAt = nil; $0.tasks[0].state = .open
         }
+        #expect(try await r.get().loop?.events?.contains { $0.kind == .landed } != true)
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a2.swift", "let a = 2\n", in: $0) }))
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landDailyCap && w.loop?.stopReason?.detail == "1 de 1 em 24 h", "\(String(describing: w.loop?.stopReason))")
+        #expect(await r.host.lands == [.merge])
+    }
+
+    /// C3a: a merge that made no commit is no land: its own stop, no undo line, no event, nothing counted.
+    @Test func aMergeWithNoCommitIsLandNothing() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await r.host.setLandsNothing(true)
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landNothing, "\(String(describing: w.loop?.stopReason))")
+        #expect(w.loop?.events?.contains { $0.kind == .landed } != true)
+        #expect(w.loop?.autoLand?.after == nil && !w.notes.contains { $0.text.contains("git reset --hard") })
+        #expect(w.notes.contains { $0.text.contains("nada a integrar") })
+        #expect(await r.host.autoLands().isEmpty && r.loop.takeNext(after: r.work) == nil)
+    }
+
+    /// C3a: the clean review carries the HEAD it judged; a land whose HEAD is past it (commits after the review) vetoes.
+    @Test func aCommitAfterTheReviewVetoesTheLand() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        let head = try await GitRunner.run(["rev-parse", "HEAD"], in: r.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(try await r.get().tasks[0].reviewedHead == head)
+        var w = try await r.get()
+        #expect(await r.loop.reviewedHeadVeto(w, head: head, r.repo) == nil)
+        w.tasks[0].reviewedHead = String(repeating: "0", count: 40)
+        #expect(await r.loop.reviewedHeadVeto(w, head: head, r.repo)?.contains("não é o que a revisão aprovou") == true)
+        w.tasks[0].reviewedHead = nil
+        #expect(await r.loop.reviewedHeadVeto(w, head: head, r.repo) != nil)
+        // the engine: a done task approved clean at an older HEAD, a commit after it
+        let r2 = try await Self.rig(); defer { r2.cleanup() }
+        let old = try await GitRunner.run(["rev-parse", "HEAD"], in: r2.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await commit("depois.swift", "let x = 1\n", in: r2.repo)
+        try await r2.store.update(r2.work) {
+            $0.tasks[0].state = .done; $0.tasks[0].reviewClean = true; $0.tasks[0].review = "parecer: sem veto"; $0.tasks[0].reviewedHead = old
+        }
+        try await Self.expectStopped(r2, .landReviewVeto)
+        #expect(try await r2.get().notes.contains { $0.text.contains("commits depois da revisão") })
     }
 
     @Test func theDailyCapStopsTheChainAndCallsTheOwner() async throws {
@@ -383,20 +432,43 @@ import CollieProtocol
     }
 }
 
+/// C3a: a profile the factory doctor passes (static and judge at least 1), committed at `repo`'s HEAD.
+func commitFactoryProfile(_ repo: URL, gate: Bool = true) async throws {
+    let fm = FileManager.default
+    try fm.createDirectory(at: repo.appendingPathComponent("scripts/ci"), withIntermediateDirectories: true)
+    try "#!/bin/bash\nswift test --disable-sandbox\n".write(to: repo.appendingPathComponent("scripts/ci/gate.sh"), atomically: true, encoding: .utf8)
+    try "#!/bin/bash\nexit 0\n".write(to: repo.appendingPathComponent("scripts/ci/check-architecture.sh"), atomically: true, encoding: .utf8)
+    try await commit("collie-work.json", factoryProfileText(gate: gate), in: repo)
+}
+
+func factoryProfileText(gate: Bool = true) -> String {
+    """
+    { "version": 1, \(gate ? #""gate": "scripts/ci/gate.sh", "# : "")"precheck": "swift build --build-tests",
+      "smoke": "swift test --filter WorkLoopTests",
+      "areas": { "work": "swift test --filter WorkCommandTests" },
+      "factory": { "version": 1, "static": { "architecture": ["scripts/ci/check-architecture.sh"] },
+        "review": { "personas": ["correcao", "testes"], "threshold": "major" },
+        "guardrails": { "budgetSeconds": 14400, "maxTries": 3, "destructive": ["git push"], "land": "manual" } } }
+    """
+}
+
 private extension CommandRouter {
-    /// A paddock on `repo`, reserved as a running loop holds it.
-    func addChainPaddock(_ repo: URL) -> UUID {
-        let p = Paddock(id: UUID(), name: "fab", repoRoot: repo.path, path: repo.path, branch: "main", baseBranch: "main")
+    /// A paddock on `repo`, reserved as a running loop holds it (C3a: a factory's, as only a factory's loop chains).
+    func addChainPaddock(_ repo: URL, factory: Bool = true) -> UUID {
+        var p = Paddock(id: UUID(), name: "fab", repoRoot: repo.path, path: repo.path, branch: "main", baseBranch: "main")
+        p.factory = factory
         ws.paddocks.append(p); loopPaddocks.insert(p.id)
         return p.id
     }
+    func addPaddock(_ p: Paddock) { ws.paddocks.append(p) }
+    func setFactoryMark(_ id: UUID, _ on: Bool) { if let i = ws.paddocks.firstIndex(where: { $0.id == id }) { ws.paddocks[i].factory = on } }
     /// The first work's engine as it is once `engine.run` returned, before `loopEnded` (`stopping`: a `work stop` came then).
     func plantEnded(_ id: UUID, _ engine: WorkLoop, stopping: Bool) { workLoops[id] = (engine, Task {}, stopping) }
     func reserved(_ p: UUID) -> Bool { loopPaddocks.contains(p) }
     func loopTask(_ id: UUID) -> Task<Void, Never>? { workLoops[id]?.task }
     /// `chainLoop`, and what holds the instant it returns (no await in between: the chained engine cannot end yet).
     func chainProbe(_ c: WorkLoop.Chain, paddock: UUID, starter: UUID) async -> (ok: Bool, reserved: Bool, engine: Bool) {
-        let ok = await chainLoop(c, paddock: paddock, starter: starter)
+        let ok = await chainLoop(c, paddock: paddock, starter: starter) == nil
         return (ok, loopPaddocks.contains(paddock), workLoops[c.next] != nil)
     }
 }
@@ -408,6 +480,7 @@ private extension CommandRouter {
     private struct Rig { var a: UUID, b: UUID, paddock: UUID, chain: WorkLoop.Chain }
 
     private func rig(_ d: Daemon, _ repo: URL) async throws -> Rig {
+        try await commitFactoryProfile(repo)
         let pid = await d.router.addChainPaddock(repo)
         let a = try await d.router.work.start(title: "A", terminal: UUID(), paddockId: pid, branch: nil)
         try await d.router.work.update(a.id) { $0.loop = WorkLoopState(state: .finished, tries: 1, timeout: 60, tasks: []) }
@@ -475,6 +548,61 @@ private extension CommandRouter {
             }
             #expect(line?.contains("integrou 1 trabalho; parou em pedido pelo dono") == true, "\(line ?? "nenhuma")")
             #expect(line?.contains("segue na fila") == true)
+        }
+    }
+
+    /// C3a: before any agent of the next work runs, the paddock must still carry the factory mark and its doctor at
+    /// HEAD must still pass: else the work stays `queued`, no engine, the paddock freed, and the first work says why.
+    @Test func theNextWorkRechecksTheFactoryMarkAndTheDoctorAtHEAD() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let r = try await rig(d, repo)
+            await d.router.setFactoryMark(r.paddock, false)
+            await d.router.loopEnded(r.a, starter: UUID(), paddock: r.paddock, next: r.chain)
+            #expect(try await d.router.work.get(r.b)?.loop?.state == .queued)
+            #expect(await d.router.loopTask(r.b) == nil && !d.router.reserved(r.paddock))
+            #expect(try await d.router.work.get(r.a)?.notes.last?.text.contains("não está mais marcado como fábrica") == true)
+        }
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let r = try await rig(d, repo)
+            // the profile committed without its gate: static 0 at HEAD
+            try await commit("collie-work.json", factoryProfileText(gate: false), in: repo)
+            await d.router.loopEnded(r.a, starter: UUID(), paddock: r.paddock, next: r.chain)
+            #expect(try await d.router.work.get(r.b)?.loop?.state == .queued)
+            #expect(await d.router.loopTask(r.b) == nil && !d.router.reserved(r.paddock))
+            #expect(try await d.router.work.get(r.a)?.notes.last?.text.contains("factory doctor") == true)
+        }
+    }
+
+    /// C3a: `loopLand` with real git: the base before is read right before the merge; a land with commits is recorded
+    /// on the paddock (durable, persisted); one already integrated, or a paddock with nothing new, makes no commit:
+    /// before == after, nothing recorded (the engine stops it as `landNothing`).
+    @Test func loopLandReadsBeforeUnderTheClaimAndRecordsOnlyRealLands() async throws {
+        try await withDaemon { d, p in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            var k = try await PaddockManager.create(name: "k", repoRoot: repo, createdBy: nil)
+            k.factory = true
+            await d.router.addPaddock(k)
+            let dir = URL(fileURLWithPath: k.path)
+            try await commit("novo.swift", "let n = 1\n", in: dir)
+            let base = try await GitRunner.run(["rev-parse", "HEAD"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let one = try await d.router.loopLand(k.id, mode: .merge, message: "land 1")
+            #expect(one.before == base && one.after != base)
+            #expect(await d.router.loopAutoLands(k.id).count == 1)
+            let wsId = await d.router.ws.id
+            #expect(try await WorkspaceStore(paths: p).load(wsId).paddocks.first { $0.id == k.id }?.autoLands?.count == 1)
+            // already integrated: "Already up to date", no commit
+            let two = try await d.router.loopLand(k.id, mode: .merge, message: "land 2")
+            #expect(two.before == two.after && two.after == one.after)
+            #expect(await d.router.loopAutoLands(k.id).count == 1)
+            // a new paddock with no commits of its own
+            var e = try await PaddockManager.create(name: "e", repoRoot: repo, createdBy: nil)
+            e.factory = true
+            await d.router.addPaddock(e)
+            let three = try await d.router.loopLand(e.id, mode: .merge, message: "land 3")
+            #expect(three.before == three.after)
+            #expect(await d.router.loopAutoLands(e.id).isEmpty)
         }
     }
 

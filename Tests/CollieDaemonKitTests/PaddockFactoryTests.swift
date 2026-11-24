@@ -200,6 +200,24 @@ private func collieProfile(_ dir: URL, land: String = "manual") throws {
         }
     }
 
+    /// C3a: the auto-land's doctor reads the paddock's HEAD: a profile improved only in the tree never passes, the
+    /// committed one decides, a doctor's file changed only in the tree refuses, and an ignored file of the tree alone
+    /// (an agent's `.claude/`) is no part of what it reads.
+    @Test func theEnginesDoctorReadsHEADNotTheTree() async throws {
+        let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+        try await commit("collie-work.json", #"{"version": 1, "smoke": "swift test"}"#, in: repo)   // no gate: static 0 at HEAD
+        try collieProfile(repo)   // the agent's tree: a good profile, not committed
+        #expect(FactoryDoctorReader.factoryRefusal(root: repo) == nil)   // the tree's read alone would pass
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) != nil)
+        if case .success = await FactoryDoctorReader.headSnapshot(dir: repo) { Issue.record("the tree's profile was read") }
+        try await commit(".gitignore", ".claude/\n", in: repo)   // commits the good profile too
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) == nil)
+        try put(repo, ".claude/settings.local.json", "{}")
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) == nil)
+        try put(repo, "scripts/ci/check-architecture.sh", "#!/bin/bash\nexit 1\n")
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo)?.contains("difere do commit HEAD") == true)
+    }
+
     /// C1 (B1-b): a profile the paddock's git ignores is no profile the loop reads: on refuses and says why.
     @Test func onRefusesAnIgnoredProfile() async throws {
         let repo = try await makeRepo()

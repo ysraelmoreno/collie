@@ -183,6 +183,7 @@ struct HistoryRow: Equatable, Identifiable {
         case .queueEmpty?: return "auto-land: fila vazia"
         case .landDailyCap?: return "auto-land: teto diário"
         case .landDoctorRegressed?: return "auto-land: doctor regrediu"
+        case .landNothing?: return "auto-land: nada a integrar"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

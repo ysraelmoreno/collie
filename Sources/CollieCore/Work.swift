@@ -55,6 +55,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// A4: the task's last attempt was reviewed and every persona answered with no veto (no mute or invalid one, the tree
     /// as judged). nil: not so, or no review ran in it (cleared as each attempt starts). What `--auto-land` requires.
     public var reviewClean: Bool?
+    /// C3a: the HEAD the clean review judged (set with `reviewClean`): a land whose HEAD is past it is no approval.
+    public var reviewedHead: String?
     /// P2: the free retries the loop spent on this task because an attempt's prompt was not delivered (nil: none).
     public var promptRetries: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
@@ -97,6 +99,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
         reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
         promptRetries = (try? c.decodeIfPresent(Int.self, forKey: .promptRetries)) ?? nil   // P2: tolerant too
         reviewClean = (try? c.decodeIfPresent(Bool.self, forKey: .reviewClean)) ?? nil   // A4: tolerant too
+        reviewedHead = (try? c.decodeIfPresent(String.self, forKey: .reviewedHead)) ?? nil   // C3a: tolerant too
     }
 }
 
@@ -245,6 +248,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// the paddock no longer passes the minimum (static and judge at least 1). `maxReached` with a detail:
                 /// `--auto-land-max` lands made while approved works still wait.
                 case queueEmpty, landDailyCap, landDoctorRegressed
+                /// C3a: the merge made no commit (the paddock had nothing new, or was integrated already): no land, not
+                /// counted in the daily cap nor in the chain.
+                case landNothing
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -274,6 +280,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
             case .queueEmpty: "auto-land: nenhum outro trabalho aprovado na fila do cercado"
             case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
+            case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"
             }

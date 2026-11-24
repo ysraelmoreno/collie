@@ -96,8 +96,11 @@ protocol LoopHost: Sendable {
     /// A4: one line for the owner (`notify`).
     func notifyOwner(_ line: String) async
     /// A5: why the paddock's `factory doctor` no longer passes the minimum (static and judge at least 1), read now;
-    /// nil: it passes.
+    /// nil: it passes. C3a: read at the paddock's HEAD (`FactoryDoctorReader.headRefusal`), never the agent's tree.
     func doctorRefusal() async -> String?
+    /// C3a: when the paddock was auto-landed (`Paddock.autoLands`, the daemon's own record at each land): what the daily
+    /// cap counts, never a work's journal (a new run, a reopen or the pruning of closed works would clear it).
+    func autoLands() async -> [Date]
 }
 
 extension LoopHost {
@@ -143,6 +146,7 @@ extension LoopHost {
     }
     func notifyOwner(_ line: String) async {}
     func doctorRefusal() async -> String? { nil }
+    func autoLands() async -> [Date] { [] }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -343,7 +347,7 @@ actor WorkLoop {
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
-                x.tasks[i].reviewClean = nil   // A4: only this attempt's own review can make it clean
+                x.tasks[i].reviewClean = nil; x.tasks[i].reviewedHead = nil   // A4: only this attempt's own review can make it clean
                 // where a fall resumes from; `forget` clears it when the attempt ends
                 // M2c: an adoption keeps the `resumeAt` it was judged by (when the attempt was first left): cancelled
                 // or fallen again, a commit made during it is still after that, and never adopted
@@ -757,11 +761,13 @@ actor WorkLoop {
             // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
             if Task.isCancelled { return .cancelled }
             let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
+            // C3a: the HEAD the review judged (the tree is as judged when not touched), recorded with its approval
+            let judgedHead = touched ? nil : await out(["rev-parse", "HEAD"], dir)
             // A4: clean only with every persona answering, none mute or invalid, no veto, the tree as judged
             let clean = !touched && approved && ran.outcome.silent == nil && !ran.outcome.notes.contains { $0.hasPrefix(ReviewVerdict.reviewAdvisoryNone) }
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
-                    x.tasks[i].review = line; x.tasks[i].reviewClean = clean ? true : nil
+                    x.tasks[i].review = line; x.tasks[i].reviewClean = clean ? true : nil; x.tasks[i].reviewedHead = clean ? judgedHead : nil
                     // F2 Y2a: a touched tree was not judged: no refusal to count
                     if !touched { x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1 }
                 }
@@ -1277,7 +1283,7 @@ extension WorkLoop {
         }
         guard await host.factoryPaddock() else { return .init(.landNotFactory) }
         // A5: the paddock's daily cap, before any land (the first of a run too)
-        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday(w.paddockId)
+        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
         if today >= perDay { return await failed(.landDailyCap, "teto diário atingido", "\(today) de \(perDay) em 24 h") }
         guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
         await phase(id, .gate)
@@ -1286,6 +1292,7 @@ extension WorkLoop {
         if let t = w.tasks.first(where: { $0.state == .done && $0.reviewClean != true }) {
             return await failed(.landReviewVeto, "revisão sem aprovação limpa", RerailText.clean(t.title, max: 80) + ": " + (t.review ?? "sem revisão"))
         }
+        if let why = await reviewedHeadVeto(w, head: head, dir) { return await failed(.landReviewVeto, "commits depois da revisão", why) }
         await phase(id, .check)
         if let why = await run(al.ci, .seconds(al.timeout)) { return await failed(.landCiRed, "CI local vermelho", why) }
         await phase(id, nil)
@@ -1301,6 +1308,11 @@ extension WorkLoop {
         guard await host.starterAlive() else { return .init(.starterGone) }
         do {
             let (before, after) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
+            // C3a: no commit made (nothing new, or integrated already): no land, no undo line, not counted anywhere
+            if before == after {
+                await note(id, "[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))")
+                return .init(.landNothing, detail: String(after.prefix(12)))
+            }
             let at = host.now()
             try? await store.update(id) { x in
                 x.loop?.autoLand?.before = before; x.loop?.autoLand?.after = after
@@ -1348,11 +1360,28 @@ extension WorkLoop {
         return true
     }
 
-    /// The lands of the paddock's loops in the last 24 h (by the host's clock), from their journals.
-    func landsToday(_ paddock: UUID?) async -> Int {
-        guard let paddock, let all = try? await store.list(includeClosed: true) else { return 0 }
+    /// The paddock's lands in the last 24 h (by the host's clock), from the daemon's durable record (`LoopHost.autoLands`).
+    func landsToday() async -> Int {
         let since = host.now().addingTimeInterval(-86_400)
-        return all.filter { $0.paddockId == paddock }.reduce(0) { n, w in n + (w.loop?.events ?? []).filter { $0.kind == .landed && $0.at > since }.count }
+        return await host.autoLands().filter { $0 > since }.count
+    }
+
+    /// C3a: why HEAD is not what the clean reviews judged, nil when it is. One lane: HEAD must be the HEAD some done task's
+    /// review judged (a commit after the last review is no one's approval). Lanes (`parallel` over 1): the integrator's
+    /// merges come after each review, so each judged HEAD must only be in HEAD's history.
+    /// ponytail: with lanes a commit after the integration still passes; a review of the integrated HEAD would close it
+    func reviewedHeadVeto(_ w: Work, head: String, _ dir: URL) async -> String? {
+        let done = w.tasks.filter { $0.state == .done }
+        guard !done.isEmpty else { return nil }
+        if let t = done.first(where: { $0.reviewedHead == nil }) { return RerailText.clean(t.title, max: 80) + ": revisão sem o HEAD revisado" }
+        if (w.loop?.parallel ?? 1) <= 1 {
+            return done.contains { $0.reviewedHead == head } ? nil : "o HEAD \(head.prefix(12)) não é o que a revisão aprovou"
+        }
+        for t in done {
+            let r = try? await host.git(["merge-base", "--is-ancestor", t.reviewedHead!, head], in: dir)
+            if r?.status != 0 { return RerailText.clean(t.title, max: 80) + ": o HEAD revisado \(t.reviewedHead!.prefix(12)) não está no HEAD" }
+        }
+        return nil
     }
 
     /// nil: the chain ends as `landed` (the max reached with nothing approved waiting, or the next work picked in
@@ -1370,7 +1399,7 @@ extension WorkLoop {
         // N=1 with an empty queue is `landed` (the max reached); `queueEmpty` only with room left
         if queue.isEmpty { return done < max ? .init(.queueEmpty) : nil }
         if done >= max { return .init(.maxReached, detail: "\(done) de --auto-land-max \(max) integrado(s); \(queue.count) na fila") }
-        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday(pid)
+        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
         if let h = halted() { return h }
         if today >= perDay { return .init(.landDailyCap, detail: "\(today) de \(perDay) em 24 h") }
         let doctor = await host.doctorRefusal()

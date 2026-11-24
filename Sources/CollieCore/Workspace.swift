@@ -91,6 +91,10 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
     /// A2 "cercado fábrica": the owner marked it for auto-land (A4 reads it). Only the owner sets it (`paddock.factory`,
     /// `paddock.create --factory`: the app or the owner's CLI, never an agent nor MCP); missing = false, nothing migrates.
     public var factory: Bool = false
+    /// C3a: when the engine auto-landed this paddock (the daily cap counts them), written by the daemon at the land
+    /// and kept apart from any work or loop (a new run, a reopen or the pruning of closed works never clears it);
+    /// entries older than a day are dropped as new ones come.
+    public var autoLands: [Date]?
     public init(id: UUID, name: String, repoRoot: String, path: String, branch: String, baseBranch: String,
                 status: PaddockStatus = .working, createdBy: UUID? = nil, landedAt: Date? = nil, designSystem: UUID? = nil) {
         self.id = id; self.name = name; self.repoRoot = repoRoot; self.path = path; self.branch = branch
@@ -118,6 +122,7 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
         apps = try? c.decodeIfPresent([String: String].self, forKey: .apps)   // unreadable: none approved, never the workspace lost
         trustLoops = try? c.decodeIfPresent(Bool.self, forKey: .trustLoops)   // missing or unreadable: not trusted, the card shows
         factory = (try? c.decodeIfPresent(Bool.self, forKey: .factory)) ?? false   // missing or unreadable: not a factory
+        autoLands = (try? c.decodeIfPresent([Date].self, forKey: .autoLands)) ?? nil
     }
 }
 

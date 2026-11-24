@@ -47,9 +47,42 @@ enum FactoryDoctorReader {
 
     /// A2: why `root` cannot be marked cercado fábrica, in one line (the layer and the next action); nil: it can. The
     /// doctor's core, read only: an invalid `collie-work.json`, or `static` or `judge` below 1, refuses.
-    static func factoryRefusal(root: URL) -> String? {
+    static func factoryRefusal(root: URL) -> String? { refusal(snapshot(root: root)) }
+
+    /// C3a: `factoryRefusal` over the paddock's HEAD commit (`headSnapshot`), what the auto-land engine decides by.
+    static func headRefusal(dir: URL) async -> String? { refusal(await headSnapshot(dir: dir)) }
+
+    static let treeNotHead = "a árvore do cercado difere do commit HEAD nos arquivos que o doctor lê (o motor lê o HEAD); próxima ação: commite ou descarte a mudança"
+
+    /// C3a: the doctor's snapshot of `dir`'s HEAD commit, never of the tree an agent edits: HEAD is exported (`git
+    /// archive`) into a folder of its own and read there. Refused when the tree's profile is not HEAD's (`factoryDirty`)
+    /// or when what the doctor reads in the tree (the profile, the scripts, the CI files, `.gitignore`, the baits'
+    /// results) differs from HEAD's. The listing alone may differ: the tree's ignored files (`.claude/`, builds) are no
+    /// part of HEAD, and HEAD's listing is the one scored.
+    /// ponytail: the whole HEAD is exported on each read (a land, a chain step); a big repository wants `ls-tree` + `cat-file` of only those files
+    static func headSnapshot(dir: URL) async -> Result<FactoryDoctor.Snapshot, ProtocolError> {
+        if let why = await CommandRouter.factoryDirty(dir) { return .failure(ProtocolError(code: .invalidArgs, message: why)) }
+        let tmp = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory)).appendingPathComponent("collie-doctor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let tree = tmp.appendingPathComponent("head"), tar = tmp.appendingPathComponent("head.tar")
+        do throws(ProtocolError) {
+            do { try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true) }
+            catch { throw ProtocolError(code: .internal, message: "\(error)") }
+            let a = try await GitRunner.run(["archive", "--format=tar", "-o", tar.path, "HEAD"], in: dir, timeout: .seconds(120))
+            guard a.status == 0 else { throw ProtocolError(code: .internal, message: "git archive HEAD falhou: \(a.stderr.prefix(200))") }
+            let x = try await GitRunner.run(["-xf", tar.path, "-C", tree.path], in: tmp, timeout: .seconds(120), executable: URL(fileURLWithPath: "/usr/bin/tar"))
+            guard x.status == 0 else { throw ProtocolError(code: .internal, message: "o HEAD não pôde ser extraído: \(x.stderr.prefix(200))") }
+        } catch { return .failure(ProtocolError(code: error.code, message: "o doctor não leu o commit HEAD (\(error.message))")) }
+        let head = snapshot(root: tree)
+        guard case .success(let h) = head else { return head }
+        guard case .success(var t) = snapshot(root: dir) else { return .failure(ProtocolError(code: .invalidArgs, message: treeNotHead)) }
+        t.paths = h.paths
+        return t == h ? head : .failure(ProtocolError(code: .invalidArgs, message: treeNotHead))
+    }
+
+    private static func refusal(_ snapshot: Result<FactoryDoctor.Snapshot, ProtocolError>) -> String? {
         let snap: FactoryDoctor.Snapshot
-        switch snapshot(root: root) {
+        switch snapshot {
         case .failure(let e):
             return RerailText.clean("perfil inválido (\(e.message)); próxima ação: corrija collie-work.json (collie work config mostra o erro)", max: 400)
         case .success(let s): snap = s

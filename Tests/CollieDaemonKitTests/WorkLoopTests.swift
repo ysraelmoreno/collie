@@ -101,8 +101,16 @@ actor LoopFakeHost: LoopHost {
         lands.append(mode)
         guard mode == .merge else { Issue.record("land by \(mode)"); throw ProtocolError(code: .invalidArgs, message: "only merge") }
         if let landError { throw landError }
+        // C3a: as the router does: a merge with no commit is no land and is not recorded
+        if landsNothing { return (Self.landedAfter, Self.landedAfter) }
+        landedAt.append(now())
         return (Self.landedBefore, Self.landedAfter)
     }
+    /// C3a: the paddock's durable land record (`Paddock.autoLands` in the router), and a land whose merge makes no commit.
+    var landedAt: [Date] = [], landsNothing = false
+    func autoLands() async -> [Date] { landedAt }
+    func addLands(_ at: [Date]) { landedAt += at }
+    func setLandsNothing(_ on: Bool) { landsNothing = on }
     func notifyOwner(_ line: String) async { ownerNotices.append(line) }
     /// A5: why the paddock's factory doctor no longer passes (nil: it passes).
     var doctorWhy: String?, doctorProbe: (@Sendable () async -> Void)?

@@ -126,7 +126,8 @@ extension WorkLoop {
         // ponytail: the base checkout is the main worktree (the common git dir's parent); a bare base would name its .git
         let common = await out(["rev-parse", "--path-format=absolute", "--git-common-dir"], dir)
         let base = common.map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
-        let doctor: String? = switch FactoryDoctorReader.snapshot(root: dir) {
+        // C3a: the doctor of the paddock's HEAD, never of the tree the agent edits
+        let doctor: String? = switch await FactoryDoctorReader.headSnapshot(dir: dir) {
         case .success(let s): FactoryDoctor.score(s).layers.map { "\($0.layer.rawValue) \($0.score)/3" }.joined(separator: ", ")
         case .failure(let e): "não leu (\(e.message))"
         }

@@ -262,6 +262,12 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   cercados, o painel de contexto, com "AGENTES" em árvore e "PAINÉIS" (seleção compartilhada com o canvas: ⌘ alterna,
   ⇧ marca o intervalo, botão direito abre o menu do item ou da seleção), e a faixa de abas "Canvas" / "Preferências"
   com "Comando" e "Zoom"), `Sources/CollieApp/MainView.swift`, `Sources/CollieApp/UsagePopover.swift`.
+- **Cercado fábrica (A2):** marca persistente `factory` no cercado, só do dono (app ou CLI do dono; nunca agente nem
+  MCP): `collie paddock create <nome> --factory` e `collie paddock factory <nome> on|off`. Ligar roda o núcleo do
+  doutor da fábrica no `collie-work.json` do cercado e recusa com `static` ou `judge` abaixo de 1 ou perfil inválido;
+  desligar nunca recusa. `paddock list/status` trazem `factory` ("fábrica" ao lado do nome); `factory doctor` mostra
+  "cercado fábrica: sim/não". O laço ainda não usa a marca (A4). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
+  `Sources/CollieDaemonKit/FactoryCommands.swift`; testes em `Tests/CollieDaemonKitTests/PaddockFactoryTests.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos

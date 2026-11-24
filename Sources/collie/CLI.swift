@@ -184,6 +184,9 @@ enum CLI {
             }.joined()
         case ("check", .object(let o)) where o["model"] != nil:
             let s = "[model: \(str(o["model"]))]\n" + str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
+        case ("paddock.list", .array(let rows)):   // A2: one line each, "fábrica" beside a marked one's name
+            return rows.map { if case .object(let o) = $0 { PaddockText.line(o) + "\n" } else { "" } }.joined()
+        case ("paddock.status", .object(let o)), ("paddock.factory", .object(let o)): return PaddockText.line(o) + "\n"
         case ("model", .object(let o)): return str(o["model"]) + "\n" + (o["note"].map { "note: \(str($0))\n" } ?? "")
         case (_, .object(let o)) where o["output"] != nil:
             let s = str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"

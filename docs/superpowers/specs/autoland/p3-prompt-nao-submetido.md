@@ -14,3 +14,10 @@ Causa lida no código: `Sources/CollieDaemonKit/AskCoordinator.swift` ~1031 falh
 `promptNotDelivered` classifica as 5 mensagens (as 4 antigas e "did not submit the prompt" `.unavailable`) como sim e "No reply from", `.notRunning` e um `.unavailable` genérico como não. A máquina: não submetido na 1ª tentativa refaz sem contar; o teto de 2 por tarefa vale. Reaproveite os hosts falsos de `AttemptMachineTests`/`WorkLoopTests`.
 
 Check: `scripts/check-autoland-loop.sh p3`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.
+
+## Segunda tentativa: o check falhou 3 vezes em `AskTests` (leia antes de começar)
+
+Nas 3 tentativas anteriores o check (`scripts/check-autoland-loop.sh p3`) saiu com 1 por falhas dentro da suíte `AskTests` (1 e 2 issues, sem o nome do teste na saída guardada). No código SEM a P3 o `AskTests` inteiro passa (62 testes, verificado). Logo a mudança da P3 alterou comportamento de `AskCoordinator` além do pedido, ou o teste novo é instável sob carga.
+1. Mudança mínima: só `promptNotDelivered` e quem a consulta. NÃO altere o fluxo de `AskCoordinator` (nem `submit`, `confirmSubmit`, o reenvio do Enter, `finish`, nem os códigos de erro existentes); o erro `.unavailable` "did not submit the prompt" continua sendo lançado exatamente como hoje.
+2. Antes do commit, rode `swift test --disable-sandbox --skip MemoryEventEmissionTests --filter AskTests > <log> 2>&1` e leia as linhas `✘`/`Expectation failed` do log inteiro (não só o rabo). Se algum teste do `AskTests` falhar, a causa é sua mudança: corrija a mudança, não o teste antigo.
+3. Testes novos só em `AttemptMachineTests`/`WorkLoopTests` (hosts falsos), nunca em `AskTests`; sem espera de relógio, sem terminais reais.

@@ -234,8 +234,10 @@ struct CursorCuratorRunner: CuratorRunner {
                 throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)")
             }
             var e = Self.environment(root: root, path: sandboxed ? Self.sandboxPath : p)
-            e["TMPDIR"] = cwd.path
-            let args = Self.arguments(model: model, cwd: cwd)
+            // the sandbox allows the REAL path (`/private/var/...`); the CLI stats what it is given, so it gets that one, not the `/var` link
+            let real = URL(fileURLWithPath: SignedAppCheck.realPath(cwd))
+            e["TMPDIR"] = real.path
+            let args = Self.arguments(model: model, cwd: real)
             let r: ProcessResult
             do throws(ProtocolError) {
                 r = sandboxed

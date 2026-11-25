@@ -392,6 +392,47 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
         }
     }
 
+    @Test func appMarkingASummonedWorkerAsShepherdMakesItARoot() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            #expect(try await call(p, m, "summon", ["name": "w", "preset": "shell"]).ok)
+            // a sub-Shepherd edited without flipping the switch keeps its summoner (rename, or the switch sent as already is)
+            #expect(try await admin(d, p, "update", ["name": .string("sub"), "shepherd": .bool(true), "newName": .string("sub2")]).ok)
+            var snap = try await snapshot(d, p)
+            #expect(snap.terminals.first { $0.name == "sub2" }?.summonedBy == snap.terminals.first { $0.name == "M" }?.id)
+            // the user marks the summoned worker: a root Shepherd (it may take --paddock, it is no longer M's to cascade)
+            #expect(try await admin(d, p, "update", ["name": .string("w"), "shepherd": .bool(true)]).ok)
+            snap = try await snapshot(d, p)
+            let w = snap.terminals.first { $0.name == "w" }!
+            #expect(w.isShepherd && w.summonedBy == nil)
+            #expect(try await call(p, m, "dismiss", ["target": "w"]).error?.code == .invalidArgs)   // an app-marked one: never
+            _ = s
+        }
+    }
+
+    @Test func killBranchRemovesTheSummonedTreeLeavesFirstAndPlainKillDoesNot() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            #expect(try await call(p, s, "summon", ["name": "w1", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "w0", "preset": "shell"]).ok)
+            let ids = try await snapshot(d, p).terminals.reduce(into: [String: UUID]()) { $0[$1.name] = $1.id }
+            let ev = try await StreamClient.open(Request(id: "e", token: d.adminToken, command: "ui.events"), path: p.socket)
+            defer { ev.close() }
+            #expect(try await admin(d, p, "kill", ["target": .string("sub"), "branch": .bool(true)]).ok)
+            var order: [UUID] = []
+            while order.count < 2, case .event(let e)? = try await ev.next(timeoutSeconds: 30) { if case .removed(let u) = e { order.append(u) } }
+            #expect(order == [ids["w1"]!, ids["sub"]!], "\(order)")
+            #expect(try await snapshot(d, p).terminals.map(\.name).sorted() == ["M", "w0"])
+            // without branch, only the target goes: the summoned stay
+            let s2 = try await sub(d, p, by: m, "sub2")
+            #expect(try await call(p, s2, "summon", ["name": "w2", "preset": "shell"]).ok)
+            #expect(try await admin(d, p, "kill", ["target": .string("sub2")]).ok)
+            #expect(try await snapshot(d, p).terminals.map(\.name).sorted() == ["M", "w0", "w2"])
+        }
+    }
+
     @Test func shepherdDoesNotDismissAnotherOnesSub() async throws {
         try await withDaemon { d, p in
             let m1 = try await shepherd(d, p, "M1"), m2 = try await shepherd(d, p, "M2")

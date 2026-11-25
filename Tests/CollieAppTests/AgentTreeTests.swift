@@ -3,8 +3,10 @@ import Testing
 import CollieCore
 @testable import CollieApp
 
-private func term(_ name: String, shepherd: Bool = false, paddock: UUID? = nil, preset: Preset = .claude) -> TerminalRecord {
-    TerminalRecord(id: UUID(), name: name, preset: preset, command: nil, cwd: "/", isShepherd: shepherd, paddockId: paddock)
+private func term(_ name: String, shepherd: Bool = false, paddock: UUID? = nil, preset: Preset = .claude, by: TerminalRecord? = nil) -> TerminalRecord {
+    var t = TerminalRecord(id: UUID(), name: name, preset: preset, command: nil, cwd: "/", isShepherd: shepherd, paddockId: paddock)
+    t.summonedBy = by?.id
+    return t
 }
 
 private func rows(_ terminals: [TerminalRecord], _ connections: [Connection] = [], badges: [UUID: StatusBadge] = [:],
@@ -87,5 +89,54 @@ private func rows(_ terminals: [TerminalRecord], _ connections: [Connection] = [
         // A card of a terminal that isn't in the list reaches no row.
         let out = rows([a], pending: AgentTree.pending(accessCards: [SandboxDenial(terminal: gone, op: "read", path: "/x/y")], leashRequests: [], appCards: []))
         #expect(out.map(\.pending) == [0])
+    }
+
+    @Test func subShepherdNestsUnderItsSummonerWithItsWorkers() {
+        let main = term("Main", shepherd: true), sub = term("Sub", shepherd: true, by: main), w1 = term("w1", by: sub), w2 = term("w2", by: sub)
+        let own = term("own", by: main), loose = term("solto")
+        // summon leashes: the sub and its workers are leashed to whoever summoned them
+        let leashes = [Connection(a: main.id, b: sub.id), Connection(a: sub.id, b: w1.id), Connection(a: sub.id, b: w2.id), Connection(a: main.id, b: own.id)]
+        let out = rows([main, sub, w1, w2, own, loose], leashes)
+        #expect(out.map(\.name) == ["Main", "Sub", "w1", "w2", "own", "solto"])
+        #expect(out.map(\.depth) == [0, 1, 2, 2, 1, 0])
+        #expect(out.map(\.isParent) == [true, true, false, false, false, false])
+        #expect(out.map(\.summonedByName) == [nil, "Main", nil, nil, nil, nil])
+    }
+
+    @Test func collapsingASubShepherdHidesOnlyItsWorkers() {
+        let main = term("Main", shepherd: true), sub = term("Sub", shepherd: true, by: main), w = term("w", by: sub)
+        let leashes = [Connection(a: main.id, b: sub.id), Connection(a: sub.id, b: w.id)]
+        #expect(rows([main, sub, w], leashes, collapsed: [sub.id]).map(\.name) == ["Main", "Sub"])
+        #expect(rows([main, sub, w], leashes, collapsed: [main.id]).map(\.name) == ["Main"])
+    }
+
+    @Test func threeLevelsOfShepherdsReachDepthThree() {
+        let a = term("A", shepherd: true), b = term("B", shepherd: true, by: a), c = term("C", shepherd: true, by: b), w = term("w", by: c)
+        let out = rows([a, b, c, w], [Connection(a: a.id, b: b.id), Connection(a: b.id, b: c.id), Connection(a: c.id, b: w.id)])
+        #expect(out.map(\.depth) == [0, 1, 2, 3])
+    }
+
+    @Test func subShepherdWhoseSummonerIsGoneStaysARoot() {
+        let gone = term("gone", shepherd: true), sub = term("Sub", shepherd: true, by: gone), w = term("w", by: sub)
+        let out = rows([sub, w], [Connection(a: sub.id, b: w.id)])
+        #expect(out.map(\.name) == ["Sub", "w"] && out.map(\.depth) == [0, 1])
+        #expect(out[0].summonedByName == nil)   // no live summoner to name
+    }
+
+    @Test func summonedWorkerTurnedOffShepherdStillSitsUnderItsSummoner() {
+        // "switch off": it stops summoning, the ones it summoned stay alive (loose at the root, as without a Shepherd)
+        let main = term("Main", shepherd: true), was = term("was", by: main), w = term("w", by: was)
+        let out = rows([main, was, w], [Connection(a: main.id, b: was.id), Connection(a: was.id, b: w.id)])
+        #expect(out.map(\.name) == ["Main", "was", "w"] && out.map(\.depth) == [0, 1, 0])
+    }
+
+    @Test func endBranchIsOfferedForASingleTerminalWithSummoned() {
+        let plain = NodeInfo(id: UUID(), name: "a", kind: .terminal(isClaude: false))
+        var branch = plain; branch.hasBranch = true
+        #expect(NodeActions.available(for: [branch]) == [.fullscreen, .edit, .restart, .kill, .endBranch, .lot, .close])
+        #expect(NodeActions.available(for: [plain]) == [.fullscreen, .edit, .restart, .kill, .lot, .close])
+        #expect(!NodeActions.available(for: [branch, plain]).contains(.endBranch))   // one at a time
+        let c = NodeActions.confirmation(for: .endBranch, items: [branch])
+        #expect(c?.title == "Encerrar o ramo de a?" && c?.button == "Encerrar ramo")
     }
 }

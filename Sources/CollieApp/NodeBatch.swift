@@ -18,7 +18,11 @@ extension Notification.Name {
     /// The selected items of the current paddock (terminals, then panels), as the menu rules see them.
     static func infos(_ ids: Set<UUID>, client: DaemonClient) -> [NodeInfo] {
         let terms = visibleTerminals(client.terminals, paddock: client.currentPaddock).filter { ids.contains($0.id) }
-            .map { NodeInfo(id: $0.id, name: $0.name, kind: .terminal(isClaude: $0.preset == .claude)) }
+            .map { t in
+                var i = NodeInfo(id: t.id, name: t.name, kind: .terminal(isClaude: t.preset == .claude))
+                i.hasBranch = client.terminals.contains { $0.summonedBy == t.id }
+                return i
+            }
         let panels = visiblePanels(client.panels, paddock: client.currentPaddock).filter { ids.contains($0.id) }.map { p in
             NodeInfo(id: p.id, name: p.name, kind: .panel(placement: p.placement,
                                                            allowed: PluginRegistry.spec(p.pluginId)?.placements ?? NodeActions.order,
@@ -44,6 +48,7 @@ extension Notification.Name {
         if actions.contains(.edit) { add("Editar…") { go(.edit) } }
         if actions.contains(.restart) { add("Reiniciar") { go(.restart) } }
         if actions.contains(.kill) { add("Matar") { go(.kill) } }
+        if actions.contains(.endBranch) { add("Encerrar ramo…") { go(.endBranch) } }
         if actions.contains(.saveMemory) { add("Salvar na memória") { go(.saveMemory) } }
         if actions.contains(.lot) {
             let lots = NSMenuItem(title: "Lote", action: nil, keyEquivalent: ""), sub = NSMenu()
@@ -90,25 +95,31 @@ extension Notification.Name {
         case .lot: break   // runs with its choice: `setLot`
         case .move(let p):
             Task { for n in panels { do { try await client.movePanel(n, to: p) } catch { Log.canvas.error("move \(n): \(error)") } } }
+        case .endBranch:
+            confirm(.endBranch, items: items) { kill(terminals, client: client, branch: true) }
         case .close:
-            guard let c = NodeActions.confirmation(for: .close, items: items) else { return }
-            let a = NSAlert()
-            a.messageText = c.title; a.informativeText = c.detail
-            a.addButton(withTitle: c.button); a.addButton(withTitle: "Cancelar")
-            let close = {
+            confirm(.close, items: items) {
                 kill(terminals, client: client)
                 Task { for n in panels { do { try await client.closePanel(n) } catch { Log.canvas.error("close \(n): \(error)") } } }
                 canvas.selectionState = Selecting.pruned(canvas.selectionState, keeping: canvas.selection.subtracting(items.map(\.id)))
             }
-            if let w = NSApp.keyWindow { a.beginSheetModal(for: w) { if $0 == .alertFirstButtonReturn { close() } } }
-            else if a.runModal() == .alertFirstButtonReturn { close() }
         }
+    }
+
+    /// The confirmation sheet of `action` (`NodeActions.confirmation`); `go` runs on the confirming button.
+    private static func confirm(_ action: NodeAction, items: [NodeInfo], go: @escaping () -> Void) {
+        guard let c = NodeActions.confirmation(for: action, items: items) else { return }
+        let a = NSAlert()
+        a.messageText = c.title; a.informativeText = c.detail
+        a.addButton(withTitle: c.button); a.addButton(withTitle: "Cancelar")
+        if let w = NSApp.keyWindow { a.beginSheetModal(for: w) { if $0 == .alertFirstButtonReturn { go() } } }
+        else if a.runModal() == .alertFirstButtonReturn { go() }
     }
 
     private static func actions(_ items: [NodeInfo]) -> [NodeAction] { NodeActions.available(for: items) }
 
-    private static func kill(_ names: [String], client: DaemonClient) {
-        Task { for n in names { do { try await client.kill(n) } catch { Log.canvas.error("kill \(n): \(error)") } } }
+    private static func kill(_ names: [String], client: DaemonClient, branch: Bool = false) {
+        Task { for n in names { do { try await client.kill(n, branch: branch) } catch { Log.canvas.error("kill \(n): \(error)") } } }
     }
 
     private static func setLot(_ lot: Lot?, ids: Set<UUID>, client: DaemonClient) {

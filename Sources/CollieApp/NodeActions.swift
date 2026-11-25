@@ -12,6 +12,8 @@ struct NodeInfo: Equatable, Sendable {
     var id: UUID
     var name: String
     var kind: Kind
+    /// Other terminals were summoned by this one (the daemon's `summonedBy`): "Encerrar ramo" has something to cascade to.
+    var hasBranch = false
     init(id: UUID, name: String, kind: Kind) { self.id = id; self.name = name; self.kind = kind }
 
     var isTerminal: Bool { if case .terminal = kind { true } else { false } }
@@ -19,7 +21,7 @@ struct NodeInfo: Equatable, Sendable {
 
 /// An action of a node's menu. `.lot` and `.move` carry their choice when run (see `NodeBatch`).
 enum NodeAction: Hashable, Sendable {
-    case fullscreen, edit, restart, kill, saveMemory, lot, close
+    case fullscreen, edit, restart, kill, endBranch, saveMemory, lot, close
     case move(PanelPlacement)
 }
 
@@ -38,6 +40,7 @@ enum NodeActions {
         }
         if items.allSatisfy(\.isTerminal) {
             out += [.restart, .kill]
+            if single && first.hasBranch { out.append(.endBranch) }
             if items.allSatisfy({ if case .terminal(let c) = $0.kind { c } else { false } }) { out.append(.saveMemory) }
             out.append(.lot)
         }
@@ -57,7 +60,13 @@ enum NodeActions {
     }
 
     static func confirmation(for action: NodeAction, items: [NodeInfo]) -> Confirmation? {
-        guard action == .close, let first = items.first else { return nil }
+        guard let first = items.first else { return nil }
+        if action == .endBranch {
+            return Confirmation(title: "Encerrar o ramo de \(first.name)?",
+                                detail: "\(first.name) e todos os terminais que ele convocou, e os que eles convocaram, serão encerrados.",
+                                button: "Encerrar ramo")
+        }
+        guard action == .close else { return nil }
         let isolated = items.contains { if case .panel(_, _, true) = $0.kind { true } else { false } }
         let note = isolated ? " Os dados isolados dos painéis serão apagados." : ""
         if items.count == 1 {

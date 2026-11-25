@@ -800,6 +800,8 @@ actor CommandRouter {
             case .string("false")?: t.isShepherd = false
             default: throw ProtocolError(code: .invalidArgs, message: "shepherd must be true or false")
             }
+            // the user marking a summoned worker as Shepherd makes it a root one (no sub-Shepherd rules, nobody's cascade)
+            if t.isShepherd && !old.isShepherd { t.summonedBy = nil }
             if let ps = str(r, "preset") {
                 guard let preset = Preset(rawValue: ps) else {
                     throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
@@ -848,7 +850,9 @@ actor CommandRouter {
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
                 try await remove(p)
             } else {
-                try await remove(try find(name))
+                let t = try find(name)
+                if flag(r, "branch") { for d in summonedTree(of: t.id) { try await remove(d) } }   // leaves first, as `dismiss`
+                try await remove(t)
             }
             return .object([:])
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))

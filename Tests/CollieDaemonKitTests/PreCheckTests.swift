@@ -100,7 +100,8 @@ import CollieProtocol
             await held.releaseOne()
         }
         #expect(await greens.value.isEmpty)
-        #expect(await held.most == 4 && held.entered == 6, "most \(await held.most)")
+        let most = await held.most, entered = await held.entered
+        #expect(most == 4 && entered == 6, "most \(most), entered \(entered)")
     }
 }
 

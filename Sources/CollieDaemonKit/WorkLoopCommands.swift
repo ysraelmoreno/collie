@@ -52,6 +52,8 @@ extension CommandRouter {
         guard unchecked.isEmpty else {
             throw invalid("every open task needs a --check; these have none: " + unchecked.map { "\"\($0.title)\" [\($0.id)]" }.joined(separator: ", "))
         }
+        // F5: a work with a PRD runs the plan the owner approved, still passing the linter
+        if let why = Self.prdPlanRefusal(w) { throw invalid(why) }
         // M7.2 (A2): a closed work's loop may still run (M6.4: it ends at its next wake, after its lanes): it holds the paddock too
         let others = try await work.list(includeClosed: true).filter { $0.paddockId == paddock.id }
         if workLoops[w.id] != nil || (!queue && others.contains(where: { $0.loop?.state == .running })) {

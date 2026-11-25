@@ -288,6 +288,20 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   aceite em runtime". `work status` e o cartão mostram o comando e o último resultado. Como escrever: `docs/fabrica/aceite.md`.
   Arquivos: `Sources/CollieDaemonKit/Work/AttemptMachine.swift` (`accepting`), `Sources/CollieDaemonKit/Work/WorkLoop.swift`
   (`runAccept`, `acceptOutput`); testes em `Tests/CollieDaemonKitTests/AcceptTests.swift`.
+- **Entrada do PRD e plano (F5, `collie work prd add|show`, `collie work plan lint|apply`):** o daemon não conhece Jira,
+  Linear nem GitHub: `prd add <arquivo.md> [--origin <texto>] [--replace]` (só o dono, CLI; o CLI lê o arquivo) guarda
+  cópia imutável no trabalho ativo (`<root>/work-loops/<trabalho>/prd/<sha256>.md`, `O_EXCL`, 0444) e o hash no estado
+  (`Work.prd`); mesmo hash é idempotente, outro conteúdo exige `--replace` e guarda o anterior; `--origin` até 200
+  caracteres sem controle, no `work status`, nas notas (`[prd]`) e no resumo do auto-land. `prd show` (MCP também) só lê.
+  `plan lint <pasta>` lê `waves.md` e `tasks/*.md` e recusa com arquivo e linha (sem check/área, check que não roda nada
+  ou que só faz grep/test -f/ls no arquivo da tarefa, `area` com `check`, cartão acima de 1500 caracteres, ciclo em
+  `needs`, sem teste citado); sai 1; `--json`; imprime o sha256 do pacote. `plan apply <pasta> --approve <sha256>` (só o
+  dono) cria as tarefas com `needs` por onda só com o linter verde e o hash igual; nunca inicia o laço (`Work.plan`).
+  `work run` de trabalho com PRD roda o linter de novo e recusa pacote mudado. Fluxo: `docs/fabrica/plano.md`; skill do
+  Pastor `docs/fabrica/skill/factory-plan/SKILL.md`; modelo `docs/fabrica/modelos/plano/`. Arquivos:
+  `Sources/CollieDaemonKit/Work/PrdStore.swift`, `Sources/CollieDaemonKit/Work/PlanLint.swift`,
+  `Sources/CollieDaemonKit/Work/PlanApply.swift`, `Sources/CollieDaemonKit/WorkPlanCommands.swift`; testes em
+  `Tests/CollieDaemonKitTests/PrdStoreTests.swift`, `PlanLintTests.swift`, `PlanApplyTests.swift`.
 - **Fila do auto-land (A5, `--auto-land-max <N>`, `--queue`):** `work run --auto-land --queue` leva o trabalho ao cartão
   do dono (tarefas, checks, portão e limites, como sempre) e, aprovado, ele espera na fila do cercado (estado do laço
   `queued`; nada roda; o land do cercado não o fecha). Depois de um `landed`, se a execução ainda não integrou `N`

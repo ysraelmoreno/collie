@@ -27,6 +27,13 @@ enum Client {
         let out = Commands.outputFile.contains(command) ? args.removeValue(forKey: "out") : nil
         if let out, case .string = out {} else if out != nil { throw ProtocolError(code: .invalidArgs, message: "--out must be a string") }
         if command == "diagram.set", let from = args.removeValue(forKey: "from") { args["xml"] = .string(try diagramFrom(from, args)) }
+        // F5: the PRD is the owner's own file, read here (relative to this process's cwd) and sent as its text
+        if command == "work.prd.add", let file = args.removeValue(forKey: "file") {
+            guard case .string(let path) = file else { throw ProtocolError(code: .invalidArgs, message: "<file> must be a path") }
+            let url = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/"))
+            do throws(ProtocolError) { args["content"] = .string(try DiagramFile.readLocal(url)) }
+            catch { throw ProtocolError(code: .invalidArgs, message: "\(path): \(error.message)") }
+        }
         let result = try await send(command, args)
         guard case .string(let dest)? = out else { return result }
         return try OutFile.copyPath(of: result, to: dest, cwd: FileManager.default.currentDirectoryPath)
@@ -103,6 +110,10 @@ enum CLI {
             if cmd.command == "design.engine.install" && !json { return await followInstall(result, status: "design.engine.status") }
             if cmd.command == "factory.doctor", case .object(let o) = result {   // U3: --json is the report; a layer below --min exits 1
                 print(json ? jsonString(o["report"] ?? .null) + "\n" : render(cmd.command, result, json: false), terminator: "")
+                return o["passed"] == .bool(false) ? 1 : 0
+            }
+            if cmd.command == "work.plan.lint", case .object(let o) = result {   // F5: refused exits 1
+                print(render(cmd.command, result, json: json), terminator: "")
                 return o["passed"] == .bool(false) ? 1 : 0
             }
             if cmd.command.hasPrefix("factory.ratchet.") {   // U5: worse (or improved, on check) exits 1

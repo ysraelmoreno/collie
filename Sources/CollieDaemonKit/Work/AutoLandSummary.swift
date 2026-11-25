@@ -42,6 +42,7 @@ enum AutoLandSummary {
                  "- início: \(iso.string(from: started)) · fim: \(iso.string(from: ended)) · duração: \(duration(max(0, Int(ended.timeIntervalSince(started).rounded()))))",
                  "- stopReason: " + (stop.map { "\($0.code.rawValue) (\(c($0.label, 300)))" } ?? "nenhum (laço terminou sem integrar)")]
         if let doctor { l.append("- doctor no momento: \(doctor)") }
+        if let p = PrdStore.line(w) { l.append("- " + p) }   // F5: the PRD's hash and its origin, as the owner gave it
         l += ["", landed ? "## Trabalho integrado (1)" : "## Trabalhos integrados: 0", ""]
         if landed, let al {
             l.append("- título: \(c(w.title, 120))")

@@ -277,23 +277,7 @@ extension CommandRouter {
             let areas = try strings("area")
             if let areas {
                 guard check == nil else { throw invalid("--area e --check não andam juntos: --area monta o check a partir do collie-work.json; use um ou outro") }
-                if let empty = areas.firstIndex(where: \.isEmpty) { throw invalid("--area: o nome #\(empty + 1) está vazio") }
-                let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
-                let built: String
-                switch WorkConfigFile.config(root: root) {
-                case .failure(let e): throw invalid("--area: " + e.message)
-                case .success(nil):
-                    throw invalid("--area precisa de um \(ProjectWorkConfig.fileName) na raiz do projeto (\(RerailText.clean(root.path, max: 300))); não há nenhum")
-                case .success(let c?):
-                    switch c.composeCheck(areas: areas) {
-                    case .failure(let e): throw invalid("--area: " + RerailText.clean(e.message, max: 1500))
-                    case .success(let s): built = s
-                    }
-                }
-                guard built.count <= Self.maxWorkText else {
-                    throw invalid("o check montado por --area tem \(built.count) caracteres; o limite de um check é \(Self.maxWorkText)")
-                }
-                check = built
+                check = try areaCheck(areas, for: t)
             }
             // F3: the acceptance as the check (trimmed, not empty, bounded), and no control character but a tab or a newline
             let accept = str(r, "accept").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -540,6 +524,24 @@ extension CommandRouter {
             let action = FactoryRatchet.Action(rawValue: String(r.command.dropFirst("factory.ratchet.".count)))!
             return try await factoryRatchet(try target(), action, name: try text("name"), reason: str(r, "reason"))
 
+        // F5: the PRD and the plan package; adding and applying are the owner's alone, showing and linting only read
+        case "work.prd.add":
+            guard caller == nil else {
+                throw ProtocolError(code: .unauthorized, message: "'work.prd.add' é do dono (a CLI fora de um terminal); um agente lê o PRD com collie work prd show")
+            }
+            return try await prdAdd(r, try await active(try target()), now: now)
+        case "work.prd.show":
+            return try prdShow(if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) })
+        case "work.plan.lint":
+            let t: TerminalRecord? = caller != nil || str(r, "terminal") != nil ? try target() : nil
+            return PlanLint.json(PlanLint.lint(try await planDir(r, t, confined: caller != nil)))
+        case "work.plan.apply":
+            guard caller == nil else {
+                throw ProtocolError(code: .unauthorized, message: "'work.plan.apply' é do dono (a CLI fora de um terminal): ele aprova o pacote que viu")
+            }
+            let t = try target()
+            return try await planApply(r, t, try await active(t), now: now)
+
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }
             try await work.clearHistory()
@@ -604,6 +606,7 @@ extension CommandRouter {
         if let n = WorkStatusText.modelLine(w) { lines.append(n) }   // M5.6
         if let n = WorkStatusText.reviewLine(w) { lines.append(n) }   // F2 R1
         lines += WorkStatusText.originLines(w)   // A1: none without a factory profile
+        if let p = PrdStore.line(w) { lines.append(p) }   // F5: none without a PRD or a plan
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),

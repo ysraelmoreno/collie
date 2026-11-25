@@ -499,6 +499,11 @@ public struct Work: Codable, Sendable, Equatable {
     /// so it never goes back across a daemon restart). `work wait --since` waits for it to pass a value. nil: never
     /// written by a store that counts.
     public var version: Int?
+    /// F5: the PRDs kept for this work (`collie work prd add`), oldest first: the last is the current one, the ones
+    /// before it were replaced (`--replace`; their files stay). nil: none.
+    public var prd: [WorkPrd]?
+    /// F5: the plan package applied to it (`collie work plan apply`). nil: none.
+    public var plan: WorkPlan?
     public init(id: UUID = UUID(), title: String, terminalId: UUID, paddockId: UUID? = nil, branch: String? = nil, openedAt: Date = Date(),
                 closedAt: Date? = nil, closedBy: String? = nil, tasks: [WorkTask] = [], jobs: [WorkJob] = [], notes: [WorkNote] = [],
                 commits: [String] = []) {
@@ -506,7 +511,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, askedAt, proposedAt, proposedCommit, lotId, loop, version }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, askedAt, proposedAt, proposedCommit, lotId, loop, version, prd, plan }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -526,6 +531,26 @@ public struct Work: Codable, Sendable, Equatable {
         lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
         loop = (try? c.decodeIfPresent(WorkLoopState.self, forKey: .loop)) ?? nil   // malformed = no loop
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
+        prd = (try? c.decodeIfPresent([WorkPrd].self, forKey: .prd)) ?? nil   // F5: tolerant, like the newer ones
+        plan = (try? c.decodeIfPresent(WorkPlan.self, forKey: .plan)) ?? nil
+    }
+}
+
+/// F5: a PRD kept for a work: the markdown the owner's CLI read, immutable in the work's own folder
+/// (`<root>/work-loops/<work>/prd/<sha256>.md`, 0444). `origin`: where it came from, opaque text (never fetched).
+public struct WorkPrd: Codable, Sendable, Equatable {
+    public var sha256: String; public var origin: String?; public var addedAt: Date; public var bytes: Int
+    public init(sha256: String, origin: String? = nil, addedAt: Date = Date(), bytes: Int) {
+        self.sha256 = sha256; self.origin = origin; self.addedAt = addedAt; self.bytes = bytes
+    }
+}
+
+/// F5: the plan package (`waves.md`, `tasks/*.md`) applied to a work: its folder, the sha256 the owner approved and
+/// the ids of the tasks it created. `work run` lints the folder again and refuses when its hash is no longer this one.
+public struct WorkPlan: Codable, Sendable, Equatable {
+    public var dir: String; public var sha256: String; public var appliedAt: Date; public var tasks: [String]
+    public init(dir: String, sha256: String, appliedAt: Date = Date(), tasks: [String]) {
+        self.dir = dir; self.sha256 = sha256; self.appliedAt = appliedAt; self.tasks = tasks
     }
 }
 

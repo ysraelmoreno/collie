@@ -95,7 +95,9 @@ struct QuietDetector {
     private(set) var overflowArmed = false
     /// `now`: tests drive the clock.
     init(preset: Preset, agent: String? = nil, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
-        let agent = agent ?? AttentionDetector.agent(of: preset)
+        // nil or "other" (a command nobody recognizes): the preset's patterns, so a claude preset with a fake command keeps Claude's;
+        // a custom Cursor is already "cursor"
+        let agent = agent.flatMap { $0 == "other" ? nil : $0 } ?? AttentionDetector.agent(of: preset)
         self.preset = preset; self.agent = agent; self.now = now; detector = AttentionDetector(agent: agent); lastInput = now() - .seconds(60)
     }
     var inWindow: Bool { now() - lastInput < Fanout.inputQuiet }

@@ -51,6 +51,19 @@ import CollieTerminal
         #expect(x.feed("Do you trust the files in this folder?") == nil)
     }
 
+    /// A1 regression: "other" (a fake command on the claude preset) keeps the preset's patterns; a Cursor custom stays Cursor.
+    @Test func otherAgentKeepsThePresetPatterns() {
+        let trust = "Do you trust the files in this folder?"
+        var q = QuietDetector(preset: .claude, agent: "other")
+        #expect(q.feed(trust) != nil)
+        var n = QuietDetector(preset: .claude, agent: nil)
+        #expect(n.feed(trust) != nil)
+        var c = QuietDetector(preset: .custom, agent: "cursor")
+        #expect(c.feed("Workspace Trust Required\n[a] Trust this workspace [q] Quit") != nil)
+        var o = QuietDetector(preset: .custom, agent: "other")
+        #expect(o.feed(trust) == nil)
+    }
+
     @Test func noFalsePositiveOnNormalOutput() {
         var d = AttentionDetector(preset: .claude)
         for i in 0..<100 { #expect(d.feed("2026-10-19 INFO request \(i) handled in 12ms status=200\n") == nil) }

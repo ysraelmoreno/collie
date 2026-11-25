@@ -32,7 +32,8 @@ import CollieProtocol
     private static func expectStopped(_ r: LoopRig, _ code: Stop.Code, _ at: SourceLocation = #_sourceLocation) async throws {
         #expect(await r.run() == .stopped, sourceLocation: at)
         let w = try await r.get()
-        #expect(w.tasks[0].state == .done, sourceLocation: at)
+        // C5d: a stop that discards the attempt's commits reopens its task; one that keeps them leaves it done
+        #expect(w.tasks[0].state == (WorkLoop.discards.contains(code) ? .open : .done), sourceLocation: at)
         #expect(w.loop?.stopReason?.code == code, "\(String(describing: w.loop?.stopReason))", sourceLocation: at)
         #expect(await r.host.lands.isEmpty, sourceLocation: at)
         #expect(w.loop?.autoLand?.before == nil && w.loop?.autoLand?.after == nil, sourceLocation: at)
@@ -163,7 +164,8 @@ import CollieProtocol
         }
         #expect(await r.run() == .stopped)   // C5a: a stop of its own, nothing integrated
         let w = try await r.get()
-        #expect(w.tasks[0].state == .done && w.loop?.autoLand?.after == nil && w.loop?.stopReason?.code == .landTasksNotDone)
+        // C5d: a's commit is discarded with the land, so a is open again
+        #expect(w.tasks[0].state == .open && w.loop?.autoLand?.after == nil && w.loop?.stopReason?.code == .landTasksNotDone)
         #expect(w.loop?.stopReason?.detail == "Task b", "\(String(describing: w.loop?.stopReason))")
         #expect(await r.host.lands.isEmpty)
         #expect(w.notes.contains { $0.text.contains("1 tarefa(s) não terminaram feitas") }, "\(w.notes.map(\.text))")

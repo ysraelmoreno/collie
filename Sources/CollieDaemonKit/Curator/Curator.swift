@@ -28,7 +28,8 @@ struct CuratorStatus: Codable, Sendable {
     /// The daily job cap; nil: none (the default). 0: off.
     var cap: Int?
     var queued: Int
-    /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file).
+    /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file) in the last `Curator.failedKeep`: older ones are deleted,
+    /// so the app's "curador falhando" alert goes away once the curator works again.
     var failed: Int
     var inputTokens: Int
     var outputTokens: Int
@@ -75,6 +76,19 @@ actor Curator {
     static let inputMax = 12_000
     static let timeout: Duration = .seconds(60)
     static let maxAttempts = 3
+    /// How long a parked job stays in `failed/` (kept to be looked at, never retried); then `pruneFailed` deletes it.
+    static let failedKeep: TimeInterval = 7 * 86_400
+
+    /// Deletes the `failed/*.json` last modified more than `failedKeep` before `now`.
+    static func pruneFailed(_ dir: URL, now: Date) {
+        let fm = FileManager.default
+        for n in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []) where n.hasSuffix(".json") {
+            let u = dir.appendingPathComponent(n)
+            guard let m = (try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date,
+                  now.timeIntervalSince(m) > failedKeep else { continue }
+            try? fm.removeItem(at: u)
+        }
+    }
     static let queueMax = 200
     static let dedupeWindow: TimeInterval = 60
 
@@ -162,6 +176,7 @@ actor Curator {
             FileHandle.standardError.write(Data("collied: curator: unreadable job \(n) moved to failed/\n".utf8))
             _ = rename(u.path, dir.appendingPathComponent("failed/\(n)").path)
         }
+        Self.pruneFailed(dir.appendingPathComponent("failed"), now: now())
     }
 
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .millisecondsSince1970; e.outputFormatting = .sortedKeys; return e }()
@@ -458,6 +473,7 @@ actor Curator {
         guard let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
         if jobs[i].attempts >= Self.maxAttempts {
             write(jobs[i], to: dir.appendingPathComponent("failed/\(file(job).lastPathComponent)"))
+            Self.pruneFailed(dir.appendingPathComponent("failed"), now: now())
             remove(job)
             recent[job.dedupe] = now()
         }

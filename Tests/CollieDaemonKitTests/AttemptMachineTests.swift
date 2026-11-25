@@ -50,9 +50,11 @@ private struct Path: Sendable, CustomTestStringConvertible {
     var gate = true, n = 1
     /// F2 R3: the review on, and the refusals in a row before this attempt.
     var review = false, inRow = 0
+    /// F3: the task has `--accept`.
+    var accept = false
     let steps: [Step]
     var testDescription: String { name }
-    var start: M.State { M.State(task: "a", n: n, tries: 3, hasGate: gate, before: "c0", reviewer: review, reviewRejectsInRow: inRow) }
+    var start: M.State { M.State(task: "a", n: n, tries: 3, hasGate: gate, before: "c0", reviewer: review, reviewRejectsInRow: inRow, accept: accept) }
 }
 
 private let happy = Path(name: "happy path: idle turn, check and gate pass", steps: [
@@ -198,6 +200,16 @@ private let reviewed = Path(name: "review approves: its notes go to the attempt'
     Step(.decided(.pass), .finished, [.markDone, .note("[loop a] parecer: [testes] a nit")]),
 ])
 
+/// F3: the acceptance after the gate, the agent long gone; it passes.
+private let accepted = Path(name: "acceptance after the gate passes", accept: true, steps: Array(happy.steps.prefix(11)) + [
+    Step(.settled(moved: false, reset: true), .gating, [.journal(.treeReset, nil), .guardAccept]),
+    Step(.acceptClear, .accepting, [.show(.check), .journal(.acceptStarted, nil), .runAccept]),
+    Step(.acceptDone(status: 0, broken: nil), .accepting, [.journal(.acceptPassed, "exit 0"), .awaitOthers]),
+    Step(.blocked(nil), .accepting, [.settle(reset: true)]),
+    Step(.settled(moved: false, reset: false), .deciding, verdict("passou", then: .decide)),
+    Step(.decided(.pass), .finished, [.markDone]),
+])
+
 private let reviewPaths: [Path] = [
     reviewed,
     Path(name: "review, no gate: after the check alone; approved with no notes", gate: false, review: true, steps: checked() + [
@@ -264,7 +276,7 @@ private func alongTheHappyPath() -> [M.State] { along(happy) }
 
 /// M1.4: the attempt's phases are a pure state machine (no host, git or time): (state, event) → (state, effects).
 @Suite struct AttemptMachineTests {
-    @Test(arguments: paths + reviewPaths) fileprivate func transitions(_ path: Path) {
+    @Test(arguments: paths + reviewPaths + [accepted]) fileprivate func transitions(_ path: Path) {
         var s = path.start
         for (i, step) in path.steps.enumerated() {
             let (next, fx) = M.reduce(s, step.on)
@@ -302,7 +314,7 @@ private func alongTheHappyPath() -> [M.State] { along(happy) }
     /// Cancelled, work closed, starter gone: in each phase, out with no verdict, nothing discarded, no facts changed.
     @Test func leavesWithNoVerdictInEachPhase() {
         // F2 R3: `reviewing` is only on the reviewed path
-        let states = alongTheHappyPath() + along(reviewed)
+        let states = alongTheHappyPath() + along(reviewed) + along(accepted)   // F3: `accepting` on its own path
         #expect(Set(states.map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished]))
         let ways: [(M.Event, [M.Effect])] = [
             (.cancelled, [.uncount, .stopLoop(.init(.cancelled))]),
@@ -322,7 +334,8 @@ private func alongTheHappyPath() -> [M.State] { along(happy) }
 
     /// F2 R3: every phase is on a path: the happy one, or the reviewed one for `reviewing`.
     @Test func everyPhaseIsReached() {
-        #expect(Set(along(happy).map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished, .reviewing]))
+        #expect(Set(along(happy).map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished, .reviewing, .accepting]))
+        #expect(Set(along(accepted).map(\.phase)).contains(.accepting))
         #expect(Set(along(reviewed).map(\.phase)).contains(.reviewing))
     }
 

@@ -14,7 +14,7 @@ enum AutoLandSummary {
 
     /// The land's conditions, in the order `WorkLoop.landConditions` checks them, by the stop each one fails with.
     static let conditions: [(code: WorkLoopState.Stop.Code, name: String)] = [
-        (.landNotFactory, "cercado fábrica"), (.landGateRed, "portão"), (.landReviewVeto, "revisão limpa de cada tarefa"),
+        (.landNotFactory, "cercado fábrica"), (.landGateRed, "portão"), (.landReviewVeto, "revisão limpa de cada tarefa"), (.landAcceptRed, "aceite em runtime"),
         (.landCiRed, "CI local"), (.landDirty, "árvore limpa, HEAD parado e ninguém trabalhando"), (.landConflict, "land (merge)"),
     ]
 
@@ -47,11 +47,14 @@ enum AutoLandSummary {
             l.append("- título: \(c(w.title, 120))")
             l.append("- base antes: \(al.before ?? "?") · depois: \(al.after ?? "?")")
         }
+        // F3: a work with no `--accept` says so (the land had three conditions of the result, not four)
+        if !w.tasks.contains(where: { $0.accept != nil }) { l.append("- sem aceite em runtime") }
         l += ["", "### Tarefas", ""]
         for t in w.tasks where w.loop?.tasks?.contains(t.id) ?? true {
             let secs = t.evidence.map { duration($0.seconds) } ?? "?"
             l.append("- \(c(t.title, 120)) [\(t.state.rawValue)]: tentativas \(t.tries ?? 0), tempo \(secs)")
             l.append("  - aprovou: " + (t.reviewClean == true ? c(t.review ?? "sim", 300) : "ninguém (\(c(t.review ?? "sem revisão", 300)))"))
+            if t.accept != nil { l.append("  - aceite em runtime: " + c(t.acceptResult ?? "não rodou", 300)) }
             // the loop's own failure notes of the task: the review's vetoes, "[persona] arquivo:linha ..." each
             let vetoes = w.notes.filter { $0.text.hasPrefix("[loop \(t.id)] ") }.compactMap { n -> String? in
                 guard let r = n.text.split(separator: "\n").first?.range(of: "revisor recusou: ") else { return nil }
@@ -68,7 +71,8 @@ enum AutoLandSummary {
             l.append("- nada integrado; sem push")
             if let stop {
                 if let i = conditions.firstIndex(where: { $0.code == stop.code }) {
-                    let ok = conditions.prefix(i).map(\.name)
+                    let accepts = w.tasks.contains { $0.accept != nil }
+                    let ok = conditions.prefix(i).filter { $0.code != .landAcceptRed || accepts }.map(\.name)
                     l.append("- condições que passaram: " + (ok.isEmpty ? "nenhuma" : ok.joined(separator: ", ")))
                     l.append("- parou em: \(conditions[i].name): \(c(stop.label, 300))")
                 } else {

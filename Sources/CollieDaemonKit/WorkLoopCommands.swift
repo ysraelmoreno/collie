@@ -463,6 +463,7 @@ extension CommandRouter {
             xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
         }
         for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))"
+                + (t.accept.map { " aceite \(quoted($0))" + (t.acceptTimeout.map { " até \($0) s" } ?? "") } ?? "")
                 + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
                 + (i < tasks.count - 1 ? ";" : ".")
         }

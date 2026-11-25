@@ -159,6 +159,12 @@ public enum WorkStatusText {
     static func unknownPersonasLine(_ names: String) -> String {
         "aviso: factory.review.personas do \(ProjectWorkConfig.fileName) tem persona desconhecida em HEAD: \(names)"
     }
+    /// F3: " · aceite «<command>» (último: passou (exit 0))" after a task with `--accept`; "" without one.
+    public static func acceptLabel(_ t: WorkTask) -> String {
+        guard let a = t.accept else { return "" }
+        return " · aceite «\(RerailText.clean(a, max: 200))»" + (t.acceptTimeout.map { " até \($0) s" } ?? "")
+            + " (último: \(RerailText.clean(t.acceptResult ?? "ainda não rodou", max: 200)))"
+    }
     /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
     public static func workerLabel(_ t: WorkTask) -> String {
         let parts = [t.agent.map { "agente " + RerailText.clean($0, max: 20) }, t.model.map { "modelo " + RerailText.clean($0, max: 100) }].compactMap { $0 }
@@ -253,7 +259,7 @@ public enum WorkStatusText {
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
             + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate
             + reviewText(l, profileReviewOff: profileReviewOff) + ". Parar: collie work stop."]
-        lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
+        lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" + acceptLabel($1) }
         return bounded(lines, limit: RerailText.limit)
     }
 

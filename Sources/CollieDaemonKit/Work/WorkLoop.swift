@@ -352,6 +352,7 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 x.tasks[i].reviewClean = nil; x.tasks[i].reviewedHead = nil   // A4: only this attempt's own review can make it clean
+                x.tasks[i].acceptPassed = nil   // F3: only this attempt's own acceptance can make it pass
                 // where a fall resumes from; `forget` clears it when the attempt ends
                 // M2c: an adoption keeps the `resumeAt` it was judged by (when the attempt was first left): cancelled
                 // or fallen again, a commit made during it is still after that, and never adopted
@@ -378,7 +379,8 @@ actor WorkLoop {
         // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
                                                         precheck: loop.precheck != nil, reviewer: loop.review == true,
-                                                        reviewRejectsInRow: task.reviewRejects ?? 0, promptRetries: task.promptRetries ?? 0),
+                                                        reviewRejectsInRow: task.reviewRejects ?? 0, promptRetries: task.promptRetries ?? 0,
+                                                        accept: task.accept != nil),
                                                  adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
@@ -435,6 +437,8 @@ actor WorkLoop {
         var on: String, loose: Set<String> = []
         var output = ""
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
+        /// F3: the acceptance's whole output (`acceptOutput`), once it ran.
+        var acceptOutput: String?
         /// F2 X2: the check's and the gate's exit status, the only part of their run the reviewers read.
         var checkStatus: Int32?, gateStatus: Int32?
         /// F2 U1: the loop's `reviewLoopConfigBase` (`--review` only)
@@ -458,7 +462,7 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck, .runReview: true   // the nudges write by themselves, when they go
+        case .ask, .waitForCommit, .runCheck, .runGate, .runAccept, .runPrecheck, .runReview: true   // the nudges write by themselves, when they go
         default: false
         }
     }
@@ -471,7 +475,7 @@ actor WorkLoop {
     /// M2.2b: the events that carry a verdict's facts out of a long wait: a cancel during it replaces them.
     private static func judges(_ e: AttemptMachine.Event) -> Bool {
         switch e {
-        case .checkDone, .gateDone, .blocked, .reviewDone: true   // F2 X3: a cancelled review's mute reviewers are no refusal
+        case .checkDone, .gateDone, .acceptDone, .blocked, .reviewDone: true   // F2 X3: a cancelled review's mute reviewers are no refusal
         default: false
         }
     }
@@ -687,6 +691,36 @@ actor WorkLoop {
                 r.output = ""
                 return .gateDone(status: nil, broken: "gate could not run: \(error.message)")
             }
+        case .guardAccept:
+            // F3: the agent may not rewrite what judges its result, as for the gate
+            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: "o aceite") else { return .acceptClear }
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = false; x.tasks[i].acceptResult = "não rodou: " + why }
+            }
+            return .acceptSkipped(why)
+        case .runAccept:
+            // F3: the command from the work's state (`task`, read before the attempt), never from the tree; the check's
+            // conditions (worktree, sandbox, budget), its own timeout
+            let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
+            let limit = Duration.seconds(Swift.min(task.acceptTimeout ?? WorkTask.acceptTimeoutDefault, WorkTask.acceptTimeoutMax))
+            let ran: AttemptMachine.Event, line: String
+            do {
+                let res = try await host.check(task.accept ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted, limit))
+                r.acceptOutput = Self.acceptOutput(res.stdout + res.stderr, secrets: await host.secrets())
+                ran = .acceptDone(status: res.status, broken: nil); line = res.status == 0 ? "passou (exit 0)" : "falhou (exit \(res.status))"
+            } catch where error.code == .timeout {
+                r.acceptOutput = ""
+                ran = .acceptDone(status: nil, broken: nil); line = "falhou (timeout)"
+            } catch {
+                r.acceptOutput = ""
+                ran = .acceptDone(status: nil, broken: "accept could not run: \(error.message)"); line = "não rodou: \(error.message)"
+            }
+            r.output = r.acceptOutput ?? ""
+            let ok = line.hasPrefix("passou"), said = LotBoards.scrub(String(line.prefix(200)))
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = ok; x.tasks[i].acceptResult = said }
+            }
+            return ran
         case .runReview:
             // F2 X3: too little budget for a reviewer to answer: every persona would be mute, a refusal that is not one
             let rest = await left(id, r.loop, since: r.started)
@@ -824,6 +858,7 @@ actor WorkLoop {
                 shortstat: await out(["diff", "--shortstat", before, judged], dir) ?? "",
                 checkTail: Self.evidenceTail(check: r.checkOutput, gate: r.loop.gate == nil ? nil : r.output),
                 seconds: Swift.max(0, Int(at.timeIntervalSince(r.started).rounded())), attempt: n)
+            evidence.acceptOutput = task.accept == nil ? nil : r.acceptOutput
             // the declared files, from the tree as the verdict left it: `judged`, what the agent left untracked and
             // what is ignored (an untracked file the check or the gate made is already gone)
             if let g = task.evidenceGlob {
@@ -845,8 +880,10 @@ actor WorkLoop {
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)
+            // F3: a failed acceptance that ran leaves its WHOLE output (already scrubbed and bounded), never only the tail
+            let whole = state.facts.accept != nil ? r.acceptOutput : nil
             let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))"
-                + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
+                + (whole.map { $0.isEmpty ? "" : "\nsaída do aceite:\n" + $0 } ?? (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
@@ -1075,7 +1112,8 @@ actor WorkLoop {
     /// the attempt's tree, so an agent cannot authorise itself by editing its spec.
     // ponytail: substring match on the command text, no shell parsing; a script the gate reaches indirectly
     // (sourced by another script, a directory argument) is not seen. Parse the command if that gap is ever used.
-    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL) async -> String? {
+    /// F3: the task's acceptance is guarded the same way (`by`: what runs the file, for the reason).
+    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String = "o portão") async -> String? {
         let named = await specText(spec, at: before, dir)
         // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
         guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir), d.status == 0 else {
@@ -1083,7 +1121,7 @@ actor WorkLoop {
         }
         for path in d.stdout.split(separator: "\0").map(String.init) where gate.contains(path) && !named.contains(path) {
             if (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0 {
-                return "a tentativa alterou «\(path)», que o portão executa"
+                return "a tentativa alterou «\(path)», que \(by) executa"
             }
         }
         return nil
@@ -1207,6 +1245,19 @@ actor WorkLoop {
         return String(LotBoards.scrub(tails.joined(separator: "\n")).suffix(chars))
     }
 
+    /// F3: the acceptance's output as the evidence and the note keep it: ANSI gone, secrets hidden (the known shapes and
+    /// the daemon's live ones), at most `acceptChars`; past it the head and the tail, with how much was cut between them.
+    static let acceptChars = 64 * 1024
+    static func acceptOutput(_ raw: String, secrets: Set<String> = []) -> String {
+        let clean = LotBoards.scrub(ANSI.strip(raw), secrets: secrets).trimmingCharacters(in: .newlines)
+        guard clean.utf8.count > acceptChars else { return clean }
+        let half = acceptChars / 2 - 64
+        // a cut inside a multi-byte character decodes as U+FFFD: dropped
+        let head = String(decoding: Array(clean.utf8.prefix(half)), as: UTF8.self).trimmingCharacters(in: ["\u{FFFD}"])
+        let tail = String(decoding: Array(clean.utf8.suffix(half)), as: UTF8.self).trimmingCharacters(in: ["\u{FFFD}"])
+        return head + "\n… (\(clean.utf8.count - 2 * half) bytes cortados no meio) …\n" + tail
+    }
+
     /// Why `what` (the check, the gate) did not pass, from its exit status (nil: it timed out); nil = it passed.
     static func failure(_ what: String, _ status: Int32?) -> String? {
         guard let status else { return "\(what) timed out" }
@@ -1298,6 +1349,11 @@ extension WorkLoop {
             return await failed(.landReviewVeto, "revisão sem aprovação limpa", RerailText.clean(t.title, max: 80) + ": " + (t.review ?? "sem revisão"))
         }
         if let why = await reviewedHeadVeto(w, head: head, dir) { return await failed(.landReviewVeto, "commits depois da revisão", why) }
+        // F3: the 4th condition, only when a task of the work has `--accept`: its last acceptance passed (in the attempt
+        // that made it done: each attempt clears it first)
+        if let t = w.tasks.first(where: { $0.state == .done && $0.accept != nil && $0.acceptPassed != true }) {
+            return await failed(.landAcceptRed, "aceite em runtime sem passar", RerailText.clean(t.title, max: 80) + ": " + (t.acceptResult ?? "não rodou"))
+        }
         await phase(id, .check)
         if let why = await run(al.ci, .seconds(al.timeout)) { return await failed(.landCiRed, "CI local vermelho", why) }
         await phase(id, nil)

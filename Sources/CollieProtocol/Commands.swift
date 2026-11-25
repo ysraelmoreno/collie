@@ -345,6 +345,8 @@ public enum Commands {
                     params: [ParamSpec("title", .rest, positional: true, required: true, help: "Task title"),
                              ParamSpec("spec", .string, help: "Markdown file with what to build and its acceptance criteria (for collie work run)"),
                              ParamSpec("check", .string, help: "Shell command run in the paddock's worktree; exit 0 = the task passes (for collie work run)"),
+                             ParamSpec("accept", .string, help: "Runtime acceptance: shell command the loop runs after the check and the gate, in the check's conditions, that judges the result running (the screen opens, the service answers); exit 0 = accepted. Kept in the work's state, never read from the worktree"),
+                             ParamSpec("accept-timeout", .int, help: "Seconds for --accept (default 600, at most 1800)"),
                              ParamSpec("area", .string, help: "Areas of the project's collie-work.json, comma-separated: the task's check becomes '<area> && <area> && <smoke>' (not with --check); over MCP also an array of strings", repeatable: true),
                              ParamSpec("evidence", .string, help: "Glob relative to the paddock's worktree (no '..'): the png|gif|jpg|mp4|txt|md files the loop keeps as evidence when the task passes, 20 MB in all"),
                              ParamSpec("needs", .string, help: "Ids of tasks of this work, comma-separated, that must be done before this one starts (no cycle); over MCP also an array of strings", repeatable: true),

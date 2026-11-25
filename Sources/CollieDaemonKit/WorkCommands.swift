@@ -171,6 +171,15 @@ extension CommandRouter {
     /// F2 R1: the agents `work task add --agent` takes (who works on the task).
     static let taskAgents = ["claude", "cursor", "codex"]
 
+    /// F3: why `work task add --accept` refuses this command (already trimmed); nil: taken. As the check: not empty and
+    /// at most `maxWorkText` characters; and no control character but a tab or a newline.
+    static func acceptRefusal(_ a: String) -> String? {
+        if a.isEmpty { return "está vazio" }
+        if a.count > maxWorkText { return "tem mais de \(maxWorkText) caracteres" }
+        if a.unicodeScalars.contains(where: { $0.properties.generalCategory == .control && $0 != "\n" && $0 != "\t" }) { return "tem caractere de controle" }
+        return nil
+    }
+
     func workCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin (the user / app)
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -286,6 +295,11 @@ extension CommandRouter {
                 }
                 check = built
             }
+            // F3: the acceptance as the check (trimmed, not empty, bounded), and no control character but a tab or a newline
+            let accept = str(r, "accept").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let accept, let why = Self.acceptRefusal(accept) { throw invalid("--accept " + why) }
+            let acceptTimeout = try num(r, "accept-timeout", max: Double(WorkTask.acceptTimeoutMax)).map { Int($0) }
+            if acceptTimeout != nil, accept == nil { throw invalid("--accept-timeout precisa de --accept") }
             let evidence = str(r, "evidence")
             if let evidence, let why = EvidenceFiles.refusal(evidence) { throw invalid("--evidence \(why)") }
             var spec: String?
@@ -311,6 +325,7 @@ extension CommandRouter {
             let w = try await implicitWork(t, now: now)
             var task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
             task.agent = agent; task.model = model
+            task.accept = accept; task.acceptTimeout = acceptTimeout
             try await work.update(w.id) { $0.tasks.append(task) }
             guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
             o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "
@@ -597,7 +612,7 @@ extension CommandRouter {
             let ts = w.tasks.filter { $0.state == state }
             guard !ts.isEmpty else { continue }
             lines.append("\(label) (\(ts.count)):")
-            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + WorkStatusText.workerLabel($0) + " [\($0.id)]" }
+            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + WorkStatusText.workerLabel($0) + WorkStatusText.acceptLabel($0) + " [\($0.id)]" }
         }
         let jobs = w.jobs.filter { $0.state == .running || $0.state == .unknown }
         if !jobs.isEmpty { lines.append("Jobs:"); lines += jobs.map { "  - \($0.kind.rawValue) \($0.label) (\($0.state.rawValue))" } }

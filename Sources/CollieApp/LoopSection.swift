@@ -176,6 +176,7 @@ struct HistoryRow: Equatable, Identifiable {
         case .landed?: return "integrado (auto-land)"
         case .landGateRed?: return "auto-land: portão vermelho"
         case .landReviewVeto?: return "auto-land: revisão sem aprovação"
+        case .landAcceptRed?: return "auto-land: aceite em runtime vermelho"
         case .landCiRed?: return "auto-land: CI vermelho"
         case .landDirty?: return "auto-land: árvore suja"
         case .landConflict?: return "auto-land: land falhou"

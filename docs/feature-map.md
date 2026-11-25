@@ -277,6 +277,17 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   base antes e depois na nota. Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
   (`autoLand`), `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`loopAutoLand`, `loopLand`); testes em
   `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
+- **Aceite em runtime (F3, `collie work task add --accept "<comando>" [--accept-timeout <s>]`, MCP `work_task_add`):**
+  o check julga o código; o aceite julga o RESULTADO rodando (a tela abre, o serviço responde). Comando de shell guardado
+  no estado do trabalho (o laço nunca lê da worktree; mesma validação do check, sem caractere de controle). Ordem na
+  tentativa: check → portão → aceite → parecer; roda na worktree, nas condições do check, depois que o agente foi
+  dispensado (padrão 600 s, até 1800), e não roda com check ou portão vermelho. Falha = falha de check: a tentativa conta,
+  a saída inteira (scrub, cabeça e rabo, até 64 KB) vai para a nota e, quando passa, para a evidência (`acceptOutput`);
+  diário `acceptStarted`/`acceptPassed`/`acceptFailed`. Arquivo citado pelo comando alterado pela tentativa reprova como
+  no portão. No auto-land é a 4ª condição (`landAcceptRed`); trabalho sem `--accept` segue como antes e o resumo diz "sem
+  aceite em runtime". `work status` e o cartão mostram o comando e o último resultado. Como escrever: `docs/fabrica/aceite.md`.
+  Arquivos: `Sources/CollieDaemonKit/Work/AttemptMachine.swift` (`accepting`), `Sources/CollieDaemonKit/Work/WorkLoop.swift`
+  (`runAccept`, `acceptOutput`); testes em `Tests/CollieDaemonKitTests/AcceptTests.swift`.
 - **Fila do auto-land (A5, `--auto-land-max <N>`, `--queue`):** `work run --auto-land --queue` leva o trabalho ao cartão
   do dono (tarefas, checks, portão e limites, como sempre) e, aprovado, ele espera na fila do cercado (estado do laço
   `queued`; nada roda; o land do cercado não o fecha). Depois de um `landed`, se a execução ainda não integrou `N`

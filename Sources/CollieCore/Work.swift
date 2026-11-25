@@ -11,6 +11,9 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
     public var commits: [String]; public var shortstat: String; public var checkTail: String
     public var seconds: Int; public var attempt: Int
     public var files: [String]?; public var filesDir: String?
+    /// F3: the runtime acceptance's whole output (`WorkLoop.acceptOutput`: scrubbed, head and tail, at most 64 KB); nil:
+    /// the task has no `--accept`.
+    public var acceptOutput: String?
     public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int,
                 files: [String]? = nil, filesDir: String? = nil) {
         self.commits = commits; self.shortstat = shortstat; self.checkTail = checkTail; self.seconds = seconds; self.attempt = attempt
@@ -57,6 +60,16 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var reviewClean: Bool?
     /// C3a: the HEAD the clean review judged (set with `reviewClean`): a land whose HEAD is past it is no approval.
     public var reviewedHead: String?
+    /// F3, `work task add --accept`: a shell command that judges the RESULT running (exit 0 = accepted), run by the loop
+    /// after the check and the gate, in the check's conditions; `acceptTimeout` its seconds (nil: `acceptTimeoutDefault`,
+    /// at most `acceptTimeoutMax`). The owner's, kept in the work's state: the loop never reads it from the worktree.
+    public var accept: String?; public var acceptTimeout: Int?
+    public static let acceptTimeoutDefault = 600, acceptTimeoutMax = 1800
+    /// F3: the acceptance of the task's LAST attempt passed (true) / failed or did not run (false); nil: it never ran
+    /// in that attempt (cleared as each attempt starts). What `--auto-land` requires of a task with `accept`.
+    public var acceptPassed: Bool?
+    /// F3: one line on that last acceptance ("passou (exit 0)", "falhou (exit 1)", "não rodou: ..."), for the owner.
+    public var acceptResult: String?
     /// P2: the free retries the loop spent on this task because an attempt's prompt was not delivered (nil: none).
     public var promptRetries: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
@@ -100,6 +113,10 @@ public struct WorkTask: Codable, Sendable, Equatable {
         promptRetries = (try? c.decodeIfPresent(Int.self, forKey: .promptRetries)) ?? nil   // P2: tolerant too
         reviewClean = (try? c.decodeIfPresent(Bool.self, forKey: .reviewClean)) ?? nil   // A4: tolerant too
         reviewedHead = (try? c.decodeIfPresent(String.self, forKey: .reviewedHead)) ?? nil   // C3a: tolerant too
+        accept = (try? c.decodeIfPresent(String.self, forKey: .accept)) ?? nil   // F3: tolerant too
+        acceptTimeout = (try? c.decodeIfPresent(Int.self, forKey: .acceptTimeout)) ?? nil
+        acceptPassed = (try? c.decodeIfPresent(Bool.self, forKey: .acceptPassed)) ?? nil
+        acceptResult = (try? c.decodeIfPresent(String.self, forKey: .acceptResult)) ?? nil
     }
 }
 
@@ -163,6 +180,9 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case promptRetry
         /// A4, `--auto-land`: the paddock was landed (merge) once every task was done (detail: "<base before> -> <after>").
         case landed
+        /// F3: the task's runtime acceptance (`--accept`) started / passed / failed or did not run (detail: `exit n`,
+        /// `timeout` or `não rodou`).
+        case acceptStarted, acceptPassed, acceptFailed
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
@@ -251,6 +271,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// C3a: the merge made no commit (the paddock had nothing new, or was integrated already): no land, not
                 /// counted in the daily cap nor in the chain.
                 case landNothing
+                /// F3: a task of the work has `--accept` and its last acceptance did not pass in the winning attempt.
+                case landAcceptRed
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -280,6 +302,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
             case .queueEmpty: "auto-land: nenhum outro trabalho aprovado na fila do cercado"
             case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
+            case .landAcceptRed: "auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado"
             case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"

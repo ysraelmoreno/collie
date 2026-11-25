@@ -260,8 +260,9 @@ public final class Daemon: Sendable {
         chmod(root.path, 0o700)      // even if it pre-existed with a looser mode
         try server.start()           // refuses if another daemon owns the socket; only then touch admin.token
         if config.updateLoop {       // the app updater's periodic check (spec 2026-11-17 §3); collied only, never tests
-            let updates = router.updates, root = root
-            Task.detached { await updates.loop(download: { CollieSettings.load(root).updates?.download ?? true }) }
+            let updates = router.updates
+            // the download is Sparkle's now (spec 2026-11-25): this loop only keeps the "new version" badge
+            Task.detached { await updates.loop(download: { false }) }
         }
         // denials: before any terminal can launch (`log stream` takes 1-2 s to attach; SandboxWatcher)
         if let src = config.denialSource ?? (config.watchDenials ? SandboxWatcher.logStream : nil) {

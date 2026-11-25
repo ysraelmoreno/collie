@@ -185,6 +185,7 @@ struct HistoryRow: Equatable, Identifiable {
         case .landDailyCap?: return "auto-land: teto diário"
         case .landDoctorRegressed?: return "auto-land: doctor regrediu"
         case .landNothing?: return "auto-land: nada a integrar"
+        case .landBaseMoved?: return "auto-land: base mudou"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

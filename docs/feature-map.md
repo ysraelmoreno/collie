@@ -274,7 +274,13 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `scripts/ci/run-tests.sh`; `factory.autoland.timeoutSeconds`, padrão 1800), árvore limpa sem outro agente, então
   `paddock land` por merge local (nunca push nem PR). Cada falha para com `stopReason` próprio (`landGateRed`,
   `landReviewVeto`, `landCiRed`, `landDirty`, `landConflict`, `landNotFactory`); sucesso é `landed`, com o commit da
-  base antes e depois na nota. Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
+  base antes e depois na nota. C3b: antes do portão, o cercado não pode ter mudado (contra a base) o `collie-work.json`,
+  o script do CI nem os scripts que o `gate` cita (caminho inteiro, por token do comando; `landGateRed`, "o agente alterou
+  <arquivo> que julga o land"). A base de agora tem de ser IGUAL a `autoLand.baseHead` (a base no início da última
+  tentativa; gravada só no início de cada tentativa, levada ao próximo `work run`, relida quando a corrente ativa o
+  trabalho), antes do portão, depois do CI e de novo sob o claim do land, antes do merge; sem base conhecida, ou outra:
+  `landBaseMoved` (o dono refaz sobre a base nova).
+  Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
   (`autoLand`), `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`loopAutoLand`, `loopLand`); testes em
   `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
 - **Aceite em runtime (F3, `collie work task add --accept "<comando>" [--accept-timeout <s>]`, MCP `work_task_add`):**
@@ -308,7 +314,10 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   trabalhos (padrão 1, no máximo 5), o laço escolhe o trabalho aprovado mais antigo da fila e segue, com o mesmo `--budget`
   (o que sobrou) e o mesmo starter: o motor só escolhe; o router (`chainLoop`) registra o motor novo em `workLoops` e só
   então passa o trabalho de `queued` a `running` (`WorkLoop.activate`), na mesma reserva do cercado, antes do aviso ao
-  starter; não começou ⇒ segue `queued`. Um `work stop` (também depois do fim do motor) para a corrente: `requested`. Antes de ativar: o teto diário (`factory.guardrails.autoLandPerDay`, 1 a 20, padrão 3,
+  starter; não começou ⇒ segue `queued`. Um `work stop` (também depois do fim do motor) para a corrente: `requested`.
+  C3b: a fila vai pela hora da aprovação do dono (`autoLand.approvedAt`, a mais antiga primeiro); `work stop` num trabalho
+  `queued` o tira da fila (segue `queued`, não terminal, com `autoLand.dequeuedAt`: segue aprovado e a corrente não o
+  ativa; um novo `work run` o põe de volta). Antes de ativar: o teto diário (`factory.guardrails.autoLandPerDay`, 1 a 20, padrão 3,
   contado pelos eventos `landed` do cercado nas últimas 24 h; também checado antes de cada land) e o `factory doctor` do
   cercado (static e judge ≥ 1). Desfechos: `landed` (N integrados e fila vazia: com N=1 e fila vazia o fim é `landed`),
   `queueEmpty` (menos de N integrados e a fila acabou, não é erro), `maxReached` com detalhe (teto `N` com trabalhos

@@ -93,8 +93,9 @@ protocol LoopHost: Sendable {
     /// A4: `paddock land` of the loop's paddock by the command's own path (`PaddockManager.land`): the base branch's
     /// commit before and after. The engine only ever asks `.merge`: it never pushes nor opens a PR.
     /// C2: `late`, what failed AFTER the merge (saving the paddock): the base moved all the same; nil: nothing did.
-    /// A throw is a land that never merged.
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?)
+    /// A throw is a land that never merged. C3b: `base`, the base's commit the land was judged on: under the land's claim,
+    /// right before the merge, a base branch elsewhere throws `.conflict` (`landBaseMoved`); nil: not checked.
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?)
     /// A4: one line for the owner (`notify`).
     func notifyOwner(_ line: String) async
     /// A5: why the paddock's `factory doctor` no longer passes the minimum (static and judge at least 1), read now;
@@ -103,6 +104,9 @@ protocol LoopHost: Sendable {
     /// C3a: when the paddock was auto-landed (`Paddock.autoLands`, the daemon's own record at each land): what the daily
     /// cap counts, never a work's journal (a new run, a reopen or the pruning of closed works would clear it).
     func autoLands() async -> [Date]
+    /// C3b: the paddock's base branch's commit, read now (what the land merges into). nil: the host knows no base (the
+    /// tests' fakes, a folder paddock); a throw: git could not say (the land stops, fail closed).
+    func baseHead() async throws(ProtocolError) -> String?
 }
 
 extension LoopHost {
@@ -143,12 +147,13 @@ extension LoopHost {
     func startedOpen(_ agent: UUID) async -> Bool { false }
     /// A host with no paddock to land (the tests' fakes): never a factory's, and its land refuses.
     func factoryPaddock() async -> Bool { false }
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
         throw ProtocolError(code: .unavailable, message: "this host lands nothing")
     }
     func notifyOwner(_ line: String) async {}
     func doctorRefusal() async -> String? { nil }
     func autoLands() async -> [Date] { [] }
+    func baseHead() async throws(ProtocolError) -> String? { nil }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -348,7 +353,10 @@ actor WorkLoop {
         // no agent. Anything else the task carried is ignored (and overwritten by this attempt's own, right below)
         let adopt = await adoptable(task, branch: branch, dir)
         let before = adopt ? task.resumeFrom ?? head : head
+        // C3b: the base as the agent finds it, the one the land must still see; unread (nil, a throw): the last one stays
+        let base = loop.autoLand == nil ? nil : (try? await host.baseHead()) ?? nil
         try? await store.update(w.id) { x in
+            if let base { x.loop?.autoLand?.baseHead = base }
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 x.tasks[i].reviewClean = nil; x.tasks[i].reviewedHead = nil   // A4: only this attempt's own review can make it clean
@@ -1341,6 +1349,12 @@ extension WorkLoop {
         let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
         if today >= perDay { return await failed(.landDailyCap, "teto diário atingido", "\(today) de \(perDay) em 24 h") }
         guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
+        // C3b: the base must be the one the last attempt began on (a host with no base, the tests' fakes: none to check)
+        let base: String?
+        do { base = try await host.baseHead() } catch { return await failed(.gitFailed, "git falhou", "a base: \(error.message)") }
+        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
+        // C3b: the gate and the CI run from the agent's tree: the files that judge the land must be the base's
+        if let base, let why = await judgesChanged(al, base: base, head: head, dir) { return await failed(.landGateRed, "portão não rodou", why) }
         await phase(id, .gate)
         if let why = await run(al.gate, checkTimeout) { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
         // parecer mudo/inválido or a task with no review in its last attempt is no approval
@@ -1360,6 +1374,8 @@ extension WorkLoop {
         if !status.isEmpty { return await failed(.landDirty, "árvore do cercado suja", String(status.prefix(300))) }
         if await out(["rev-parse", "HEAD"], dir) != head { return await failed(.landDirty, "o HEAD mudou durante o portão ou o CI", "era \(head.prefix(12))") }
         if let who = await host.othersWorking() { return await failed(.landDirty, "outro agente trabalhando no cercado", who) }
+        // C3b: again after the gate and the CI (they may take long); the land checks it once more under its claim
+        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
         // the gate and the CI may take long (up to the CI's timeout): a `work stop`, a cancel, the work closed or the
         // starter gone meanwhile wins, and nothing lands
         if stopping.contains(id) { return .init(.requested) }
@@ -1367,7 +1383,7 @@ extension WorkLoop {
         guard let now = try? await store.get(id), now.closedAt == nil, now.loop?.state == .running else { return .init(.workGone) }
         guard await host.starterAlive() else { return .init(.starterGone) }
         do {
-            let (before, after, late) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)")
+            let (before, after, late) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)", base: base == nil ? nil : al.baseHead)
             // C3a: no commit made (nothing new, or integrated already): no land, no undo line, not counted anywhere
             if before == after {
                 await note(id, "[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))")
@@ -1387,6 +1403,8 @@ extension WorkLoop {
             }
             return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))" + (late.map { "; depois do merge falhou: \(Self.eventDetail($0))" } ?? ""))
         } catch {
+            // C3b: the base moved between the check above and the merge (`.conflict`, under the land's claim)
+            if error.code == .conflict { return await failed(.landBaseMoved, "a base mudou", error.message) }
             return await failed(.landConflict, "o land (merge) falhou", error.message)
         }
     }
@@ -1410,19 +1428,60 @@ extension WorkLoop {
         var after: String
     }
 
+    static func approved(_ l: WorkLoopState) -> Date { l.autoLand?.approvedAt ?? l.startedAt }
+
     /// The chain the engine picked after `id`'s land (once): the caller activates and runs it.
     func takeNext(after id: UUID) -> Chain? { chainNext.removeValue(forKey: id) }
 
     /// `x` from `queued` to `running` with the chain's limits; false (nothing changed): no longer a queued work of the
     /// chain's (closed, run or stopped meanwhile, its auto-land gone).
-    static func activate(_ x: inout Work, _ c: Chain, at: Date) -> Bool {
-        guard x.closedAt == nil, var l = x.loop, l.state == .queued, l.autoLand != nil else { return false }
+    /// C3b: `base`, the base read at the activation (after the land before it): the work's reference until its first
+    /// attempt takes its own; nil (unread): the one it had stays. A work `work stop` took out of the queue is never activated.
+    static func activate(_ x: inout Work, _ c: Chain, at: Date, base: String? = nil) -> Bool {
+        guard x.closedAt == nil, var l = x.loop, l.state == .queued, l.autoLand != nil, l.autoLand?.dequeuedAt == nil else { return false }
         l.state = .running; l.startedAt = at
+        if let base { l.autoLand?.baseHead = base }
         if let left = c.budget { l.budget = Swift.min(l.budget ?? left, left) }
         l.autoLand?.max = c.max; l.autoLand?.perDay = c.perDay; l.autoLand?.chained = c.chained
         x.loop = l
         x.notes.append(WorkNote(at: at, text: "[loop] auto-land: ativado pela corrente após o land de \"\(c.after)\" (\(c.chained + 1) de \(c.max ?? 1))"))
         return true
+    }
+
+    /// C3b: why the land may not trust its gate and CI: the paddock changed (since its merge base with `base`) a file that
+    /// judges the land: `collie-work.json`, or a path the CI's or the gate's command names (`judgedPaths`: the whole
+    /// path, never a substring; any change counts: created, edited or deleted, a spec naming it or not). nil: none.
+    /// The attempts' own `tampered` is not this: it guards each attempt, this the whole paddock against the base.
+    func judgesChanged(_ al: WorkLoopState.AutoLand, base: String, head: String, _ dir: URL) async -> String? {
+        guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", "\(base)...\(head)"], in: dir), d.status == 0 else {
+            return "não foi possível comparar com a base \(base.prefix(12)) os arquivos que julgam o land"
+        }
+        let judges = Self.judgedPaths(al.gate + " ; " + al.ci, dir).union([ProjectWorkConfig.fileName])
+        let path = d.stdout.split(separator: "\0").map(String.init).first { judges.contains(Self.normalPath($0, dir)) }
+        return path.map { "o agente alterou \(RerailText.clean($0, max: 120)) que julga o land" }
+    }
+
+    /// C3b: the path tokens of a shell command (split at spaces, quotes, `&&`, `||`, `;`, `|`, parentheses and
+    /// redirections), each normalized (`normalPath`). A word that is no file (`bash`, `-x`) never matches a repo path.
+    static func judgedPaths(_ command: String, _ dir: URL) -> Set<String> {
+        Set(command.split(whereSeparator: { " \t\n\"'`;&|()<>".contains($0) }).map { normalPath(String($0), dir) }.filter { !$0.isEmpty })
+    }
+
+    /// C3b: a path as the repo lists it: relative to `dir` when under it (`repoRelative`), with no leading `./`.
+    static func normalPath(_ p: String, _ dir: URL) -> String {
+        var s = repoRelative(p, dir)[...]
+        while s.hasPrefix("./") { s = s.dropFirst(2) }
+        return String(s)
+    }
+
+    /// C3b: nil when the base branch's commit, read now, is `judged` (the base the last attempt began on); else why not:
+    /// it moved, no base is known (`judged` nil) or git could not say (fail closed).
+    func baseMoved(from judged: String?, _ dir: URL) async -> String? {
+        guard let judged else { return "base desconhecida: nenhuma tentativa registrou a base em que começou" }
+        let now: String?
+        do { now = try await host.baseHead() } catch { return "a base não pôde ser lida: \(error.message)" }
+        guard let now else { return "a base não pôde ser lida" }
+        return now == judged ? nil : "a base está em \(now.prefix(12)), a tentativa começou em \(judged.prefix(12))"
     }
 
     /// The paddock's lands in the last 24 h (by the host's clock), from the daemon's durable record (`LoopHost.autoLands`).
@@ -1459,8 +1518,9 @@ extension WorkLoop {
         let done = (al.chained ?? 0) + 1, max = al.max ?? 1
         let all = (try? await store.list(includeClosed: false)) ?? []
         if let h = halted() { return h }
-        let queue = all.filter { $0.id != id && $0.paddockId == pid && $0.loop?.state == .queued && $0.loop?.autoLand != nil }
-            .sorted { ($0.loop!.startedAt, $0.openedAt) < ($1.loop!.startedAt, $1.openedAt) }
+        let queue = all.filter { $0.id != id && $0.paddockId == pid && $0.loop?.state == .queued && $0.loop?.autoLand != nil && $0.loop?.autoLand?.dequeuedAt == nil }
+            // C3b: oldest approval first (the card's answer); a loop from before has no `approvedAt`: its start stands in
+            .sorted { (Self.approved($0.loop!), $0.openedAt) < (Self.approved($1.loop!), $1.openedAt) }
         // N=1 with an empty queue is `landed` (the max reached); `queueEmpty` only with room left
         if queue.isEmpty { return done < max ? .init(.queueEmpty) : nil }
         if done >= max { return .init(.maxReached, detail: "\(done) de --auto-land-max \(max) integrado(s); \(queue.count) na fila") }

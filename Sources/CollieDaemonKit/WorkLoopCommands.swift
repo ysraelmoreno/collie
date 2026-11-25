@@ -152,6 +152,8 @@ extension CommandRouter {
         // A4: `--auto-land`, refused unless the paddock is a factory's, the committed profile has a gate and the review is on
         if flag(r, "auto-land") {
             loop.autoLand = try Self.loopAutoLand(factory: paddock.factory, config: fileConfig, review: review.on, noReview: noReview, max: landMax)
+            // C3b: the base the work's last attempt began on stays the reference until a new attempt takes its own
+            loop.autoLand?.baseHead = w.loop?.autoLand?.baseHead
         }
         if queue { loop.state = .queued }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
@@ -164,7 +166,8 @@ extension CommandRouter {
         // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
         if ws.paddocks.first(where: { $0.id == pid })?.trustLoops == true {
             if queue {
-                try await work.update(id) { $0.loop = loop }
+                var l = loop; l.autoLand?.approvedAt = Date()   // C3b: the trusted paddock's run is the approval
+                try await work.update(id) { $0.loop = l }
                 return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("queued")], warning)
             }
             guard await startLoop(id, loop, paddock: paddock, starter: starter, dir: dir) else {
@@ -187,7 +190,8 @@ extension CommandRouter {
                 await self.loopDenied(paddock: queue ? nil : pid, starter: starter, title: title, withdrawn: withdrawn)
                 return
             }
-            if queue { try? await self.work.update(id) { $0.loop = loop }; return }
+            // C3b: the queue's order is the card's answer (`approvedAt`), not the run's `startedAt`
+            if queue { var l = loop; l.autoLand?.approvedAt = Date(); try? await self.work.update(id) { $0.loop = l }; return }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], warning)
@@ -392,10 +396,13 @@ extension CommandRouter {
         if config.sandboxHome != nil {
             do { _ = try prepareLoopSandbox(id, paddock: p) } catch { return notStarted }
         }
+        // C3b: the base after the land before it, read before the engine is registered (no await between that and activate)
+        let base = (try? await loopBaseHead(pid)) ?? nil
+        guard workLoops[id] == nil else { return notStarted }
         let (ready, go) = AsyncStream<Bool>.makeStream()
         runEngine(id, paddock: pid, starter: starter, dir: URL(fileURLWithPath: p.path), ready: ready)
         let at = Date()
-        try? await work.update(id) { _ = WorkLoop.activate(&$0, c, at: at) }
+        try? await work.update(id) { _ = WorkLoop.activate(&$0, c, at: at, base: base) }
         let ok = (try? await work.get(id))?.loop.map { $0.state == .running && $0.startedAt == at } ?? false
         go.yield(ok); go.finish()
         if !ok {
@@ -480,6 +487,19 @@ extension CommandRouter {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
             await dropAppCard(card)
             return .object(["state": .string("cancelled")])
+        }
+        // C3b: an approved work waiting in the auto-land queue has no engine: it leaves the queue (still `queued`, not
+        // terminal, `dequeuedAt` set: no chain activates it), still approved; its next `work run` puts it back
+        if let w = active, w.loop?.state == .queued, w.loop?.autoLand?.dequeuedAt == nil, workLoops[w.id] == nil {
+            let now = Date()
+            try await work.update(w.id) { x in
+                guard x.loop?.state == .queued, x.loop?.autoLand?.dequeuedAt == nil else { return }
+                x.loop?.autoLand?.dequeuedAt = now
+                x.notes.append(WorkNote(at: now, text: "[loop] auto-land: tirado da fila (work stop): segue aprovado, fora da fila; "
+                    + "a corrente não o roda; um novo work run o põe de volta"))
+            }
+            // the state as it is now: a chain that activated it during the update is a running loop, stopped below
+            if try await work.get(w.id)?.loop?.autoLand?.dequeuedAt == now { return .object(["state": .string("dequeued")]) }
         }
         var id = active.flatMap { workLoops[$0.id] == nil ? nil : $0.id }
         if id == nil {
@@ -793,15 +813,27 @@ extension CommandRouter {
     /// C3a: the paddock's auto-lands (`Paddock.autoLands`), the daily cap's count.
     func loopAutoLands(_ paddock: UUID) -> [Date] { ws.paddocks.first { $0.id == paddock }?.autoLands ?? [] }
 
+    /// C3b: the commit of the paddock's base branch in its repository, now (nil: a folder paddock, no base). A throw:
+    /// the paddock is gone or git could not read the branch.
+    func loopBaseHead(_ paddock: UUID) async throws(ProtocolError) -> String? {
+        guard let f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
+        guard f.kind == .worktree, !f.baseBranch.isEmpty else { return nil }
+        let r = try? await GitRunner.run(["rev-parse", "--verify", "-q", "refs/heads/\(f.baseBranch)^{commit}"], in: URL(fileURLWithPath: f.repoRoot), timeout: .seconds(30))
+        guard let r, r.status == 0 else { throw ProtocolError(code: .internal, message: "git rev-parse \(f.baseBranch) failed") }
+        return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// A4, `work run --auto-land`: `paddock land` of the loop's paddock by the command's own path (`landPaddock`), only
     /// `merge` (never a push nor a PR), only while it is a factory's. The base branch's commit before and after.
-    func loopLand(_ paddock: UUID, mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    /// C3b: `base`, the base's commit the land was judged on: another one under the claim, right before the merge, throws
+    /// `.conflict` and merges nothing.
+    func loopLand(_ paddock: UUID, mode: LandMode, message: String, base: String? = nil) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
         guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
         guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
         guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
         do {
             // C2: a failure after the merge (the save) comes back as `late`, never as a throw: the base moved
-            let (res, late) = try await landPaddockKeepingLate(&f, mode: .merge, message: message)
+            let (res, late) = try await landPaddockKeepingLate(&f, mode: .merge, message: message, base: base)
             // C3a: `before` is the base's HEAD read under the land's claim right before the merge (another paddock landing
             // on the same base before it is in it); equal to `after`: the merge made no commit, nothing is counted
             guard let after = res.commit, let before = res.before else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
@@ -1003,13 +1035,14 @@ struct RouterLoopHost: LoopHost {
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
     func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
-        try await router.loopLand(paddock, mode: mode, message: message)
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+        try await router.loopLand(paddock, mode: mode, message: message, base: base)
     }
     func notifyOwner(_ line: String) async { await router.hub.emit(.notify(starter, message: String(line.prefix(2000)))) }
     /// C3a: read at the paddock's HEAD, never from the tree the agent edits.
     func doctorRefusal() async -> String? { await FactoryDoctorReader.headRefusal(dir: dir) }
     func autoLands() async -> [Date] { await router.loopAutoLands(paddock) }
+    func baseHead() async throws(ProtocolError) -> String? { try await router.loopBaseHead(paddock) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
     func profile() throws(ProtocolError) -> URL? {

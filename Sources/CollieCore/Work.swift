@@ -273,6 +273,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 case landNothing
                 /// F3: a task of the work has `--accept` and its last acceptance did not pass in the winning attempt.
                 case landAcceptRed
+                /// C3b: the base branch is not the commit it was when the last attempt began (`AutoLand.baseHead`), or no
+                /// such commit is known: the merge would integrate a tree nobody judged on that base. The owner redoes it.
+                case landBaseMoved
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -304,6 +307,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
             case .landAcceptRed: "auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado"
             case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
+            case .landBaseMoved: "auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"
             }
@@ -339,6 +343,17 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// earlier works of the same execution made (nil: none; carried to the next work the chain activates).
         public static let maxMax = 5, defaultPerDay = 3
         public var max: Int?, perDay: Int?, chained: Int?
+        /// C3b: when the owner approved the queued work (its card answered, or the trusted paddock's `work run`): the
+        /// queue's order, oldest approval first. nil: a loop from before (its `startedAt` stands in).
+        public var approvedAt: Date?
+        /// C3b: `work stop` took the approved work out of the queue: the loop stays `queued` (not terminal) and
+        /// `approvedAt` stays, but no chain activates it while this is set; the work's next `work run` makes a new loop
+        /// (none set: back in the queue). nil: in the queue.
+        public var dequeuedAt: Date?
+        /// C3b: the base branch's commit when the last attempt of a task began (what the agent worked on): the land
+        /// needs the base to be exactly this. Written only at an attempt's start (never with nil over a value), carried
+        /// to the work's next `work run`, taken again when a chain activates the work. nil: unknown, the land fails closed.
+        public var baseHead: String?
         public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout, max: Int? = nil, perDay: Int? = nil) {
             self.gate = gate; self.ci = ci; self.timeout = timeout; self.max = max; self.perDay = perDay
         }

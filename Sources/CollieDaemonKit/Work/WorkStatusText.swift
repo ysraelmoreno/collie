@@ -86,7 +86,10 @@ public enum WorkStatusText {
                 + (l.phase == .agent && agents.count == 1 ? " · terminal \(RerailText.clean(agents[0].id))" : "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
-        case .queued: return "na fila do auto-land (aprovado pelo dono; entra depois do próximo land do cercado)"
+        case .queued:
+            // C3b: `work stop` took it out of the queue; a new `work run` puts it back
+            if l.autoLand?.dequeuedAt != nil { return "aprovado, fora da fila do auto-land (work stop); um novo work run o põe de volta" }
+            return "na fila do auto-land (aprovado pelo dono; entra depois do próximo land do cercado)"
         }
     }
 

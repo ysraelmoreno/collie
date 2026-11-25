@@ -15,7 +15,8 @@ enum AutoLandSummary {
     /// The land's conditions, in the order `WorkLoop.landConditions` checks them, by the stop each one fails with.
     static let conditions: [(code: WorkLoopState.Stop.Code, name: String)] = [
         (.landNotFactory, "cercado fábrica"), (.landGateRed, "portão"), (.landReviewVeto, "revisão limpa de cada tarefa"), (.landAcceptRed, "aceite em runtime"),
-        (.landCiRed, "CI local"), (.landDirty, "árvore limpa, HEAD parado e ninguém trabalhando"), (.landConflict, "land (merge)"),
+        (.landCiRed, "CI local"), (.landDirty, "árvore limpa, HEAD parado e ninguém trabalhando"),
+        (.landBaseMoved, "base igual à do início da tentativa"), (.landConflict, "land (merge)"),
     ]
 
     /// `AAAA-MM-DD-HHMMSS`, in the daemon's local time.

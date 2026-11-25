@@ -472,6 +472,124 @@ import CollieProtocol
         let back = try JSONDecoder().decode(WorkLoopState.self, from: JSONEncoder().encode(l))
         #expect(back.state == .queued && back.autoLand == al)
     }
+
+    // MARK: C3b
+
+    private static func head(_ dir: URL, _ rev: String = "HEAD") async throws -> String {
+        try await GitRunner.run(["rev-parse", rev], in: dir).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// C3b: the paddock changed, against the base, a file that judges the land: `landGateRed`, and neither the gate nor
+    /// the CI runs. Each file alone: `collie-work.json`, the CI's script, a script the gate names; each still exits 0,
+    /// so without the check every one would land.
+    @Test func aFileThatJudgesTheLandChangedStopsAsGateRed() async throws {
+        for (file, gate, ci) in [("collie-work.json", "echo gate", "echo ci"), ("ci.sh", "echo gate", "bash ci.sh"), ("gate.sh", "bash gate.sh", "echo ci"),
+                                 ("ci.sh", "echo gate", "bash ./ci.sh"), ("gate.sh", "(cd . && bash \"./gate.sh\")", "echo ci")] {
+            let r = try await Self.rig(gate: gate, ci: ci); defer { r.cleanup() }
+            try await commit("ci.sh", "exit 0\n", in: r.repo)
+            try await commit("gate.sh", "exit 0\n", in: r.repo)
+            // the spec names the files: the attempt's own guards (`tampered`, M13.3) let the task change them
+            try await commit("spec.md", "SPEC: collie-work.json ci.sh gate.sh\n", in: r.repo)
+            await r.host.setBase(try await Self.head(r.repo))
+            let text = file == "collie-work.json" ? "{}\n" : "exit 0 # mudou\n"
+            await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0); try await commit(file, text, in: $0) }))
+            try await Self.expectStopped(r, .landGateRed)
+            #expect(try await r.get().notes.contains { $0.text.contains("o agente alterou \(file) que julga o land") }, "\(file)")
+            let ran = await r.host.commands
+            #expect(!ran.contains(gate) && !ran.contains(ci), "\(file): \(ran)")
+        }
+    }
+
+    /// C3b: the paths that judge the land are the commands' whole tokens, never substrings: a file `a` or `ci` beside a
+    /// CI `bash scripts/ci/run.sh` is no file of the CI, and the land goes on; `./x` and `x` are one path.
+    @Test func aShortNameIsNoFileThatJudgesTheLand() async throws {
+        let r = try await Self.rig(gate: "echo gate", ci: "bash scripts/ci/run.sh"); defer { r.cleanup() }
+        await r.host.setBase(try await Self.head(r.repo))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a", "x\n", in: $0); try await commit("ci", "x\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().loop?.stopReason?.code == .landed)
+        let dir = URL(fileURLWithPath: "/r")
+        let t = WorkLoop.judgedPaths("bash ./scripts/x.sh && make ci; \"scripts/y.sh\"|tee /r/out.txt", dir)
+        #expect(t.contains("scripts/x.sh") && t.contains("scripts/y.sh") && t.contains("out.txt") && !t.contains("./scripts/x.sh"), "\(t)")
+        #expect(WorkLoop.normalPath("././scripts/x.sh", dir) == "scripts/x.sh")
+    }
+
+    /// C3b: the base must be exactly the one the last attempt began on (`autoLand.baseHead`, taken at the attempt's
+    /// start). The same base lands; one that moves while the CI runs stops as `landBaseMoved`, nothing merged; a base
+    /// git cannot read stops as `gitFailed`.
+    @Test func aBaseThatMovedStopsAsBaseMoved() async throws {
+        let ok = try await Self.rig(); defer { ok.cleanup() }
+        let start0 = try await Self.head(ok.repo)
+        await ok.host.setBase(start0)
+        #expect(await ok.run() == .finished)
+        let l = try await ok.get().loop
+        #expect(l?.stopReason?.code == .landed && l?.autoLand?.baseHead == start0)
+        #expect(await ok.host.landBases == [start0])
+
+        let r = try await Self.rig(ci: "echo ci"); defer { r.cleanup() }
+        let start = try await Self.head(r.repo), moved = String(repeating: "c", count: 40)
+        await r.host.setBase(start)
+        let host = r.host
+        await r.host.setProbe { c in if c == "echo ci" { await host.setBase(moved) } }
+        try await Self.expectStopped(r, .landBaseMoved)
+        #expect(try await r.get().notes.contains { $0.text.contains("a base mudou") && $0.text.contains(String(moved.prefix(12))) })
+
+        let e = try await Self.rig(); defer { e.cleanup() }
+        await e.host.setBaseError(ProtocolError(code: .internal, message: "sem base"))
+        try await Self.expectStopped(e, .gitFailed)
+    }
+
+    /// C3b: a base the host knows now but no attempt recorded (unread when it began): the land fails closed as
+    /// `landBaseMoved` ("base desconhecida"), nothing merged.
+    @Test func anUnknownBaseFailsClosed() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        let host = r.host, base = try await Self.head(r.repo)
+        // nil when the attempt began (nothing recorded); known from the agent's turn on
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0); await host.setBase(base) }))
+        try await Self.expectStopped(r, .landBaseMoved)
+        #expect(try await r.get().loop?.autoLand?.baseHead == nil)
+        #expect(try await r.get().notes.contains { $0.text.contains("base desconhecida") })
+    }
+
+    /// C3b: a base unread at the attempt's start (git failing) never writes over the one recorded before: it stays.
+    @Test func aBaseUnreadAtTheAttemptKeepsTheLastOne() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        let last = String(repeating: "d", count: 40)
+        try await r.store.update(r.work) { $0.loop?.autoLand?.baseHead = last }
+        await r.host.setBaseError(ProtocolError(code: .internal, message: "sem base"))
+        try await Self.expectStopped(r, .gitFailed)
+        #expect(try await r.get().loop?.autoLand?.baseHead == last)
+    }
+
+    /// C3b: the conditions in order. The gate and the CI red together: `landGateRed`, and the CI never runs. A mute review
+    /// and the CI red: `landReviewVeto`, and the CI never runs.
+    @Test func theFirstFailingConditionWinsAndTheCINeverRuns() async throws {
+        let ci = "echo ci; exit 4"
+        let g = try await Self.rig(gate: "echo gate; exit 3", ci: ci); defer { g.cleanup() }
+        try await Self.expectStopped(g, .landGateRed)
+        let gran = await g.host.commands
+        #expect(gran.contains("echo gate; exit 3") && !gran.contains(ci), "\(gran)")
+        let v = try await Self.rig(gate: "echo gate", ci: ci); defer { v.cleanup() }
+        await v.host.setReviewAnswer("correcao", nil)
+        try await Self.expectStopped(v, .landReviewVeto)
+        let vran = await v.host.commands
+        #expect(vran.contains("echo gate") && !vran.contains(ci), "\(vran)")
+    }
+
+    /// C3b: the queue goes by the owner's approval (`approvedAt`), oldest first, never by when `work run` was asked; a
+    /// loop from before (no `approvedAt`) goes by its start.
+    @Test func theQueueGoesByTheOldestApproval() async throws {
+        let r = try await Self.rig(max: 2); defer { r.cleanup() }
+        let b = try await Self.another(r, "b"), c = try await Self.another(r, "c")
+        let t = Date()
+        // b asked first, approved last; c asked last, approved first
+        try await r.store.update(b) { $0.loop?.startedAt = t; $0.loop?.autoLand?.approvedAt = t + 60 }
+        try await r.store.update(c) { $0.loop?.startedAt = t + 30; $0.loop?.autoLand?.approvedAt = t + 10 }
+        #expect(await r.run() == .finished)
+        #expect(try await Self.activated(r, after: r.work).next == c)
+        var old = WorkLoopState(tasks: []); old.startedAt = t
+        #expect(WorkLoop.approved(old) == t)
+    }
 }
 
 /// C3a: a profile the factory doctor passes (static and judge at least 1), committed at `repo`'s HEAD.
@@ -670,6 +788,140 @@ private extension CommandRouter {
         }
     }
 
+    /// C3b: `loopLand` with real git refuses a paddock with no factory mark and, marked, any mode but merge: the base
+    /// stays where it was; then the merge gives the base before and after. `loopBaseHead` reads the base branch now.
+    @Test func loopLandRefusesAnotherModeAndAPaddockNotAFactorys() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let k = try await PaddockManager.create(name: "r", repoRoot: repo, createdBy: nil)
+            await d.router.addPaddock(k)
+            try await commit("novo.swift", "let n = 1\n", in: URL(fileURLWithPath: k.path))
+            func main() async throws -> String { try await GitRunner.run(["rev-parse", "main"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let base = try await main()
+            #expect(try await d.router.loopBaseHead(k.id) == base)
+            func refusal(_ mode: LandMode) async -> String? {
+                do { _ = try await d.router.loopLand(k.id, mode: mode, message: "x"); return nil } catch { return error.message }
+            }
+            let notFactory = await refusal(.merge)
+            #expect(notFactory?.contains("not a factory's") == true, "\(notFactory ?? "landed")")
+            await d.router.setFactoryMark(k.id, true)
+            for mode in [LandMode.squash, .rebase, .pr] {
+                let why = await refusal(mode)
+                #expect(why?.contains("only by merge") == true, "\(mode): \(why ?? "landed")")
+            }
+            let none = await d.router.loopAutoLands(k.id)
+            #expect(try await main() == base && none.isEmpty)
+            let land = try await d.router.loopLand(k.id, mode: .merge, message: "land")
+            let after = try await main()
+            #expect(land.before == base && land.after == after && after != base)
+            #expect(try await d.router.loopBaseHead(k.id) == after)
+        }
+    }
+
+    /// C3b: works run one after another on a real paddock, each attempt taking the base through the router
+    /// (`loopBaseHead`) and each land the router's (`loopLand`). Two lands in a row pass (after the first, the base is
+    /// its merge commit, ahead of the paddock: the next attempt takes that one); a commit on the base between the
+    /// attempt and the land stops the third as `landBaseMoved`, nothing merged.
+    @Test func twoLandsInARowPassAndABaseMovedAfterTheAttemptStops() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let k = try await Self.realPaddock(d, repo, "seq")
+            let dir = URL(fileURLWithPath: k.path)
+            let (store, host, loop, cleanup) = try await Self.engine(d, k)
+            defer { cleanup() }
+            var stops: [WorkLoopState.Stop.Code?] = [], bases: [String?] = [], seen: [String] = []
+            for i in 1...3 {
+                seen.append(try await Self.main(repo))
+                let w = try await Self.work(store, k, i)
+                await host.set("w-task-t\(i)-t1", LoopScript(act: {
+                    try await commit("t\(i).swift", "let t = \(i)\n", in: $0)
+                    // the third: someone else commits on the base after the attempt began
+                    if i == 3 { try await commit("outro.txt", "x\n", in: repo) }
+                }))
+                _ = await loop.run(work: w, dir: dir)
+                try await store.update(w) { $0.closedAt = Date() }
+                let l = try await store.get(w)?.loop
+                stops.append(l?.stopReason?.code); bases.append(l?.autoLand?.baseHead)
+            }
+            #expect(stops == [.landed, .landed, .landBaseMoved], "\(stops)")
+            #expect(bases == seen.map { Optional($0) }, "\(bases) \(seen)")
+            #expect(await d.router.loopAutoLands(k.id).count == 2)
+            #expect(try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout.contains("t3") == false)
+        }
+    }
+
+    /// C3b: the base moves between the engine's last check and the merge: the land, under its claim, finds the base
+    /// branch elsewhere and merges nothing (`landBaseMoved`).
+    @Test func aBaseThatMovesRightBeforeTheMergeLandsNothing() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let k = try await Self.realPaddock(d, repo, "toctou")
+            let (store, host, loop, cleanup) = try await Self.engine(d, k)
+            defer { cleanup() }
+            let w = try await Self.work(store, k, 1)
+            await host.set("w-task-t1-t1", LoopScript(act: { try await commit("t1.swift", "let t = 1\n", in: $0) }))
+            let judged = try await Self.main(repo)
+            await host.setLandHook { try? await commit("outro.txt", "x\n", in: repo) }
+            _ = await loop.run(work: w, dir: URL(fileURLWithPath: k.path))
+            let x = try #require(try await store.get(w))
+            #expect(x.loop?.stopReason?.code == .landBaseMoved, "\(String(describing: x.loop?.stopReason))")
+            #expect(await host.landBases == [judged])
+            let now = try await Self.main(repo)
+            #expect(now != judged && (try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout.contains("t1")) == false)
+            #expect(await d.router.loopAutoLands(k.id).isEmpty)
+        }
+    }
+
+    /// C3b: the chain's activation takes the base again (after the land before it): a stale reference goes.
+    @Test func theChainsActivationTakesTheBaseAgain() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let r = try await rig(d, repo)
+            try await d.router.work.update(r.b) { $0.loop?.autoLand?.baseHead = "velha" }
+            let probe = await d.router.chainProbe(r.chain, paddock: r.paddock, starter: UUID())
+            #expect(probe.ok)
+            await (await d.router.loopTask(r.b))?.value
+            #expect(try await d.router.work.get(r.b)?.loop?.autoLand?.baseHead == (try await Self.main(repo)))
+        }
+    }
+
+    private static func main(_ repo: URL) async throws -> String {
+        try await GitRunner.run(["rev-parse", "main"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// A paddock of `repo` (a worktree off `main`) marked a factory's, with a persona and a spec committed in it.
+    private static func realPaddock(_ d: Daemon, _ repo: URL, _ name: String) async throws -> Paddock {
+        var k = try await PaddockManager.create(name: name, repoRoot: repo, createdBy: nil)
+        k.factory = true
+        await d.router.addPaddock(k)
+        let dir = URL(fileURLWithPath: k.path)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
+        try await commit(CommandRouter.personasDir + "correcao.md", "---\nname: correcao\nmodel: sonnet\npaths: [\"**\"]\n---\nCorpo\n", in: dir)
+        try await commit("spec.md", "SPEC\n", in: dir)
+        return k
+    }
+    /// An engine whose land, land record and base are the router's for `k` (`LoopFakeHost.setLandRouter`).
+    private static func engine(_ d: Daemon, _ k: Paddock) async throws -> (WorkStore, LoopFakeHost, WorkLoop, () -> Void) {
+        let storeDir = URL(fileURLWithPath: "/tmp/collie-c3b-\(UUID().uuidString.prefix(8))")
+        let store = WorkStore(dir: storeDir), host = LoopFakeHost(dir: URL(fileURLWithPath: k.path))
+        try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)
+        await host.setFactory(true)
+        await host.setLandRouter(d.router, k.id)
+        let loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: .seconds(30), othersWait: .milliseconds(50), promptRetryWait: .zero)
+        return (store, host, loop, { for u in [storeDir, host.patches, host.root] { try? FileManager.default.removeItem(at: u) } })
+    }
+    /// Work `i` of the paddock: one task `t<i>`, reviewed, with the auto-land on.
+    private static func work(_ store: WorkStore, _ k: Paddock, _ i: Int) async throws -> UUID {
+        let dir = URL(fileURLWithPath: k.path)
+        let w = try await store.start(title: "W\(i)", terminal: UUID(), paddockId: k.id, branch: k.branch)
+        try await store.update(w.id) {
+            $0.tasks = [WorkTask(id: "t\(i)", title: "Task t\(i)", spec: dir.appendingPathComponent("spec.md").path, check: "true")]
+            var l = WorkLoopState(tries: 1, timeout: 60, tasks: ["t\(i)"]); l.review = true
+            l.autoLand = WorkLoopState.AutoLand(gate: "true", ci: "true", timeout: 60, perDay: 5)
+            $0.loop = l
+        }
+        return w.id
+    }
+
     @Test func aWorkThatCannotStartStaysQueued() async throws {
         try await withDaemon { d, _ in
             let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
@@ -698,6 +950,120 @@ private extension CommandRouter {
     }
     private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
         try await send(p, Request(id: "w", terminalId: t.id, token: t.token, command: cmd, args: args), timeoutSeconds: 60)
+    }
+
+    /// A factory's paddock `name` of a new repo whose `main` holds the profile (gate `true`, CI `true`, review by
+    /// `correcao`, `perDay` a day) and the persona; `s`, a Shepherd in it.
+    private func factoryPaddock(_ d: Daemon, _ p: Paths, _ name: String, perDay: Int = 3, trusted: Bool = false) async throws -> (repo: URL, pid: UUID, dir: URL, s: Term) {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
+        try await commit(CommandRouter.personasDir + "correcao.md", "---\nname: correcao\nmodel: sonnet\npaths: [\"**\"]\n---\nCorpo\n", in: repo)
+        try await commit(ProjectWorkConfig.fileName, #"{"gate": "true", "factory": {"version": 1, "review": {"personas": ["correcao"], "threshold": "major"}, "#
+            + #""autoland": {"ci": "true"}, "guardrails": {"autoLandPerDay": \#(perDay)}}}"#, in: repo)
+        let m = try await spawn(d, p, "M", cwd: repo)
+        #expect(try await call(p, m, "paddock.create", ["name": .string(name)]).ok)
+        let pid = try #require(await d.router.ws.paddocks.first { $0.name == name }?.id)
+        await d.router.setFactoryMark(pid, true)
+        if trusted { _ = try await d.router.setTrustLoops(pid, true) }
+        let s = try await spawn(d, p, "S", paddock: name)
+        return (repo, pid, repo.appendingPathComponent(".collie/paddocks/\(name)"), s)
+    }
+
+    /// C3b: `work stop` on a work waiting in the auto-land queue takes it out: still `queued` (not terminal), still
+    /// approved (`approvedAt` kept), `dequeuedAt` set, so no chain activates it; a second stop finds nothing to stop; the
+    /// next `work run` puts it back in the queue. The trusted paddock's `work run` is the approval (`approvedAt`).
+    @Test func workStopTakesAQueuedWorkOutOfTheQueueAndWorkRunPutsItBack() async throws {
+        try await withDaemon { d, p in
+            let x = try await factoryPaddock(d, p, "fila", trusted: true); defer { try? FileManager.default.removeItem(at: x.repo) }
+            #expect(try await call(p, x.s, "work.start", ["title": .string("Fila")]).ok)
+            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            let w = try #require(try await d.router.work.list(includeClosed: false).first { $0.title == "Fila" })
+            func run() async throws -> Response { try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]) }
+            let chain = WorkLoop.Chain(next: w.id, max: 2, perDay: nil, chained: 1, budget: nil, after: "A")
+            let before = Date()
+            let queued = try await run()
+            #expect(queued.ok, "\(queued)")
+            let l0 = try #require(try await d.router.work.get(w.id)?.loop)
+            let approved = try #require(l0.autoLand?.approvedAt)
+            #expect(l0.state == .queued && approved >= before.addingTimeInterval(-1))
+
+            let r = try await call(p, x.s, "work.stop")
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["state"] == .string("dequeued"))
+            var out = try #require(try await d.router.work.get(w.id))
+            #expect(out.loop?.state == .queued && out.loop?.stopReason == nil && out.loop?.endedAt == nil)
+            #expect(out.loop?.autoLand?.approvedAt == approved && out.loop?.autoLand?.dequeuedAt != nil)
+            #expect(out.notes.last?.text.contains("fora da fila") == true)
+            #expect(!WorkLoop.activate(&out, chain, at: Date()), "a chain never activates a dequeued work")
+            #expect(try await call(p, x.s, "work.stop").error?.code == .invalidArgs)
+
+            #expect(try await run().ok)
+            var back = try #require(try await d.router.work.get(w.id))
+            #expect(back.loop?.state == .queued && back.loop?.autoLand?.dequeuedAt == nil && back.loop?.autoLand?.approvedAt != nil)
+            #expect(WorkLoop.activate(&back, chain, at: Date()))
+        }
+    }
+
+    /// C3b: a queued work's approval is the card's answer: `approvedAt` is written then, not at `work run`.
+    @Test func theCardsAnswerIsTheQueuedWorksApproval() async throws {
+        try await withDaemon { d, p in
+            let x = try await factoryPaddock(d, p, "card"); defer { try? FileManager.default.removeItem(at: x.repo) }
+            #expect(try await call(p, x.s, "work.start", ["title": .string("Card")]).ok)
+            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            let w = try #require(try await d.router.work.active(terminal: UUID(uuidString: x.s.id)!))
+            #expect(try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]).ok)
+            _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
+            let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
+            #expect(try await d.router.work.get(w.id)?.loop?.autoLand?.approvedAt == nil)
+            let asked = Date()
+            #expect(try await send(p, Request(id: "a", token: d.adminToken, command: "admin.app.answer",
+                                              args: ["id": .string(card.id.uuidString), "allow": .bool(true), "always": .bool(false)])).ok)
+            #expect(await waitFor(20) { (try? await d.router.work.get(w.id))?.loop?.autoLand?.approvedAt != nil })
+            let l = try #require(try await d.router.work.get(w.id)?.loop)
+            #expect(l.state == .queued && l.autoLand!.approvedAt! >= asked.addingTimeInterval(-1))
+        }
+    }
+
+    /// C3b: the daily cap through `work run` itself, three times on one paddock (`perDay` 2): each run is the card's
+    /// (answered by the owner), its land the router's (`Paddock.autoLands`); nothing seeded but the base
+    /// an earlier run's attempt left (`baseHead`, carried to the new run, which here makes no attempt: its task was
+    /// done by hand and reviewed). The third stops as `landDailyCap`.
+    @Test func theDailyCapCountsTheLandsOfRealWorkRuns() async throws {
+        try await withDaemon { d, p in
+            let x = try await factoryPaddock(d, p, "cap", perDay: 2); defer { try? FileManager.default.removeItem(at: x.repo) }
+            var stops: [WorkLoopState.Stop.Code?] = []
+            for i in 1...3 {
+                #expect(try await call(p, x.s, "work.start", ["title": .string("W\(i)")]).ok)
+                #expect(try await call(p, x.s, "work.task.add", ["title": .string("T\(i)"), "check": .string("true")]).ok)
+                let w = try #require(try await d.router.work.active(terminal: UUID(uuidString: x.s.id)!))
+                // an earlier run's attempt began on the base as it is now
+                let base = try await GitRunner.run(["rev-parse", "main"], in: x.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                try await d.router.work.update(w.id) {
+                    var l = WorkLoopState(state: .finished, tries: 1, timeout: 60, tasks: []); l.autoLand = .init(gate: "true"); l.autoLand?.baseHead = base
+                    $0.loop = l
+                }
+                try await commit("t\(i).swift", "let t = \(i)\n", in: x.dir)
+                let run = try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true)])
+                #expect(run.ok, "\(run)")
+                _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
+                let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
+                // the task done by hand and reviewed at the paddock's HEAD before the owner answers
+                let head = try await GitRunner.run(["rev-parse", "HEAD"], in: x.dir).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                try await d.router.work.update(w.id) {
+                    $0.tasks[0].state = .done; $0.tasks[0].reviewClean = true; $0.tasks[0].review = "ok"; $0.tasks[0].reviewedHead = head
+                }
+                #expect(try await send(p, Request(id: "a", token: d.adminToken, command: "admin.app.answer",
+                                                  args: ["id": .string(card.id.uuidString), "allow": .bool(true), "always": .bool(false)])).ok)
+                _ = await waitFor(30) { let l = (try? await d.router.work.get(w.id))?.loop; return l?.endedAt != nil && l?.state != .running }
+                _ = await waitFor(10) { await d.router.loopPaddocks.isEmpty }
+                let l = try await d.router.work.get(w.id)?.loop
+                #expect(l?.autoLand?.baseHead == base, "a run with no attempt keeps the base the last one began on")
+                stops.append(l?.stopReason?.code)
+                #expect(try await call(p, x.s, "work.done").ok)
+            }
+            #expect(stops == [.landed, .landed, .landDailyCap], "\(stops)")
+            #expect(await d.router.loopAutoLands(x.pid).count == 2)
+        }
     }
 
     @Test func refusesNoFactoryNoGateAndNoReview() async throws {

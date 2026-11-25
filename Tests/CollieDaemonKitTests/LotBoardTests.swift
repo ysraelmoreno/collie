@@ -236,6 +236,18 @@ private func lines(_ url: URL) -> [String] {
         #expect(LotBoards.cut("aé😀", bytes: 4) == "aé…" && LotBoards.cut("abc", bytes: 3) == "abc")
     }
 
+    /// C3b: a name that CONTAINS a marker anywhere hides its value, each marker alone; `edit` only at the end.
+    @Test func namesContainingAMarkerAreScrubbed() {
+        for line in ["API_KEY_ID=s3cr3tv", "TOKEN_FILE=s3cr3tv", "MY_SECRET_PATH=s3cr3tv", "PASSWORD_HASH=s3cr3tv",
+                     "URL_BASE=s3cr3tv", "db_url_ro=s3cr3tv", "x KEYRING=s3cr3tv y"] {
+            let out = LotBoards.scrub(line)
+            #expect(!out.contains("s3cr3tv") && out.contains("[hidden]"), "\(line) -> \(out)")
+        }
+        #expect(LotBoards.scrub("x API_KEY_ID=s3cr3tv y") == "x [hidden] y")
+        #expect(LotBoards.scrub("EDITOR=vim") == "EDITOR=vim" && LotBoards.scrub("LAST_EDIT=s3cr3tv") == "[hidden]")
+        #expect(LotBoards.scrub("COLOR=red") == "COLOR=red")
+    }
+
     /// M2/M3: `--ref` is scrubbed like the text, and live tokens are hidden wherever they appear.
     @Test func refAndTokensScrubbed() async throws {
         let repo = try await makeRepo()

@@ -97,10 +97,12 @@ actor LoopFakeHost: LoopHost {
     func setFactory(_ f: Bool) { isFactory = f }
     func setLandError(_ e: ProtocolError?) { landError = e }
     func factoryPaddock() async -> Bool { isFactory }
-    func land(mode: LandMode, message: String) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
-        lands.append(mode)
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+        lands.append(mode); landBases.append(base)
         guard mode == .merge else { Issue.record("land by \(mode)"); throw ProtocolError(code: .invalidArgs, message: "only merge") }
         if let landError { throw landError }
+        await landHook?()
+        if let (router, paddock) = landRouter { return try await router.loopLand(paddock, mode: mode, message: message, base: base) }
         // C3a: as the router does: a merge with no commit is no land and is not recorded
         if landsNothing { return (Self.landedAfter, Self.landedAfter, nil) }
         landedAt.append(now())
@@ -111,7 +113,25 @@ actor LoopFakeHost: LoopHost {
     func setLandLate(_ l: String?) { landLate = l }
     /// C3a: the paddock's durable land record (`Paddock.autoLands` in the router), and a land whose merge makes no commit.
     var landedAt: [Date] = [], landsNothing = false
-    func autoLands() async -> [Date] { landedAt }
+    func autoLands() async -> [Date] {
+        if let (router, paddock) = landRouter { return await router.loopAutoLands(paddock) }
+        return landedAt
+    }
+    /// C3b: the land, its record and the base are a real router's (`loopLand`, `Paddock.autoLands`, `loopBaseHead`).
+    var landRouter: (CommandRouter, UUID)?
+    func setLandRouter(_ r: CommandRouter, _ paddock: UUID) { landRouter = (r, paddock) }
+    /// C3b: the base branch's commit (nil: no base, the checks against it skipped); `baseError`: its read throws.
+    var base: String?, baseError: ProtocolError?
+    func setBase(_ b: String?) { base = b }
+    func setBaseError(_ e: ProtocolError?) { baseError = e }
+    func baseHead() async throws(ProtocolError) -> String? {
+        if let baseError { throw baseError }
+        if let (router, paddock) = landRouter { return try await router.loopBaseHead(paddock) }
+        return base
+    }
+    /// C3b: the `base` each land was asked to find; `landHook` runs right before the land (the base moving then).
+    var landBases: [String?] = [], landHook: (@Sendable () async -> Void)?
+    func setLandHook(_ h: @escaping @Sendable () async -> Void) { landHook = h }
     func addLands(_ at: [Date]) { landedAt += at }
     func setLandsNothing(_ on: Bool) { landsNothing = on }
     func notifyOwner(_ line: String) async { ownerNotices.append(line) }

@@ -78,7 +78,9 @@ enum PaddockManager {
         if f.isFolder { throw fail("o cercado \(f.name) é uma pasta, sem branch: não tem land nem PR") }
     }
 
-    static func land(_ f: inout Paddock, mode: LandMode, message: String?) async throws(ProtocolError) -> LandResult {
+    /// C3b: `base`, the commit the base branch must be on right before the merge (the auto-land's judged base): another
+    /// one throws `.conflict` and nothing is merged. nil: not checked (`paddock land` by hand).
+    static func land(_ f: inout Paddock, mode: LandMode, message: String?, base: String? = nil) async throws(ProtocolError) -> LandResult {
         try refuseFolder(f)
         let fl = f
         let pasture = URL(fileURLWithPath: fl.repoRoot), paddock = URL(fileURLWithPath: fl.path)
@@ -93,6 +95,9 @@ enum PaddockManager {
         guard cur == fl.baseBranch else { throw fail("pasture is on '\(cur)', expected base branch '\(fl.baseBranch)'") }
         // C3a: read here, right before the merge: equal to the commit after, the land made no commit (nothing to integrate)
         let before = mode == .pr ? nil : try await git(["rev-parse", "HEAD"], in: pasture)
+        if let base, before != base {
+            throw ProtocolError(code: .conflict, message: "a base está em \(before?.prefix(12) ?? "?"), o land foi julgado em \(base.prefix(12)); nada integrado")
+        }
 
         /// On failure: list conflicted files, abort, throw.
         func run(_ args: [String], in dir: URL, abort: [String]) async throws(ProtocolError) {

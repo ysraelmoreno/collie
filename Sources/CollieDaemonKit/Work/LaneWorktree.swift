@@ -21,6 +21,12 @@ struct Lane: Codable, Sendable, Equatable {
     var path: URL
     var branch: String
     var base: String
+
+    /// F2: a field, the worktree of one summoned agent: a `field-…` folder on a `collie/field/…` branch. Both, never
+    /// one: a `field-…` folder on a lane branch (or the other way) is neither shape's.
+    var isField: Bool {
+        path.lastPathComponent.hasPrefix(LaneWorktree.fieldDirPrefix) && branch.hasPrefix(LaneWorktree.fieldBranchPrefix)
+    }
 }
 
 /// M3c.1: one worktree operation at a time per repository (`create`, `remove` and its `prune`). `git worktree add -b`
@@ -66,11 +72,18 @@ enum LaneWorktree {
     static let branchPrefix = "collie/lane/"
     /// ponytail: a paddock may legally be named `lane-…`; then `create` refuses the taken path, it never overwrites.
     static let dirPrefix = "lane-"
+    /// F2: a field's branch and folder (`collie/field/<name>`, `field-<name>`). `orphans`/`sweep` never touch one: a
+    /// field leaves only by `field drop` or its agent's dismissal.
+    static let fieldBranchPrefix = "collie/field/"
+    static let fieldDirPrefix = "field-"
 
-    /// M3.3: `path` has a lane's shape: a `lane-*` folder of a `paddocks` folder. By name only (no file is read): the
-    /// same answer for a lane already removed.
+    /// A folder name with a lane's or a field's prefix.
+    private static func hasWorktreePrefix(_ name: String) -> Bool { name.hasPrefix(dirPrefix) || name.hasPrefix(fieldDirPrefix) }
+
+    /// M3.3: `path` has a lane's (or, F2, a field's) shape: a `lane-*`/`field-*` folder of a `paddocks` folder. By name
+    /// only (no file is read): the same answer for a lane already removed.
     static func isLane(_ path: URL) -> Bool {
-        path.lastPathComponent.hasPrefix(dirPrefix) && path.deletingLastPathComponent().lastPathComponent == "paddocks"
+        hasWorktreePrefix(path.lastPathComponent) && path.deletingLastPathComponent().lastPathComponent == "paddocks"
     }
 
     private static func fail(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -81,13 +94,20 @@ enum LaneWorktree {
         }
     }
 
+    /// F2: a field's name is its agent's name; it lands in a path and a branch, so it is checked before any git.
+    static func validate(field name: String) throws(ProtocolError) {
+        guard name.range(of: "^[a-z0-9][a-z0-9-]{0,39}$", options: .regularExpression) != nil else {
+            throw fail("nome de field inválido '\(name)' (use a-z, 0-9 e '-', começando por letra ou dígito, até 40)")
+        }
+    }
+
     static func work8(_ work: UUID) -> String { String(work.uuidString.lowercased().prefix(8)) }
 
     private static func paddocksDir(_ repoRoot: URL) -> URL {
         repoRoot.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks")
     }
 
-    /// `path` is a `lane-*` folder directly in the repository's own paddocks folder, and not a symlink.
+    /// `path` is a `lane-*` (or `field-*`) folder directly in the repository's own paddocks folder, and not a symlink.
     /// M3c.3 (finding 4 of the 3b review): a lane that put a symlink to another lane in its own place resolved to that
     /// lane and passed. Decision: the folder itself must be its own real path (`realPath(path)` is `realPath(parent)/name`);
     /// links above the paddocks folder (`/var` → `/private/var`) stay allowed, `create` already keeps that folder in
@@ -95,7 +115,7 @@ enum LaneWorktree {
     static func ownsPath(_ path: URL, repoRoot: URL) -> Bool {
         let real = URL(fileURLWithPath: SignedAppCheck.realPath(path))
         let parent = SignedAppCheck.realPath(path.deletingLastPathComponent())
-        return real.lastPathComponent.hasPrefix(dirPrefix)
+        return hasWorktreePrefix(real.lastPathComponent)
             && real.path == URL(fileURLWithPath: parent).appendingPathComponent(path.lastPathComponent).path
             && real.deletingLastPathComponent().path == SignedAppCheck.realPath(paddocksDir(repoRoot))
     }
@@ -138,9 +158,44 @@ enum LaneWorktree {
 
     private static func createLocked(repoRoot: URL, base: String, work: UUID, task: String, host: some LoopHost) async throws(ProtocolError) -> Lane {
         try validate(task: task)
-        guard base.range(of: "^[0-9a-f]{7,64}$", options: .regularExpression) != nil else { throw fail("lane base '\(base)' is not a commit sha") }
-        let name = "\(work8(work))-\(task)", dir = paddocksDir(repoRoot)
-        let path = dir.appendingPathComponent(dirPrefix + name), branch = branchPrefix + name
+        let name = "\(work8(work))-\(task)"
+        let owner = await host.laneOwner()
+        guard owner.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil else { throw fail("no daemon id to mark lane \(name) with") }
+        return try await addLocked(repoRoot: repoRoot, base: base, dir: dirPrefix + name, branch: branchPrefix + name,
+                                   mark: "\(owner) \(work.uuidString.lowercased())", host: host)
+    }
+
+    /// F2: the field `name` (its agent's name) on the new branch `collie/field/<name>`, in `field-<name>`, cut from the
+    /// sha `base`, marked `field <owner>` (the agent's terminal). Same birth as a lane's; no warm copy (F0: a cloned
+    /// `.build` fails on the PCH's absolute paths), so a field's first build is cold.
+    static func createField(repoRoot: URL, base: String, name: String, owner: UUID, host: some LoopHost) async throws(ProtocolError) -> Lane {
+        try validate(field: name)
+        return try await serial(repoRoot) { () async throws(ProtocolError) -> Lane in
+            try await addLocked(repoRoot: repoRoot, base: base, dir: fieldDirPrefix + name, branch: fieldBranchPrefix + name,
+                                mark: "field \(owner.uuidString.lowercased())", host: host)
+        }
+    }
+
+    /// F2: the field `name` as git has it (by its branch; the folder may be gone), `base` "" like an orphan's. Nil for
+    /// an invalid name or no `collie/field/<name>` branch. For a daemon back up with a field alive (`TerminalRecord.field`).
+    static func field(named name: String, repoRoot: URL, host: some LoopHost) async -> Lane? {
+        guard (try? validate(field: name)) != nil,
+              (try? await hasBranch(fieldBranchPrefix + name, in: repoRoot, host)) == true else { return nil }
+        let branch = fieldBranchPrefix + name
+        var path = paddocksDir(repoRoot).appendingPathComponent(fieldDirPrefix + name)
+        if let wt = ((try? await worktrees(repoRoot, host)) ?? []).first(where: { $0.branch == branch }).map({ URL(fileURLWithPath: $0.path) }),
+           SignedAppCheck.realPath(wt) != SignedAppCheck.realPath(path) { path = wt }
+        return Lane(repoRoot: repoRoot, path: path, branch: branch, base: "")
+    }
+
+    private static func validBase(_ base: String) -> Bool { base.range(of: "^[0-9a-f]{7,64}$", options: .regularExpression) != nil }
+
+    /// The birth both shapes share, lock held: refuse a bad base, an existing path or branch, then `worktree add -b`
+    /// and the daemon's `mark` in the new worktree's own git dir.
+    private static func addLocked(repoRoot: URL, base: String, dir name: String, branch: String, mark: String,
+                                  host: some LoopHost) async throws(ProtocolError) -> Lane {
+        guard validBase(base) else { throw fail("lane base '\(base)' is not a commit sha") }
+        let dir = paddocksDir(repoRoot), path = dir.appendingPathComponent(name)
         // no lane is born outside the repository, even through a symlinked paddocks folder
         guard SignedAppCheck.realPath(dir).hasPrefix(SignedAppCheck.realPath(repoRoot) + "/") else {
             throw fail("lane folder \(dir.path) is outside the repository")
@@ -149,8 +204,6 @@ enum LaneWorktree {
         if try await hasBranch(branch, in: repoRoot, host) { throw fail("branch \(branch) already exists") }
         let common = URL(fileURLWithPath: try await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: repoRoot, host))
         try GitRunner.exclude("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks/", commonDir: common)
-        let owner = await host.laneOwner()
-        guard owner.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil else { throw fail("no daemon id to mark lane \(name) with") }
         let lane = Lane(repoRoot: repoRoot, path: path, branch: branch, base: base)
         let add = ["worktree", "add", "-b", branch, path.path, base]
         do { try await git(add, in: repoRoot, host) } catch where isCommondirRace(error) {
@@ -162,7 +215,7 @@ enum LaneWorktree {
         // M3b.5: the daemon's mark, before anything runs in the lane: without it, no sweep ever removes the lane
         do {
             guard let admin = adminDir(of: path, common: common) else { throw fail("git made no worktree dir for \(path.path)") }
-            try Data("\(owner) \(work.uuidString.lowercased())\n".utf8).write(to: admin.appendingPathComponent(markerName))
+            try Data("\(mark)\n".utf8).write(to: admin.appendingPathComponent(markerName))
         } catch {
             try? await removeLocked(lane, host: host)
             throw fail("cannot mark lane \(name): \(error)")
@@ -187,10 +240,15 @@ enum LaneWorktree {
 
     /// The lane carries this daemon's mark (`owner`) for the work its branch names, and that work (the whole id the
     /// mark keeps, M3c.3: two works may share the branch's 8 characters) is one `work` takes.
+    /// F2: a field's mark is `field <terminal uuid>`; `owner` is not asked and `work` takes the terminal's id.
     static func isMarked(_ lane: Lane, owner: String, common: URL, work: (UUID) -> Bool) -> Bool {
         guard let admin = adminDir(of: lane.path, common: common),
               let s = try? String(contentsOf: admin.appendingPathComponent(markerName), encoding: .utf8) else { return false }
         let f = s.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
+        if lane.isField {
+            guard f.count == 2, f[0] == "field", let id = UUID(uuidString: f[1]) else { return false }
+            return work(id)
+        }
         let w8 = String(lane.branch.dropFirst(branchPrefix.count).prefix(8))
         guard f.count == 2, f[0] == owner, let id = UUID(uuidString: f[1]), work8(id) == w8 else { return false }
         return work(id)
@@ -198,12 +256,14 @@ enum LaneWorktree {
 
     /// Removes the lane's worktree, its leftover directory and its branch. Idempotent: what is already gone is skipped.
     /// M3b.5: only for a lane the caller made (the loop's own `dropLane`) or found marked (`sweep`): it checks no mark.
+    /// F2: a field's branch stays (no `branch -D`; spec "Dispensa": its work is never lost by removing the worktree).
     static func remove(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
         try await serial(lane.repoRoot) { () async throws(ProtocolError) in try await removeLocked(lane, host: host) }
     }
 
     private static func removeLocked(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
-        guard lane.branch.hasPrefix(branchPrefix) else { throw fail("'\(lane.branch)' is not a lane branch") }
+        let field = lane.branch.hasPrefix(fieldBranchPrefix)
+        guard lane.branch.hasPrefix(branchPrefix) || lane.isField else { throw fail("'\(lane.branch)' is not a lane branch") }
         let root = lane.repoRoot
         // M3c.3: a lane folder swapped for a symlink (or moved out) is never removed, whatever it points at
         if lexists(lane.path), !ownsPath(lane.path, repoRoot: root) { throw fail("lane folder \(lane.path.path) is not the lane's own (a symlink, or moved)") }
@@ -214,16 +274,16 @@ enum LaneWorktree {
             guard ownsPath(URL(fileURLWithPath: wt.path), repoRoot: root) else { throw fail("lane worktree \(wt.path) is not in the paddocks folder") }
             try await git(["worktree", "remove", "--force", wt.path], in: root, host)
         }
-        // what is left on disk: only a `lane-…` folder of the paddocks folder that no worktree owns
+        // what is left on disk: only a `lane-…` (a field's: `field-…`) folder of the paddocks folder that no worktree owns
         let real = SignedAppCheck.realPath(lane.path)
-        let ours = lane.path.lastPathComponent.hasPrefix(dirPrefix)
+        let ours = lane.path.lastPathComponent.hasPrefix(field ? fieldDirPrefix : dirPrefix)
             && lane.path.deletingLastPathComponent().standardizedFileURL.path == paddocksDir(root).standardizedFileURL.path
         if ours, FileManager.default.fileExists(atPath: lane.path.path),
            !(try await worktrees(root, host)).contains(where: { SignedAppCheck.realPath(URL(fileURLWithPath: $0.path)) == real }) {
             do { try FileManager.default.removeItem(at: lane.path) } catch { throw fail("cannot delete lane folder \(lane.path.path): \(error)") }
         }
         try await git(["worktree", "prune"], in: root, host)
-        if try await hasBranch(lane.branch, in: root, host) { try await git(["branch", "-D", lane.branch], in: root, host) }
+        if !field, try await hasBranch(lane.branch, in: root, host) { try await git(["branch", "-D", lane.branch], in: root, host) }
     }
 
     /// The lanes (branches under `collie/lane/`) whose work's short id `pick` takes. Empty when git cannot answer.
@@ -265,6 +325,10 @@ enum LaneWorktree {
               let c = try? await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: root, host) else { return out }
         let owner = await host.laneOwner(), common = URL(fileURLWithPath: c)
         for lane in lanes {
+            // F2: a field leaves only by `field drop` or its agent's dismissal, never by a sweep
+            if lane.isField || lane.branch.hasPrefix(fieldBranchPrefix) || lane.path.lastPathComponent.hasPrefix(fieldDirPrefix) {
+                out.spared.append(lane); continue
+            }
             // M3c.3: a folder that is not the lane's own (a symlink: its mark would be read through the link) is refused first
             if lexists(lane.path), !ownsPath(lane.path, repoRoot: root) { out.refused.append(lane); continue }
             guard !owner.isEmpty, isMarked(lane, owner: owner, common: common, work: work) else { out.spared.append(lane); continue }

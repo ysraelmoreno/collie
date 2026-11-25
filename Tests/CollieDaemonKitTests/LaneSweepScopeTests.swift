@@ -103,6 +103,23 @@ private extension CommandRouter {
         }
     }
 
+    // F2: a field (no work at all, this daemon's id nowhere) survives the start sweep and any sweep handed it
+    @Test func sweepSkipsFields() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            _ = await d.router.addSweepPaddock(repo)
+            let host = LoopFakeHost(dir: repo)
+            await host.setOwner(try await d.router.remoteInstallId())
+            let f = try await LaneWorktree.createField(repoRoot: repo, base: try await head(repo), name: "agent", owner: UUID(), host: host)
+            try "wip\n".write(to: f.path.appendingPathComponent("wip.txt"), atomically: true, encoding: .utf8)
+            await d.router.stopLoopsLeftRunning()
+            let swept = await LaneWorktree.sweep([f], host: host)
+            #expect(swept.removed.isEmpty && swept.spared == [f])
+            #expect(exists(f.path.appendingPathComponent("wip.txt")))
+            #expect(try await hasBranch(f.branch, repo))
+        }
+    }
+
     // (e): `worktree remove --force` and `branch -D` run only on a marked lane
     @Test func forceAndBranchDeleteRunOnlyWithTheMark() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }

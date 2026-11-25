@@ -5,47 +5,79 @@ import CollieCore
 import CollieProtocol
 import CollieTheme
 
-/// What the install confirmation shows for a picked folder: its manifest (read and validated here, the daemon checks
-/// again), its commands, and the installed plug-in of the same id it would replace.
+/// What the install confirmation shows: a picked folder's manifest (read and validated here, the daemon checks again),
+/// or a catalog version (its publisher, size and permission lines; the daemon checks the download), and the installed
+/// plug-in of the same id it would replace.
 struct PluginInstallPrompt: Identifiable {
-    let folder: URL
-    let manifest: PluginManifest
+    let pluginId: String
+    let name: String
+    let version: String
+    let author: String
+    let license: String?
+    let commands: [String]
+    /// What it may do beyond its page (`PluginManifest.permissionLines`); empty: nothing.
+    let permissions: [String]
     let replacing: PluginRow?
-    var id: String { folder.path }
+    /// nil: from the catalog.
+    let folder: URL?
+    /// "Do catálogo, publicado por <publisherName> · revisado"; nil for a folder.
+    let catalogLine: String?
+    let size: Int?
+    var id: String { folder?.path ?? "catalog:\(pluginId)" }
+
+    init(folder: URL, manifest m: PluginManifest, replacing: PluginRow?) {
+        pluginId = m.id; name = m.name; version = m.version; author = m.author; license = m.license
+        commands = m.commands.map { "collie \(m.id) \($0.name) — \($0.summary)" }
+        permissions = m.permissionLines; self.replacing = replacing; self.folder = folder; catalogLine = nil; size = nil
+    }
+
+    init(catalog item: PluginCatalogView.Item, latest: PluginCatalogView.Latest, replacing: PluginRow?) {
+        pluginId = item.id; name = item.name; version = latest.version; author = item.publisherName; license = nil
+        commands = []   // ponytail: the catalog doesn't list commands; the Instalados row shows them once installed
+        permissions = latest.permissionLines; self.replacing = replacing; folder = nil; size = latest.size
+        catalogLine = "Do catálogo, publicado por \(item.publisherName) · revisado"
+    }
 
     static func make(folder: URL, installed: [PluginRow]) throws(ProtocolError) -> PluginInstallPrompt {
         let m = try PluginManifest.load(folder: folder)
         return PluginInstallPrompt(folder: folder, manifest: m, replacing: installed.first { $0.id == m.id })
     }
 
-    var title: String { replacing.map { "Substituir \($0.name)?" } ?? "Instalar \(manifest.name) \(manifest.version)?" }
+    var title: String { replacing.map { "Substituir \($0.name)?" } ?? "Instalar \(name) \(version)?" }
     var confirm: String { replacing == nil ? "Instalar" : "Substituir" }
     var replaceLine: String? {
         replacing.map { old in
-            "Substitui \(old.name) \(old.version) (de \(Self.author(old.author))) por \(manifest.name) \(manifest.version) (de \(Self.author(manifest.author)))."
+            "Substitui \(old.name) \(old.version) (de \(Self.author(old.author))) por \(name) \(version) (de \(Self.author(author)))."
         }
     }
     var details: [String] {
-        ["Autor: \(Self.author(manifest.author)) · Licença: \(manifest.license.isEmpty ? "não informada" : manifest.license)",
-         manifest.commands.count == 1 ? "1 comando" : "\(manifest.commands.count) comandos"]
+        if let size { return ["Autor: \(Self.author(author))", PluginCatalogModel.size(size)] }
+        return ["Autor: \(Self.author(author)) · Licença: \((license ?? "").isEmpty ? "não informada" : license!)",
+                commands.count == 1 ? "1 comando" : "\(commands.count) comandos"]
     }
-    /// What it may do beyond its page (`PluginManifest.permissionLines`); empty: nothing.
-    var permissions: [String] { manifest.permissionLines }
-    /// The lines the installed version didn't have: a replacement that asks for more says so on the confirmation.
+    /// The lines the installed version didn't have: a replacement that asks for more says so on the confirmation
+    /// (and a catalog update without any is one click, no confirmation).
     var newPermissions: [String] {
         guard let old = replacing else { return [] }
         return permissions.filter { !(old.permissions ?? []).contains($0) }
     }
-    var commands: [String] { manifest.commands.map { "collie \(manifest.id) \($0.name) — \($0.summary)" } }
     private static func author(_ a: String?) -> String { (a ?? "").isEmpty ? "autor desconhecido" : a! }
 }
 
-/// Preferências → Plug-ins: the installed external plug-ins (name, version, author, license, commands, state or the
-/// daemon's error verbatim), **Instalar…** (a folder → confirmation listing its commands, and what it replaces),
-/// **Remover** (confirmation) and the enable switch. Everything is disabled while disconnected.
+/// Preferências → Plug-ins, two tabs. **Instalados**: the installed external plug-ins (name, version, author, license,
+/// commands, state or the daemon's error verbatim), "do catálogo", "atualização disponível", a recalled one locked off,
+/// **Instalar de uma pasta…**, **Remover** (confirmation) and the enable switch. **Descobrir**: the signed catalog by kind,
+/// Instalar (the confirmation), Atualizar (one click unless it asks for more), a motor opens Desenho. Everything is
+/// disabled while disconnected.
 struct PluginsPreferences: View {
+    enum Tab: Hashable { case installed, discover }
     let client: DaemonClient
+    /// Preferências → Desenho (a motor's own installer, e.g. FigCraft).
+    var openDesign: () -> Void = {}
+    @State private var tab = Tab.installed
     @State private var rows: [PluginRow] = []
+    @State private var catalog: PluginCatalogView?
+    @State private var filter = CatalogFilter.all
     @State private var error: String?
     @State private var prompt: PluginInstallPrompt?
     @State private var removing: PluginRow?
@@ -54,24 +86,22 @@ struct PluginsPreferences: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Painéis e comandos de terceiros. Só você instala; os agentes usam os comandos pela guia, como os do Collie.")
-                    .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button("Instalar…") { pick() }.disabled(!connected || busy)
-            }
+            Picker("", selection: $tab) {
+                Text("Instalados").tag(Tab.installed)
+                Text("Descobrir").tag(Tab.discover)
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 240)
             if let error {
                 Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if rows.isEmpty {
-                Text(connected ? "Nenhum plug-in instalado." : "Sem conexão com o serviço do Collie.")
-                    .font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+            switch tab {
+            case .installed: installedTab
+            case .discover: discoverTab
             }
-            ForEach(rows) { row($0) }
         }
         .task(id: connected) { await reload() }
-        .onChange(of: client.plugins) { Task { await reload() } }   // installed, removed, switched elsewhere
+        .task(id: tab) { if tab == .discover { await loadCatalog(refresh: true) } }
+        .onChange(of: client.plugins) { Task { await reload() } }   // installed, removed, switched, recalled elsewhere
         .sheet(item: $prompt) { confirmSheet($0) }
         .confirmationDialog(removing.map { "Remover \($0.name)?" } ?? "", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Remover", role: .destructive) { if let r = removing { run { try await client.uninstallPlugin(r.id) } } }
@@ -80,39 +110,187 @@ struct PluginsPreferences: View {
         }
     }
 
+    // MARK: Instalados
+
+    private var installedTab: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Painéis e comandos de terceiros. Só você instala; os agentes usam os comandos pela guia, como os do Collie.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
+            if rows.isEmpty {
+                Text(connected ? "Nenhum plug-in instalado." : "Sem conexão com o serviço do Collie.")
+                    .font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+            }
+            ForEach(rows) { row($0) }
+            Button("Instalar de uma pasta…") { pick() }.disabled(!connected || busy)
+        }
+    }
+
     private func row(_ r: PluginRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        let item = catalog?.items.first { $0.id == r.id }
+        let target = item.flatMap(PluginCatalogModel.target)
+        return HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("\(r.name) \(r.version)").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                HStack(spacing: 8) {
+                    Text("\(r.name) \(r.version)").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                    if r.source == .catalog { tag("do catálogo", Color.collieAccent) }
+                    if r.recalled != nil { tag("recolhido", Color.collieDanger) }
+                    else if let target { tag("atualização disponível: \(target.version)", Color.collieAttention) }
+                }
                 Text([r.author.map { "de \($0)" }, r.license, r.commands.map { $0.count == 1 ? "1 comando" : "\($0.count) comandos" }]
                         .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                ForEach(r.permissions ?? [], id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieAttention) }
+                if let rc = r.recalled {
+                    Text("recolhido: \(rc.reason). Só atualizar ou remover.").font(.collieMono(12)).foregroundStyle(Color.collieDanger)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    ForEach(r.permissions ?? [], id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieAttention) }
+                }
                 if let e = r.error {
                     Text(e).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled)
                 } else {
-                    Text(r.enabled ? "Ativo" : "Desativado").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    Text(r.recalled != nil ? "Bloqueado: versão recolhida" : r.enabled ? "Ativo" : "Desativado")
+                        .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                 }
             }
             Spacer()
-            Toggle("Ativo", isOn: Binding(get: { r.enabled }, set: { on in run { try await client.setPluginEnabled(r.id, on) } }))
-                .labelsHidden().toggleStyle(.switch).disabled(!connected || busy)
+            // a recalled version never comes back on (plugin.enable refuses it): the switch shows off and does nothing
+            Toggle("Ativo", isOn: Binding(get: { r.enabled && r.recalled == nil }, set: { on in run { try await client.setPluginEnabled(r.id, on) } }))
+                .labelsHidden().toggleStyle(.switch).disabled(!connected || busy || r.recalled != nil)
+                .help(r.recalled != nil ? "Versão recolhida: não religa. Atualize ou remova." : "")
+            if let item, let target {
+                Button(r.recalled != nil ? "Instalar \(target.version)" : "Atualizar") { update(item, to: target) }
+                    .buttonStyle(.borderedProminent).disabled(!connected || busy)
+            }
             Button("Remover") { removing = r }.disabled(!connected || busy)
         }
         .padding(10).background(Color.collieSurface).clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    // MARK: Descobrir
+
+    private var discoverTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Plug-ins publicados no catálogo do Collie. Só você instala; confirme o que cada um pode fazer.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
+            Picker("", selection: $filter) {
+                ForEach(CatalogFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 340)
+            if let c = catalog, c.state == "stale", let b = PluginCatalogModel.banner(c) {
+                Text(b).font(.collieMono(12)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
+            }
+            if catalog == nil || catalog?.state == "unavailable" {
+                VStack(spacing: 6) {
+                    Text("O catálogo não carregou.").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                    Text("Os plug-ins instalados seguem funcionando.").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+                    if let reason = catalog?.reason { Text(reason).font(.collieMono(12)).foregroundStyle(Color.collieMuted).textSelection(.enabled) }
+                    Button("Tentar de novo") { Task { await loadCatalog(refresh: true) } }.disabled(!connected || busy)
+                }
+                .frame(maxWidth: .infinity).padding(20)
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.collieBorder, style: StrokeStyle(lineWidth: 1, dash: [4])))
+            }
+            if let c = catalog {
+                let list = PluginCatalogModel.rows(c, filter: filter, installed: rows)
+                if list.isEmpty && c.state != "unavailable" { Text("Nada neste filtro.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                ForEach(list) { card($0) }
+            }
+        }
+    }
+
+    private func card(_ row: CatalogRow) -> some View {
+        let item = row.item, lines = item.latest?.permissionLines ?? []
+        return HStack(alignment: .top, spacing: 12) {
+            Text(String(item.name.prefix(1))).font(.collieUI(15, .bold)).foregroundStyle(Color.collieAccent)
+                .frame(width: 34, height: 34).background(Color.collieRaised, in: .rect(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.name).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                    tag(Self.kindLabel(item.kind), Color.collieMuted)
+                    Text("\(item.publisherName) · revisado").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                }
+                Text(item.summary).font(.collieUI(13)).foregroundStyle(Color.collieText).fixedSize(horizontal: false, vertical: true)
+                if case .recalled(let reason) = row.action {
+                    Text("recolhido: \(reason)").font(.collieMono(12)).foregroundStyle(Color.collieDanger)
+                } else if lines.isEmpty {
+                    Text("Sem rede e sem acesso ao projeto").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                } else {
+                    ForEach(lines, id: \.self) { Text("⚠ \($0)").font(.collieMono(12)).foregroundStyle(Color.collieAttention) }
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 6) {
+                if let l = item.latest {
+                    Text("\(l.version) · \(PluginCatalogModel.size(l.size))").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                }
+                button(row)
+            }
+        }
+        .padding(12).background(Color.collieSurface).clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func button(_ row: CatalogRow) -> some View {
+        let item = row.item
+        switch row.action {
+        case .install:
+            if let l = item.latest {
+                Button("Instalar") { error = nil; prompt = PluginInstallPrompt(catalog: item, latest: l, replacing: nil) }
+                    .buttonStyle(.borderedProminent).disabled(!connected || busy)
+            }
+        case .installed:
+            Text("Instalado ✓").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieAccent)
+        case .update:
+            if let l = item.latest { Button("Atualizar") { update(item, to: l) }.buttonStyle(.borderedProminent).disabled(!connected || busy) }
+        case .recalled:
+            if let l = PluginCatalogModel.target(item) {
+                Button("Instalar \(l.version)") { update(item, to: l) }.buttonStyle(.borderedProminent).disabled(!connected || busy)
+            }
+        case .engine:
+            Button("Abrir em Desenho") { openDesign() }
+        }
+    }
+
+    /// No new permission line: one click, no confirmation (owner, 2026-11-24); else the confirmation marks what's new.
+    private func update(_ item: PluginCatalogView.Item, to latest: PluginCatalogView.Latest) {
+        let p = PluginInstallPrompt(catalog: item, latest: latest, replacing: rows.first { $0.id == item.id })
+        if p.newPermissions.isEmpty { install(p) } else { error = nil; prompt = p }
+    }
+
+    private func install(_ p: PluginInstallPrompt) {
+        if let folder = p.folder {
+            run { try await client.installPlugin(folder: folder, id: p.pluginId, version: p.version, replace: p.replacing != nil) }
+        } else {
+            run { try await client.installFromCatalog(id: p.pluginId, version: p.version) }
+        }
+    }
+
+    private static func kindLabel(_ k: PluginCatalog.Kind) -> String {
+        switch k { case .panel: "Painel"; case .agent: "Agente"; case .engine: "Motor" }
+    }
+
+    private func tag(_ text: String, _ color: Color) -> some View {
+        Text(text).font(.collieMono(11)).foregroundStyle(color)
+            .padding(.horizontal, 8).overlay(Capsule().strokeBorder(color, lineWidth: 1))
+    }
+
+    // MARK: confirmation
+
     private func confirmSheet(_ p: PluginInstallPrompt) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(p.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText)
+            if let line = p.catalogLine {
+                Text(line).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                    .padding(.leading, 10).overlay(alignment: .leading) { Rectangle().fill(Color.collieAccent).frame(width: 3) }
+            }
             if let line = p.replaceLine { Text(line).font(.collieUI(13)).foregroundStyle(Color.collieAttention) }
             ForEach(p.details, id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
-            Text("Comandos que os agentes ligados a um painel dele poderão usar:").font(.collieUI(13)).foregroundStyle(Color.collieText)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(p.commands, id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 200)
+            if !p.commands.isEmpty {
+                Text("Comandos que os agentes ligados a um painel dele poderão usar:").font(.collieUI(13)).foregroundStyle(Color.collieText)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(p.commands, id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled) }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 200)
+            }
             if p.permissions.isEmpty {
                 Text("Sem rede, sem acesso ao projeto: a página vê só os argumentos de cada comando.")
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
@@ -126,8 +304,7 @@ struct PluginsPreferences: View {
             HStack {
                 Spacer()
                 Button("Cancelar", role: .cancel) { prompt = nil }.keyboardShortcut(.cancelAction)
-                Button(p.confirm) { prompt = nil; run { try await client.installPlugin(folder: p.folder, id: p.manifest.id, version: p.manifest.version, replace: p.replacing != nil) } }
-                    .keyboardShortcut(.defaultAction).disabled(!connected)
+                Button(p.confirm) { prompt = nil; install(p) }.keyboardShortcut(.defaultAction).disabled(!connected)
             }
         }
         .padding(20).frame(width: 480)
@@ -143,7 +320,7 @@ struct PluginsPreferences: View {
         catch { self.error = error.message }
     }
 
-    /// One plug-in action; its error is the daemon's, verbatim. The list is read again either way.
+    /// One plug-in action; its error is the daemon's, verbatim. The list and the catalog are read again either way.
     private func run(_ action: @escaping () async throws -> Void) {
         busy = true
         Task {
@@ -153,8 +330,16 @@ struct PluginsPreferences: View {
         }
     }
 
+    /// The installed list, and the stored catalog (no download) for the badges and the update buttons.
     private func reload() async {
         guard connected else { rows = []; return }
         do throws(ProtocolError) { rows = try await client.listPlugins() } catch { self.error = error.message }
+        await loadCatalog(refresh: false)
+    }
+
+    private func loadCatalog(refresh: Bool) async {
+        guard connected else { return }
+        do throws(ProtocolError) { catalog = try await client.pluginCatalog(refresh: refresh) }
+        catch { if tab == .discover { self.error = error.message } }   // an older daemon: Instalados still works without badges
     }
 }

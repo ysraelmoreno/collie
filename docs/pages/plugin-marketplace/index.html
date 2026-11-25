@@ -243,7 +243,7 @@ h1 { font-size: 28px; margin: 0 0 4px; } p { margin: 0 0 8px; } .muted { color: 
 .pc.recall { opacity: .92; border-color: var(--danger); }
 .tag { font-family: "DM Mono", monospace; font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); white-space: nowrap; }
 .tag.g { border-color: var(--ok); color: var(--ok); } .tag.w { border-color: var(--warn); color: var(--warn); } .tag.d { border-color: var(--danger); color: var(--danger); } .tag.a { border-color: var(--color-accent); color: var(--color-accent-text); }
-.sw { width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; display: inline-block; } .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); } .sw.on { background: var(--color-accent); } .sw.on::after { left: 18px; } .sw.off { opacity: .4; }
+.sw { width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; display: inline-block; } .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); } .sw.on { background: var(--color-accent); } .sw.on::after { left: 18px; } .sw.off { opacity: .4; cursor: not-allowed; }
 .empty { border: 1px dashed var(--line); border-radius: 12px; padding: 28px 20px; text-align: center; color: var(--muted); font-size: 13px; }
 .empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
 .scrim { position: absolute; inset: 38px 0 0 0; background: color-mix(in srgb, var(--bg) 60%, transparent); display: grid; place-items: center; padding: 16px; z-index: 5; }
@@ -255,7 +255,7 @@ h1 { font-size: 28px; margin: 0 0 4px; } p { margin: 0 0 8px; } .muted { color: 
 .sheet .src { border-left: 3px solid var(--color-accent); padding: 2px 10px; font-size: 13px; margin: 0 0 10px; }
 .sheet .third { border: 1px solid var(--warn); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 0 0 10px; }
 .sheet .cmds { max-height: 130px; overflow: auto; margin: 4px 0 10px; font-family: "DM Mono", monospace; font-size: 12px; }
-.sheet .bt { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.sheet .bt { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0 -20px; padding: 10px 0 20px; position: sticky; bottom: -20px; background: var(--color-surface); }
 .dev { border: 1px dashed var(--color-accent); border-radius: 10px; padding: 10px 14px; margin: 16px auto 0; max-width: 780px; font-size: 13px; background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
 .dev b { font-family: "DM Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-accent-text); }
 .dev p { margin: 4px 0 0; }
@@ -306,10 +306,11 @@ const STATES = [['descobrir', '1 · Descobrir'], ['confirmar', '2 · Confirmar i
 const NOTE = {
   descobrir: 'Lista do catálogo com filtro por tipo. Cada cartão: autor, “revisado”, versão, tamanho, o que pode fazer (em laranja) e Instalar, Atualizar ou Instalado.',
   confirmar: 'A confirmação de hoje, com a linha “do catálogo, publicado por Collie”. Sem escolher pasta. O daemon confere tudo de novo.',
-  instalados: 'A tela de hoje, mais o selo “do catálogo”, “atualização disponível” e uma versão recolhida: desligada, com o motivo e o botão para a versão boa.',
+  instalados: 'A tela de hoje, mais “do catálogo” e “atualização disponível”. Atualizar sem permissão nova é um clique, sem confirmação (Notas); com permissão nova (Cercas), abre a confirmação. Versão recolhida: bloqueada, interruptor que não religa, motivo e botão para a versão boa.',
   semrede: 'O catálogo não carregou: a aba diz isso e nada mais quebra. Os instalados seguem funcionando e abrem sem rede.',
   fase2: 'Cartão de autor de fora: nome do autor e “revisado pelo Collie”. A confirmação diz que o autor não é o Collie e que o programa é assinado por ele.',
 };
+const newPerms = c => c.oldP ? c.p.filter(x => !c.oldP.includes(x)) : [];
 const find = id => CAT.find(c => c.id === id);
 const btnFor = c => {
   const i = S.inst[c.id];
@@ -333,11 +334,11 @@ function instRow(id) {
   const c = find(id), v = S.inst[id], upd = v !== c.ver, recall = id === 'notas' && v === '0.3.0';
   return `<article class="pc ${recall ? 'recall' : ''}"><div class="ic">${c.n[0]}</div>
   <h3>${c.n} ${v}<span class="tag a">do catálogo</span>${upd && !recall ? '<span class="tag w">atualização disponível: ' + c.ver + '</span>' : ''}${recall ? '<span class="tag d">recolhido</span>' : ''}</h3>
-  <div class="act">${recall ? `<span class="sw off"></span>` : `<span class="sw on"></span>`}
+  <div class="act">${recall ? `<span class="sw off" title="Versão recolhida: não religa. Atualize ou remova." aria-disabled="true"></span>` : `<span class="sw on"></span>`}
     ${upd ? `<button class="btn p" data-open="${id}">${recall ? 'Instalar ' + c.ver : 'Atualizar'}</button>` : ''}<button class="btn q">Remover</button></div>
   <div class="meta" style="grid-column:2">de ${c.by} · ${c.lic} · ${c.cmds.length} ${c.cmds.length > 1 ? 'comandos' : 'comando'}</div>
-  ${recall ? '<div class="why">recolhido pelo autor: gravava notas fora da pasta do projeto. Use a 0.3.1.</div>' : (c.p.length ? c.p.map(x => `<div class="perm">${x}</div>`).join('') : '')}
-  <div class="meta" style="grid-column:2">${recall ? 'Desativado' : 'Ativo'}</div></article>`;
+  ${recall ? '<div class="why">recolhido: gravava notas fora da pasta do projeto. Só atualizar ou remover.</div>' : (c.p.length ? c.p.map(x => `<div class="perm">${x}</div>`).join('') : '')}
+  <div class="meta" style="grid-column:2">${recall ? 'Bloqueado: versão recolhida' : 'Ativo'}</div></article>`;
 }
 function instalados() {
   const rows = Object.keys(S.inst).map(instRow).join('');
@@ -386,6 +387,7 @@ document.addEventListener('click', e => {
   else if (d.th) { S.theme = d.th; document.documentElement.dataset.theme = d.th; render(); }
   else if (d.f) { S.filter = d.f; render(); }
   else if (d.tab) { S.tab = d.tab; S.st = d.tab; render(); }
+  else if (d.open && S.inst[d.open] && !newPerms(find(d.open)).length) { S.inst[d.open] = find(d.open).ver; render(); }
   else if (d.open) { S.sheet = d.open; if (d.open === 'ritmo') S.st = 'fase2'; else if (S.st !== 'instalados') S.st = 'confirmar'; render(); }
   else if ('x' in d) { S.sheet = null; render(); }
   else if (d.ok) { S.inst[d.ok] = find(d.ok).ver; S.sheet = null; render(); }

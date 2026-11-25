@@ -1069,7 +1069,7 @@ public actor AskCoordinator {
             let answer = CursorScreen.answer(screen)
             if !answer.isEmpty {
                 let cut = CursorScreen.isCut(screen)
-                result = AskResult(output: cut ? answer + "\n(resposta cortada na altura da tela: collie check <nome> --screen)" : answer,
+                result = AskResult(output: cut ? answer + "\n(resposta cortada na altura da tela: collie check \(t.name) --screen)" : answer,
                                    source: .idle, truncated: cut)
             }
         }

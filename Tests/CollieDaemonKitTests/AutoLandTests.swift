@@ -1061,7 +1061,7 @@ private extension CommandRouter {
         try await withDaemon { d, p in
             let x = try await factoryPaddock(d, p, "fila", trusted: true); defer { try? FileManager.default.removeItem(at: x.repo) }
             #expect(try await call(p, x.s, "work.start", ["title": .string("Fila")]).ok)
-            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
             let w = try #require(try await d.router.work.list(includeClosed: false).first { $0.title == "Fila" })
             func run() async throws -> Response { try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]) }
             let chain = WorkLoop.Chain(next: w.id, max: 2, perDay: nil, chained: 1, budget: nil, after: "A")
@@ -1094,7 +1094,7 @@ private extension CommandRouter {
         try await withDaemon { d, p in
             let x = try await factoryPaddock(d, p, "card"); defer { try? FileManager.default.removeItem(at: x.repo) }
             #expect(try await call(p, x.s, "work.start", ["title": .string("Card")]).ok)
-            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
             let w = try #require(try await d.router.work.active(terminal: UUID(uuidString: x.s.id)!))
             #expect(try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]).ok)
             _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
@@ -1119,7 +1119,7 @@ private extension CommandRouter {
             var stops: [WorkLoopState.Stop.Code?] = []
             for i in 1...3 {
                 #expect(try await call(p, x.s, "work.start", ["title": .string("W\(i)")]).ok)
-                #expect(try await call(p, x.s, "work.task.add", ["title": .string("T\(i)"), "check": .string("true")]).ok)
+                #expect(try await call(p, x.s, "work.task.add", ["title": .string("T\(i)"), "check": .string("true"), "green-ok": .bool(true)]).ok)
                 let w = try #require(try await d.router.work.active(terminal: UUID(uuidString: x.s.id)!))
                 // an earlier run's attempt began on the base as it is now
                 let base = try await GitRunner.run(["rev-parse", "main"], in: x.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1159,7 +1159,7 @@ private extension CommandRouter {
             #expect(try await call(p, m, "paddock.create", ["name": .string("fab")]).ok)
             let s = try await spawn(d, p, "S", paddock: "fab")
             #expect(try await call(p, s, "work.start", ["title": .string("Auto")]).ok)
-            #expect(try await call(p, s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+            #expect(try await call(p, s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
             let dir = repo.appendingPathComponent(".collie/paddocks/fab")
             try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
             try await commit(CommandRouter.personasDir + "correcao.md", "x\n", in: dir)

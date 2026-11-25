@@ -97,7 +97,7 @@ private let profile = #"""
         #expect(try await call(d, p, m, "paddock.create", ["name": .string("feat")]).ok)
         let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true, paddock: "feat")
         #expect(try await call(d, p, s, "work.start", ["title": .string("Loop work")]).ok)
-        #expect(try await call(d, p, s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+        #expect(try await call(d, p, s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
         let dir = repo.appendingPathComponent(".collie/paddocks/feat")
         // a persona catalog at HEAD: --review (from the flag or the profile) needs one
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
@@ -234,7 +234,7 @@ private let profile = #"""
             let id = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
             _ = try await d.router.setFactory(id, true)
             let (r, _, _) = try await runAndRead(d, p, x, [:])
-            #expect(warningOf(r)?.contains("auto-land ainda não existe (A4); segue manual") == true, "\(r)")
+            #expect(warningOf(r)?.contains("o auto-land só liga com work run --auto-land; segue manual") == true, "\(r)")
             #expect(warningOf(r)?.contains("não tem a marca") == false, "\(r)")
         }
     }

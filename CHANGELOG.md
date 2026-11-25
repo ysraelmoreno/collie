@@ -6,6 +6,8 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-25
+
 ### Fixed
 - **Memory curator, an environment failure spends no attempt:** when a call fails because the sandbox blocked the CLI, there is no network or name resolution (`getaddrinfo`, `ENOTFOUND`, …) or its workspace folder is gone, or the provider is unavailable, the job waits for the next tick instead of burning one of its 3 attempts and heading for `failed/`. It counts as a bad call, so a provider that never works is paused. A plain failure of the run (bad exit, junk answer, timeout) still spends an attempt.
 - **Conversation capture of a folder that is gone:** a `conversation` job whose terminal started in a folder that was later moved or deleted would fall back to the global store (and write the conversation's learnings there). It is now skipped (the mark moves on, so the chunk is not read again) and never fails. A job whose transcript no longer exists already ended `.ok`; a test pins it.

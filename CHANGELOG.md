@@ -6,6 +6,11 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-11-25
+
+### Fixed
+- **Memory curator with Cursor:** every call failed with `Workspace directory does not exist: /var/folders/…`. The call runs under a sandbox that allows the real path (`/private/var/…`) but not the `/var` link, so the CLI could not see its own workspace. It now gets the real path.
+
 ## [0.2.1] — 2026-11-25
 
 ### Fixed

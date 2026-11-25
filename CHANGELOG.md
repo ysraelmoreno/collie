@@ -6,8 +6,13 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-11-25
+
 ### Changed
 - **Updates install through Sparkle:** the app checks `appcast.xml` on the release, downloads the dmg, verifies its EdDSA signature and the Apple team, installs (macOS asks for the admin password, or "Install with privilege management", when `/Applications` needs it) and relaunches, with no dmg to download by hand. While an agent is working the relaunch waits for you ("Atualizar mesmo assim" / "Depois"). Local builds (not signed by the team) never update themselves. Preferências › Atualizações now shows "Procurar agora" and the automatic-check switch. `CFBundleVersion` now grows with the tag (0.2.2 is `2002`). The `update.json` is still published so 0.2.x installs reach the first Sparkle version the old way, once.
+
+### Fixed
+- **Memory curator with Cursor, name resolution:** every call failed with `getaddrinfo ENOTFOUND api2.cursor.sh`, because the sandbox of the Cursor call did not open the system name resolver (the Claude one did). It does now.
 
 ## [0.2.2] — 2026-11-25
 

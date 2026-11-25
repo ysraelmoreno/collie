@@ -1,6 +1,6 @@
 # PRD F1: `collie-work.json` ganha `fields`
 
-Plano: `README.md`. Depende do F0 (se o F0 decidiu que `warm` sai, este PRD não tem `warm`). Spec: "Aquecimento".
+Plano: `README.md`. F0 decidiu: `warm` sai (REPORT `docs/superpowers/spikes/2026-11-25-field-warm/`). Spec: "Aquecimento" (sem `warm`).
 
 ## Arquivos
 
@@ -12,23 +12,20 @@ Plano: `README.md`. Depende do F0 (se o F0 decidiu que `warm` sai, este PRD não
 ```swift
 public struct FieldsConfig: Sendable, Equatable {
     public var `default`: Bool        // false
-    public var warm: [String]         // []
     public var max: Int               // 4
     public static let maxRange = 1...8
 }
 public var fields: FieldsConfig?      // em ProjectWorkConfig; nil = chave ausente
-// ConfigError novos: .fieldsMax(Int), .badWarmPath(String)
+// ConfigError novo: .fieldsMax(Int)
 ```
 
-Regras: `fields` precisa ser objeto; `default` bool; `max` inteiro em 1...8; `warm` lista de strings, cada uma relativa
-(sem `/` inicial), sem componente `..`, sem caractere de controle, até 10 itens, até 200 caracteres. Chave desconhecida
-dentro de `fields` → aviso (como no topo).
+Regras: `fields` precisa ser objeto; `default` bool; `max` inteiro em 1...8. Chave desconhecida dentro de `fields`
+(inclusive `warm`) → aviso (como no topo).
 
 ## Passos
 
-- [ ] **Teste vermelho** em `ProjectWorkConfigTests`: `fieldsParsed` (`{"version":1,"fields":{"default":true,"warm":[".build"],"max":2}}`);
-  `fieldsAbsentIsNil`; `fieldsMaxOutOfRange` (0 e 9 → `.fieldsMax`); `warmRefusesTraversal` (`"../x"`, `"/abs"`,
-  `"a/../b"` → `.badWarmPath`); `fieldsUnknownKeyWarns`.
+- [ ] **Teste vermelho** em `ProjectWorkConfigTests`: `fieldsParsed` (`{"version":1,"fields":{"default":true,"max":2}}`);
+  `fieldsAbsentIsNil`; `fieldsMaxOutOfRange` (0 e 9 → `.fieldsMax`); `fieldsUnknownKeyWarns` (`"warm":[".build"]` → aviso).
 - [ ] Implementar. Check. Portão (`scripts/ci/lint.sh && scripts/ci/check-architecture.sh`).
 - [ ] Commit `feat(config): fields in collie-work.json`.
 

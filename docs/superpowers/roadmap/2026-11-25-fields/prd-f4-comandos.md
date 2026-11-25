@@ -28,7 +28,7 @@ Comandos (Pastor que convocou, ou o app):
 
 | Comando | Resultado |
 |---|---|
-| `summon <nome> --field` | cria o field (`LaneWorktree.createField`, `warm` do F1, `max` do F1), lança o agente com `cwd`/projeto = field, `rec.field` gravado |
+| `summon <nome> --field` | cria o field (`LaneWorktree.createField`, `max` do F1), lança o agente com `cwd`/projeto = field, `rec.field` gravado |
 | `summon <nome> --no-field` | ignora `fields.default` |
 | `field list` | `[{name, agent, branch, base, commits, state}]` dos fields do cercado |
 | `field land <nome>` | `landField` (F3); resposta com o `Outcome` |

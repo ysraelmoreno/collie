@@ -146,7 +146,7 @@ Revisão de um leitor externo em 2026-11-24. Nenhuma muda o que o dono aprovou; 
     `fields.default` editando sem commitar.
 11. **Escopo: daemon e CLI.** Nada no app nesta entrega além de o terminal mostrar o nome do field onde hoje mostra o
     cercado. "Encerrar ramo" do B2 já cobre o agente; o field segue a regra de dispensa (8).
-12. **Spike primeiro para o `warm`.** Ninguém mediu se um `.build` do SwiftPM clonado para outro caminho absoluto compila
+12. **Spike primeiro para o `warm`.** *Resultado (F0, 5c1589d0): `.build` clonado falha (PCH com caminho absoluto) e `--scratch-path` fixo recompila quase tudo; `warm` saiu. O field compila frio na primeira vez (~8 min) e incremental depois.* Ninguém mediu se um `.build` do SwiftPM clonado para outro caminho absoluto compila
     incremental (o SwiftPM e o module cache do clang guardam caminhos absolutos). O primeiro PRD mede isso; se não
     servir, `warm` vira "build compartilhado só de leitura" ou sai, e a Medida muda.
 

@@ -170,7 +170,7 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         ("node", ["package.json": #"{"jest": {"passWithNoTests": true}}"#], ["package.json": #"{"jest": {"passWithNoTests": false}}"#], "stub npx --no-install vitest run"),
         ("node", ["package.json": #"{"jest": {"testFailureExitCode": 0}}"#], ["package.json": "{}", "jest.config.js": "// passWithNoTests: true is never set here\n"], "stub npx"),
         ("python", ["a b [c]*?/conftest.py": "def pytest_sessionfinish(session):\n    session.exitstatus = 0\n"],
-         ["a b [c]*?/conftest.py": "import pytest\n# never set exitstatus = 0\n", "pyproject.toml": "[tool.pytest.ini_options]\n"], "stub python3 -P -m pytest -q"),
+         ["a b [c]*?/conftest.py": "import pytest\n# never set exitstatus = 0\n", "pyproject.toml": "[tool.pytest.ini_options]\n"], "stub python3 -I -m pytest -q"),
         ("python", ["conftest.py": "def pytest_sessionfinish(session):\n    session.exitstatus\t= pytest.ExitCode.OK\n"], ["conftest.py": "\n"], "stub python3"),
         ("python", ["pytest.ini": "[pytest]\naddopts = --co\n"], ["pytest.ini": "[pytest]\naddopts = --cov=src\n"], "stub python3"),
         ("python", ["tox.ini": "[pytest]\naddopts = --collect-only\n"], ["tox.ini": "[tox]\n"], "stub python3"),
@@ -186,7 +186,10 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         ("node", ["jest.config.js": "# passWithNoTests: true\n"], ["jest.config.js": "// passWithNoTests: true\n"], "stub npx"),
         // F7b (nit): what follows a `#` out of quotes is a comment; a `#` inside quotes is not
         ("python", ["pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-q # --co\"\n"],
-         ["pytest.ini": "[pytest]\naddopts = \"-q\"  # do not add --co\n", "setup.cfg": "[tool:pytest]\naddopts = '-q' # --collect-only\n"], "stub python3"),
+         ["pyproject.toml": "[tool.pytest.ini_options]\naddopts = \"-q\"  # do not add --co\n"], "stub python3"),
+        // C2: in .ini/.cfg only a whole line is a comment (`#` or `;`): a `#` later in the line is the value's, pytest takes it
+        ("python", ["pytest.ini": "[pytest]\naddopts = -q # --co\n"], ["pytest.ini": "[pytest]\n# addopts = --co\n; addopts = --co\n"], "stub python3"),
+        ("python", ["setup.cfg": "[tool:pytest]\naddopts = '-q' # --collect-only\n"], ["setup.cfg": "[tool:pytest]\n  # --collect-only\n"], "stub python3"),
         ("python", ["conftest.py": "x = '#'; session.exitstatus = 0\n"], ["conftest.py": "x = 1  # session.exitstatus = 0\n"], "stub python3"),
     ])
     func gateRefusesAForcedSuccessConfig(_ stack: String, _ forced: [String: String], _ clean: [String: String], _ ran: String) throws {
@@ -227,21 +230,18 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
             let r = try runGate("python", files)
             #expect(r.status != 0 && r.out.contains("troca o pytest") && !r.out.contains("stub "), "\(files): \(r.out)")
         }
-        // F7b (M-A): Python below 3.11 has no -P, so gate and check run isolated `python3 -I -m pytest`
+        // F7b (M-A), C2: every Python runs isolated `python3 -I -m pytest` (no root on sys.path, no user site), gate and check
         for script in ["gate.sh", "check-feature.sh"] {
-            let old = try runGate("python", [:], stubs: ["python3": "#!/bin/bash\n[ \"$1 $2\" = \"-I -c\" ] && exit 1\necho \"stub python3 $*\"\n"],
-                                  script: script, args: script == "gate.sh" ? [] : ["tests"])
-            #expect(old.status == 0 && old.out.contains("stub python3 -I -m pytest -q") && !old.out.contains("-P"), "\(script): \(old.out)")
+            let r = try runGate("python", [:], script: script, args: script == "gate.sh" ? [] : ["tests"])
+            #expect(r.status == 0 && r.out.contains("stub python3 -I -m pytest -q") && !r.out.contains("-P"), "\(script): \(r.out)")
         }
-        let new = try runGate("python", [:])
-        #expect(new.status == 0 && new.out.contains("stub python3 -P -m pytest -q"), "\(new.out)")
         let sw = try runGate("swift", ["Package.swift": "// passWithNoTests\n"])
         #expect(sw.status == 0 && sw.out.contains("stub swift test"), "\(sw.out)")
         #expect(!(try text(modelos.appendingPathComponent("swift/scripts/gate.sh"))).contains("grep"))
     }
 
     /// F7b (M-A): a pluggy.py or _pytest/ at the root that exits 0 never stands in for pytest, in the gate and in the check, with
-    /// each Python found (below 3.11 runs -I, from 3.11 -P). pytest is faked in a venv outside the project (no download): its
+    /// each Python found (C2: -I in every one). pytest is faked in a venv outside the project (no download): its
     /// __main__ imports pluggy and _pytest and fails, as a failing test would. Without the flags the shadow wins (exit 0).
     @Test func rootModulesCannotStandInForPytest() throws {
         let pys = ["/usr/bin/python3", "/opt/homebrew/bin/python3.10", "/opt/homebrew/bin/python3.12", "/usr/bin/python3.10", "/usr/bin/python3.12"]
@@ -316,8 +316,8 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         #expect(node != nil && node == py, "o bloco forced() de node e python divergiu")
         for p in ["python/scripts/gate.sh", "python/scripts/check-feature.sh"] {
             let t = try text(modelos.appendingPathComponent(p))
-            #expect(t.contains("if python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then exec python3 -P -m pytest -q")
-                    && t.contains("exec python3 -I -m pytest -q") && !t.contains("exec python3 -m pytest"), "\(p)")
+            // C2: -I in every Python (-P alone read the user site)
+            #expect(!t.contains("python3 -P") && t.contains("exec python3 -I -m pytest -q") && !t.contains("exec python3 -m pytest"), "\(p)")
         }
     }
 }

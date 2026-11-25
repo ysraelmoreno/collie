@@ -3,25 +3,27 @@ import Observation
 import CollieCore
 import CollieProtocol
 
-/// One line of `work.history` (`id,title,openedAt,closedAt,stopReason,done,total,deferred,durationSeconds`). Tolerant:
+/// One line of `work.history` (`id,title,openedAt,closedAt,stopReason,stopDetail,done,total,deferred,durationSeconds`). Tolerant:
 /// `stopReason` stays the daemon's raw text (a code this app does not know is still a row), a missing count is 0.
 public struct HistoryEntry: Decodable, Sendable, Equatable {
     public var id: String, title: String
     public var openedAt: Date?, closedAt: Date
     public var stopReason: String?
+    /// A5: the stop's detail, for `WorkLoopState.Stop.finishes` (the engine's one rule of "finished").
+    public var stopDetail: String?
     public var done: Int, total: Int, deferred: Int, durationSeconds: Int
     public init(id: String, title: String, openedAt: Date? = nil, closedAt: Date, stopReason: String? = nil,
-                done: Int = 0, total: Int = 0, deferred: Int = 0, durationSeconds: Int = 0) {
-        self.id = id; self.title = title; self.openedAt = openedAt; self.closedAt = closedAt; self.stopReason = stopReason
+                done: Int = 0, total: Int = 0, deferred: Int = 0, durationSeconds: Int = 0, stopDetail: String? = nil) {
+        self.id = id; self.title = title; self.openedAt = openedAt; self.closedAt = closedAt; self.stopReason = stopReason; self.stopDetail = stopDetail
         self.done = done; self.total = total; self.deferred = deferred; self.durationSeconds = durationSeconds
     }
-    private enum K: String, CodingKey { case id, title, openedAt, closedAt, stopReason, done, total, deferred, durationSeconds }
+    private enum K: String, CodingKey { case id, title, openedAt, closedAt, stopReason, stopDetail, done, total, deferred, durationSeconds }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         id = try c.decode(String.self, forKey: .id); title = (try? c.decode(String.self, forKey: .title)) ?? ""
         closedAt = try c.decode(Date.self, forKey: .closedAt)
         openedAt = try? c.decode(Date.self, forKey: .openedAt)
-        stopReason = try? c.decode(String.self, forKey: .stopReason)
+        stopReason = try? c.decode(String.self, forKey: .stopReason); stopDetail = try? c.decode(String.self, forKey: .stopDetail)
         done = (try? c.decode(Int.self, forKey: .done)) ?? 0; total = (try? c.decode(Int.self, forKey: .total)) ?? 0
         deferred = (try? c.decode(Int.self, forKey: .deferred)) ?? 0
         durationSeconds = (try? c.decode(Int.self, forKey: .durationSeconds)) ?? 0

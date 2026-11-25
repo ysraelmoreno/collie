@@ -266,8 +266,66 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   MCP): `collie paddock create <nome> --factory` e `collie paddock factory <nome> on|off`. Ligar roda o núcleo do
   doutor da fábrica no `collie-work.json` do cercado e recusa com `static` ou `judge` abaixo de 1 ou perfil inválido;
   desligar nunca recusa. `paddock list/status` trazem `factory` ("fábrica" ao lado do nome); `factory doctor` mostra
-  "cercado fábrica: sim/não". O laço ainda não usa a marca (A4). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
+  "cercado fábrica: sim/não". O laço usa a marca no `--auto-land` (A4, abaixo). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
   `Sources/CollieDaemonKit/FactoryCommands.swift`; testes em `Tests/CollieDaemonKitTests/PaddockFactoryTests.swift`.
+- **Auto-land (A4, `collie work run --auto-land`):** só em cercado fábrica, com `gate` no `collie-work.json` commitado
+  e revisão ligada (senão recusa). Com todas as tarefas feitas, em ordem: marca de fábrica, portão no HEAD, parecer
+  limpo na última tentativa de cada tarefa (mudo ou inválido não aprova), CI local (`factory.autoland.ci`, padrão
+  `scripts/ci/run-tests.sh`; `factory.autoland.timeoutSeconds`, padrão 1800), árvore limpa sem outro agente, então
+  `paddock land` por merge local (nunca push nem PR). Cada falha para com `stopReason` próprio (`landGateRed`,
+  `landReviewVeto`, `landCiRed`, `landDirty`, `landConflict`, `landNotFactory`); sucesso é `landed`, com o commit da
+  base antes e depois na nota. C3b: antes do portão, o cercado não pode ter mudado (contra a base) o `collie-work.json`,
+  o script do CI nem os scripts que o `gate` cita (caminho inteiro, por token do comando; `landGateRed`, "o agente alterou
+  <arquivo> que julga o land"). A base de agora tem de ser IGUAL a `autoLand.baseHead` (a base no início da última
+  tentativa; gravada só no início de cada tentativa, levada ao próximo `work run`, relida quando a corrente ativa o
+  trabalho), antes do portão, depois do CI e de novo sob o claim do land, antes do merge; sem base conhecida, ou outra:
+  `landBaseMoved` (o dono refaz sobre a base nova).
+  Todo desfecho chama o dono por `notify`. Arquivos: `Sources/CollieDaemonKit/Work/WorkLoop.swift`
+  (`autoLand`), `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`loopAutoLand`, `loopLand`); testes em
+  `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
+- **Aceite em runtime (F3, `collie work task add --accept "<comando>" [--accept-timeout <s>]`, MCP `work_task_add`):**
+  o check julga o código; o aceite julga o RESULTADO rodando (a tela abre, o serviço responde). Comando de shell guardado
+  no estado do trabalho (o laço nunca lê da worktree; mesma validação do check, sem caractere de controle). Ordem na
+  tentativa: check → portão → aceite → parecer; roda na worktree, nas condições do check, depois que o agente foi
+  dispensado (padrão 600 s, até 1800), e não roda com check ou portão vermelho. Falha = falha de check: a tentativa conta,
+  a saída inteira (scrub, cabeça e rabo, até 64 KB) vai para a nota e, quando passa, para a evidência (`acceptOutput`);
+  diário `acceptStarted`/`acceptPassed`/`acceptFailed`. Arquivo citado pelo comando alterado pela tentativa reprova como
+  no portão. No auto-land é a 4ª condição (`landAcceptRed`); trabalho sem `--accept` segue como antes e o resumo diz "sem
+  aceite em runtime". `work status` e o cartão mostram o comando e o último resultado. Como escrever: `docs/fabrica/aceite.md`.
+  Arquivos: `Sources/CollieDaemonKit/Work/AttemptMachine.swift` (`accepting`), `Sources/CollieDaemonKit/Work/WorkLoop.swift`
+  (`runAccept`, `acceptOutput`); testes em `Tests/CollieDaemonKitTests/AcceptTests.swift`.
+- **Entrada do PRD e plano (F5, `collie work prd add|show`, `collie work plan lint|apply`):** o daemon não conhece Jira,
+  Linear nem GitHub: `prd add <arquivo.md> [--origin <texto>] [--replace]` (só o dono, CLI; o CLI lê o arquivo) guarda
+  cópia imutável no trabalho ativo (`<root>/work-loops/<trabalho>/prd/<sha256>.md`, `O_EXCL`, 0444) e o hash no estado
+  (`Work.prd`); mesmo hash é idempotente, outro conteúdo exige `--replace` e guarda o anterior; `--origin` até 200
+  caracteres sem controle, no `work status`, nas notas (`[prd]`) e no resumo do auto-land. `prd show` (MCP também) só lê.
+  `plan lint <pasta>` lê `waves.md` e `tasks/*.md` e recusa com arquivo e linha (sem check/área, check que não roda nada
+  ou que só faz grep/test -f/ls no arquivo da tarefa, `area` com `check`, cartão acima de 1500 caracteres, ciclo em
+  `needs`, sem teste citado); sai 1; `--json`; imprime o sha256 do pacote. `plan apply <pasta> --approve <sha256>` (só o
+  dono) cria as tarefas com `needs` por onda só com o linter verde e o hash igual; nunca inicia o laço (`Work.plan`).
+  `work run` de trabalho com PRD roda o linter de novo e recusa pacote mudado. Fluxo: `docs/fabrica/plano.md`; skill do
+  Pastor `docs/fabrica/skill/factory-plan/SKILL.md`; modelo `docs/fabrica/modelos/plano/`. Arquivos:
+  `Sources/CollieDaemonKit/Work/PrdStore.swift`, `Sources/CollieDaemonKit/Work/PlanLint.swift`,
+  `Sources/CollieDaemonKit/Work/PlanApply.swift`, `Sources/CollieDaemonKit/WorkPlanCommands.swift`; testes em
+  `Tests/CollieDaemonKitTests/PrdStoreTests.swift`, `PlanLintTests.swift`, `PlanApplyTests.swift`.
+- **Fila do auto-land (A5, `--auto-land-max <N>`, `--queue`):** `work run --auto-land --queue` leva o trabalho ao cartão
+  do dono (tarefas, checks, portão e limites, como sempre) e, aprovado, ele espera na fila do cercado (estado do laço
+  `queued`; nada roda; o land do cercado não o fecha). Depois de um `landed`, se a execução ainda não integrou `N`
+  trabalhos (padrão 1, no máximo 5), o laço escolhe o trabalho aprovado mais antigo da fila e segue, com o mesmo `--budget`
+  (o que sobrou) e o mesmo starter: o motor só escolhe; o router (`chainLoop`) registra o motor novo em `workLoops` e só
+  então passa o trabalho de `queued` a `running` (`WorkLoop.activate`), na mesma reserva do cercado, antes do aviso ao
+  starter; não começou ⇒ segue `queued`. Um `work stop` (também depois do fim do motor) para a corrente: `requested`.
+  C3b: a fila vai pela hora da aprovação do dono (`autoLand.approvedAt`, a mais antiga primeiro); `work stop` num trabalho
+  `queued` o tira da fila (segue `queued`, não terminal, com `autoLand.dequeuedAt`: segue aprovado e a corrente não o
+  ativa; um novo `work run` o põe de volta). Antes de ativar: o teto diário (`factory.guardrails.autoLandPerDay`, 1 a 20, padrão 3,
+  contado pelos eventos `landed` do cercado nas últimas 24 h; também checado antes de cada land) e o `factory doctor` do
+  cercado (static e judge ≥ 1). Desfechos: `landed` (N integrados e fila vazia: com N=1 e fila vazia o fim é `landed`),
+  `queueEmpty` (menos de N integrados e a fila acabou, não é erro), `maxReached` com detalhe (teto `N` com trabalhos
+  esperando); os três "terminam" pela mesma regra `WorkLoopState.Stop.finishes(code:detail:)`, que o histórico do app
+  (`stopDetail`) também usa; `landDailyCap`, `landDoctorRegressed`; qualquer falha de A4 no trabalho seguinte para a
+  corrente. O laço nunca aprova nada: só entra trabalho `queued` com auto-land aprovado. Arquivos:
+  `Sources/CollieDaemonKit/Work/WorkLoop.swift` (`afterLand`, `landsToday`), `Sources/CollieDaemonKit/WorkLoopCommands.swift`
+  (`chainLoop`); testes em `Tests/CollieDaemonKitTests/AutoLandTests.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos

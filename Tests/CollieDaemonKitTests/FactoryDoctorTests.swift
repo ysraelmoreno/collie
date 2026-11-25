@@ -253,6 +253,52 @@ private func doctor(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> ([String:
     }
 }
 
+/// C2: the doctor's minors: a comment line of a gate script runs no test, the personas are found past the walk's cap,
+/// and a folder with no `.git` says so in one clear line.
+@Suite struct FactoryDoctorC2Tests {
+    @Test func aCommentLineOfTheGateScriptRunsNoTest() {
+        let commented = ["scripts/gate.sh": "#!/bin/bash\n# swift test --parallel\n  # pytest -q\nswift build\n"]
+        #expect(FactoryDoctor.testRunnerSource("bash scripts/gate.sh", commented) == nil)
+        let real = ["scripts/gate.sh": "# swift test, once\nswift test\n"]
+        #expect(FactoryDoctor.testRunnerSources("bash scripts/gate.sh", real) == ["scripts/gate.sh: swift test"])
+    }
+
+    @Test func personasAreFoundPastTheWalksCap() async throws {
+        try await project { dir in
+            let bulk = dir.appendingPathComponent("aaa")
+            try FileManager.default.createDirectory(at: bulk, withIntermediateDirectories: true)
+            for i in 0...FactoryDoctorReader.maxPaths { FileManager.default.createFile(atPath: bulk.appendingPathComponent("f\(i)").path, contents: nil) }
+            try put(dir, "docs/fabrica/personas/correcao.md", "x\n")
+            try put(dir, "personas/testes.md", "x\n")
+            try put(dir, "collie-work.json", #"{"gate": "swift test", "factory": {"version": 1, "review": {"personas": ["correcao", "testes"]}}}"#)
+            #expect(FactoryDoctorReader.listPaths(dir).count == FactoryDoctorReader.maxPaths, "the walk stops at its cap")
+            guard case .success(let s) = FactoryDoctorReader.snapshot(root: dir) else { Issue.record("snapshot"); return }
+            #expect(s.paths.contains("docs/fabrica/personas/correcao.md") && s.paths.contains("personas/testes.md"))
+            let review = layer(FactoryDoctor.score(s), .review)
+            #expect(review.evidence.contains("persona correcao: docs/fabrica/personas/correcao.md")
+                    && review.evidence.contains("persona testes: personas/testes.md"), "\(review.evidence)")
+            #expect(Set(s.paths).count == s.paths.count, "no path twice")
+        }
+    }
+
+    @Test func aFolderWithNoGitSaysSoClearly() async throws {
+        let dir = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory)).appendingPathComponent("fdoc-nogit-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try put(dir, "collie-work.json", #"{"gate": "swift test"}"#)
+        try await withDaemon { d, p in
+            let call = try await doctor(d, p, cwd: dir)
+            let r = try await call([:])
+            #expect(r.ok, "\(r)")
+            guard case .object(let o)? = r.result, case .string(let out)? = o["output"] else { Issue.record("\(r)"); return }
+            #expect(out.contains("não tem .git") && out.contains("cercado de worktree git"), "\(out)")
+        }
+        // the engine's read at HEAD: no git's own error, nor a parent repository's HEAD
+        guard case .failure(let e) = await FactoryDoctorReader.headSnapshot(dir: dir) else { Issue.record("read a HEAD"); return }
+        #expect(e.message.contains("não é um repositório git (sem .git)") && !e.message.contains("fatal"), "\(e.message)")
+    }
+}
+
 /// Minor C (round 3): `viaPackageScript` takes bun, `npm t` and `run-script`, and looks at every line that runs tests.
 @Suite struct FactoryDoctorPackageScriptTests {
     @Test func everyPackageManagerSpelling() {

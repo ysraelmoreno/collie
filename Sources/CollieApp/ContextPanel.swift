@@ -43,6 +43,7 @@ struct ContextPanel: View {
                     VStack(alignment: .leading, spacing: 0) { ForEach(panels) { panelRow($0, order: order) } }
                     HerdsSection(ctx: ctx)
                     LotsSection(client: client)
+                    if let paddock { factorySection(paddock) }
                     if let h = Self.loopsHeader(running: loops.visible && card != nil, hasHistory: !client.workFeed.history.isEmpty) {
                         loopsSection(loops.title, h == .card ? card : nil)
                     }
@@ -99,6 +100,26 @@ struct ContextPanel: View {
             .accessibilityLabel(card.accessibilityLabel)
             .accessibilityAddTraits(.isButton) }
         }
+    }
+
+    /// A3: FÁBRICA, the current paddock's switch (the owner's admin path), the daemon's refusal word for word under it,
+    /// and while on the doctor's layers, one line each. The state is the paddock's, so a change elsewhere shows here too.
+    private func factorySection(_ p: Paddock) -> some View {
+        let actions = ctx.paddocks
+        let s = FactorySwitch.make(p, busy: actions.busy, refusal: actions.factoryRefusal[p.id], note: actions.factoryNote[p.id])
+        return VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(get: { s.isOn }, set: { actions.setFactory(p, $0) })) {
+                Text("FÁBRICA").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
+            }
+            .toggleStyle(.switch).controlSize(.mini).disabled(!s.enabled)
+            .help(s.label).accessibilityLabel("Fábrica").accessibilityHint(s.label)
+            if let r = s.refusal {
+                Text(r).font(.collieMono(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            ForEach(s.note, id: \.self) { Text($0).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1) }
+        }
+        .task(id: p.factory ? p.id : nil) { if p.factory { await actions.loadFactoryNote(p) } }
     }
 
     private func header(_ paddock: Paddock?) -> some View {

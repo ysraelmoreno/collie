@@ -66,9 +66,9 @@ Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
   em tempo de execução e sem fallback. **Recuse runner que passe por script do `package.json`** (`npm test`, `yarn test`,
   `pnpm run test:x`): o agente edita esse script. Se o detector só achou `<gerenciador> test`, pergunte ao dono qual binário o
   script chama e grave esse binário com `npx --no-install`; sem binário de teste direto, não há gate.
-  Python: o gate e o `check-feature.sh` rodam `python3 -P -m pytest` com Python 3.11+ e `python3 -I -m pytest` abaixo disso
+  Python: o gate e o `check-feature.sh` rodam `python3 -I -m pytest` em todo Python
   (a raiz nunca entra no `sys.path`: `pluggy.py` ou `_pytest/` ali não substituem o pytest; com `-I` o pytest vem do venv ou
-  do sistema, nunca do site do usuário); o gate recusa `pytest.py`/`pytest/` na raiz. Layout plano (código na raiz, sem `conftest.py` na raiz): com `-P` a raiz
+  do sistema, nunca do site do usuário); o gate recusa `pytest.py`/`pytest/` na raiz. Layout plano (código na raiz, sem `conftest.py` na raiz): com `-I` a raiz
   sai do `sys.path`; acrescente `pythonpath = ["."]` em `[tool.pytest.ini_options]` do `pyproject.toml` (com o dono de acordo).
 - `scripts/check-feature.sh` (e um `scripts/check-<tipo>.sh` por tipo de tarefa que o dono citar), executável.
 - `docs/fabrica/personas/*.md`: copie as personas padrão; os nomes vão em `factory.review.personas`. O dono pode editar.

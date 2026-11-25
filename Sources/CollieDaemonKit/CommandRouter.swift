@@ -23,6 +23,10 @@ actor CommandRouter {
     var previewsOpening: [UUID: Set<UUID>] = [:]
     /// Paddock names (lowercased) with a create/land/delete in flight; git awaits let other callers in.
     var paddockBusy: Set<String> = []
+    /// C2: the tests' seam: the save after a land's merge fails (`landPaddockKeepingLate`), as a full disk would.
+    var landSaveFails = false
+    /// C4a: the tests' seams: the persist of an auto-land's record fails (`recordAutoLand`); the land throws after its merge.
+    var landRecordFails = false, landFailsAfterMerge = false
     /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).
     var paddockDeleting: Set<UUID> = []
     /// Each paddock's last computed status (PaddockAutoStatus); in memory: after a restart the first computation applies.
@@ -102,6 +106,8 @@ actor CommandRouter {
     var loopPaddocks: Set<UUID> = []
     /// Loops waiting for the owner's card: work id → card id (`work.stop` withdraws it).
     var loopCards: [UUID: UUID] = [:]
+    /// C5c, tests only: awaited by `work.run` while it holds the paddock's reservation, before anything starts (nil: none).
+    var workRunHeld: (@Sendable () async -> Void)?
     var consolidator: Task<Void, Never>?
     /// The work store failed and was logged; reset by the next good read.
     var workStoreBroken = false

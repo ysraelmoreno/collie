@@ -284,8 +284,22 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     }
 
     /// `worktree`: a git worktree of `folder`'s repo; else a folder paddock on `folder` itself.
-    public func createPaddock(name: String, folder: String, worktree: Bool = true) async throws {
-        _ = try await admin("paddock.create", ["name": .string(name), (worktree ? "repo" : "folder"): .string(folder)], timeout: 300)
+    /// `factory`: created marked cercado fábrica (A3; the daemon refuses it over a profile the doctor fails).
+    public func createPaddock(name: String, folder: String, worktree: Bool = true, factory: Bool = false) async throws {
+        var args: [String: JSONValue] = ["name": .string(name), (worktree ? "repo" : "folder"): .string(folder)]
+        if factory { args["factory"] = .bool(true) }
+        _ = try await admin("paddock.create", args, timeout: 300)
+    }
+    /// A3: `paddock factory <name> on|off` (the owner's admin path). A refusal comes back as the daemon's `ProtocolError`.
+    public func setPaddockFactory(_ name: String, _ on: Bool) async throws {
+        _ = try await admin("paddock.factory", ["name": .string(name), "state": .string(on ? "on" : "off")], timeout: 30)
+    }
+    /// A3: `factory doctor` over `terminal`'s project (the daemon finds the root through a terminal of the paddock).
+    public func factoryDoctor(terminal: String) async throws -> FactoryDoctor.Report {
+        guard case .object(let o)? = try await admin("factory.doctor", ["terminal": .string(terminal)], timeout: 30), let r = o["report"] else {
+            throw ProtocolError(code: .internal, message: "malformed factory.doctor reply")
+        }
+        return try JSONDecoder().decode(FactoryDoctor.Report.self, from: JSONEncoder().encode(r))
     }
     public func setPaddockStatus(_ name: String, _ status: PaddockStatus) async throws {
         _ = try await admin("paddock.status", ["name": .string(name), "status": .string(status.rawValue)])

@@ -124,6 +124,8 @@ private extension CommandRouter {
     private func run(_ d: Daemon, _ p: Paths, _ t: Term, _ args: [String: JSONValue] = [:], approve: Bool = true) async throws -> Response {
         var a = args
         if a["max"] == nil { a["max"] = .number(3) }
+        // C5a: a shell Shepherd's own agent never ends a turn: refused; `cat` (no end of turn either) is a named program
+        if a["command"] == nil && a["preset"] == nil { a["command"] = .string("cat") }
         let r = try await work(d, p, t, "work.run", a)
         if r.ok && approve { #expect(try await answerCard(d, p, allow: true) != nil, "no approval card") }
         return r
@@ -218,22 +220,96 @@ private extension CommandRouter {
         }
     }
 
-    /// C2: a check that already passes at the cercado's HEAD does not measure the task: `work run` refuses, nothing reaches the card.
-    @Test func runRefusesACheckThatAlreadyPasses() async throws {
+    /// C2/C5c: a check that already passes at the cercado's HEAD does not measure the task: the loop's first phase stops it
+    /// with `checkAlreadyGreen`, no attempt, the same words in the note; the paddock is free again.
+    @Test func aCheckThatAlreadyPassesStopsTheLoopInItsPreCheck() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "Trivial", check: "true")
             try await addTask(d, p, x.s, "Real", check: "false")
-            let r = try await run(d, p, x.s, ["command": .string("cat")], approve: false)
-            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("o check já passa antes da tarefa: não mede o que ela muda") == true
-                    && r.error?.message.contains("Trivial") == true && r.error?.message.contains("Real") == false, "\(r)")
-            #expect(await d.router.appCards.isEmpty, "a card was raised for a refused run")
-            #expect(try await d.router.work.get(x.work)?.loop == nil)
-            // and the paddock is free again: a corrected run starts
+            #expect(try await run(d, p, x.s, ["command": .string("cat")]).ok)
+            #expect(await loopEnded(d, x.work))
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.loop?.stopReason?.code == .checkAlreadyGreen && w.loop?.used == 0, "\(String(describing: w.loop))")
+            let note = try #require(w.notes.first { $0.text.contains("o check já passa antes da tarefa: não mede o que ela muda") })
+            #expect(note.text.contains("Trivial") && !note.text.contains("Real") && note.text.contains("--green-ok"), "\(note.text)")
+            #expect(await waitFor(20) { await d.router.loopPaddocks.isEmpty })
+            // and a corrected run starts
             let fixed = try await work(d, p, x.s, "work.task.drop", ["task": .string("Trivial"), "reason": .string("trivial")])
             #expect(fixed.ok, "\(fixed)")
+            let first = try #require(w.loop?.startedAt)
             #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)
+            // the new loop (not the first one, still on record until the engine starts) ran and ended
+            #expect(await waitFor(60) { (try? await d.router.work.get(x.work))?.loop.map { $0.startedAt > first && $0.state != .running } ?? false })
+            let again = try await d.router.work.get(x.work)?.loop
+            #expect(again?.stopReason?.code != .checkAlreadyGreen && again?.events?.contains { $0.kind == .attemptStarted } == true, "\(String(describing: again))")
+        }
+    }
+
+    /// C5c: `work run` never waits for the pre-check: its check blocks on a FIFO nobody writes (it ends only when
+    /// killed), yet the reply comes, `starting`, with the loop in its pre-check phase; `work stop` then ends it and
+    /// frees the paddock. No wall clock.
+    @Test func workRunReturnsBeforeThePreCheckEnds() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            let fifo = FileManager.default.temporaryDirectory.appendingPathComponent("c5c-\(UUID().uuidString.prefix(8)).fifo")
+            #expect(mkfifo(fifo.path, 0o600) == 0)
+            defer { try? FileManager.default.removeItem(at: fifo) }
+            try await addTask(d, p, x.s, "Slow", check: "cat '\(fifo.path)' >/dev/null; true")
+            #expect(try await trust(d, p).ok)
+            let r = try await run(d, p, x.s, ["command": .string("cat")], approve: false)
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["state"] == .string("starting"), "\(r)")
+            #expect(await waitFor(20) { (try? await d.router.work.get(x.work))?.loop?.phase == .preCheck })
+            let stop = try await work(d, p, x.s, "work.stop")
+            #expect(stop.ok, "\(stop)")
             #expect(await loopEnded(d, x.work))
+            #expect(try await d.router.work.get(x.work)?.loop?.stopReason?.code == .requested)
+            #expect(await waitFor(20) { await d.router.loopPaddocks.isEmpty })
+        }
+    }
+
+    /// C5c, vetoes of attempt 1: the client gives up while `work run` still holds the paddock's reservation (the
+    /// command's `Task` cancelled at a point the test controls): `work run` fails, starts no loop, and the paddock is
+    /// free again with no `work stop`. Without the `defer` that frees the reservation, `loopPaddocks` keeps it.
+    @Test func aCancelledWorkRunNeverLeavesThePaddockReserved() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Slow", check: "false")
+            #expect(try await trust(d, p).ok)
+            let (entered, inside) = AsyncStream<Void>.makeStream()
+            await d.router.c5cHold { inside.yield(); try? await Task.sleep(for: .seconds(60)) }
+            let me = try #require(await d.router.ws.terminals.first { $0.id == x.s.uuid })
+            let req = Request(id: "w", terminalId: x.s.id, token: x.s.token, command: "work.run",
+                              args: ["max": .number(3), "command": .string("cat")])
+            let cmd = Task { try await d.router.workRun(req, caller: me, starter: me) }
+            for await _ in entered { break }
+            #expect(await !d.router.loopPaddocks.isEmpty, "work run holds the reservation while it is held")
+            cmd.cancel()
+            let r = await cmd.result
+            if case .success(let v) = r { Issue.record("a cancelled work run went on: \(v)") }
+            #expect(await d.router.loopPaddocks.isEmpty, "a cancelled work run left the paddock reserved")
+            #expect(await d.router.workLoops.isEmpty)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+            // and the paddock takes a new run at once
+            await d.router.c5cHold(nil)
+            #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)], approve: false).ok)
+            #expect(await loopEnded(d, x.work))
+            #expect(await waitFor(20) { await d.router.loopPaddocks.isEmpty })
+        }
+    }
+
+    /// C5c: a reservation with no loop and no card (nothing would free it): `work stop` frees it, `released`.
+    @Test func workStopReleasesAReservationWithNoLoop() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            let pid = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
+            await d.router.c5cReserve(pid)
+            let r = try await work(d, p, x.s, "work.stop")
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["state"] == .string("released"), "\(r)")
+            #expect(await d.router.loopPaddocks.isEmpty)
+            #expect(try await work(d, p, x.s, "work.stop").error?.message.contains("no loop is running") == true)
         }
     }
 
@@ -361,6 +437,22 @@ private extension CommandRouter {
         }
     }
 
+    /// C5a: a shell Shepherd with no --preset (nor --command) would run its attempts in a zsh that never ends a turn:
+    /// refused, no card; --preset claude on the same Shepherd passes (to its card).
+    @Test func aShellShepherdsLoopNeedsAnAgentWithAnEndOfTurn() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true", greenOk: true)
+            let shell = try await work(d, p, x.s, "work.run", ["max": .number(3)])
+            #expect(shell.error?.code == .invalidArgs && shell.error?.message == CommandRouter.loopAgentRefusal, "\(shell)")
+            let given = try await work(d, p, x.s, "work.run", ["max": .number(3), "preset": .string("shell")])
+            #expect(given.error?.message == CommandRouter.loopAgentRefusal, "\(given)")
+            #expect(await d.router.appCards.isEmpty)
+            let claude = try await run(d, p, x.s, ["preset": .string("claude")], approve: false)
+            #expect(claude.ok, "\(claude)")
+        }
+    }
+
     /// Finding 7: --max is required and every limit has a hard ceiling.
     @Test func runNeedsMaxAndHardCaps() async throws {
         try await withDaemon { d, p in
@@ -373,7 +465,7 @@ private extension CommandRouter {
                 #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
             }
             // M3.5: lanes run only sandboxed, and this daemon sandboxes no terminal
-            let lanes = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            let lanes = try await work(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "parallel": .number(2)])
             #expect(lanes.error?.code == .invalidArgs && lanes.error?.message.contains("--parallel") == true, "\(lanes)")
             #expect(await d.router.appCards.isEmpty)
         }
@@ -618,7 +710,7 @@ private extension CommandRouter {
             #expect(o["trustLoops"] == .bool(true) && o["name"] == .string("feat"), "\(o)")
             let r = try await run(d, p, x.s, args, approve: false)
             guard case .object(let ran)? = r.result else { Issue.record("\(r)"); return }
-            #expect(ran["state"] == .string("running") && ran["tasks"] == .number(1))
+            #expect(ran["state"] == .string("starting") && ran["tasks"] == .number(1))
             #expect(try await d.router.work.get(x.work)?.loop != nil)   // started before the reply, no card in between
             #expect(await d.router.appCards.isEmpty)
             #expect(await loopEnded(d, x.work))
@@ -715,7 +807,7 @@ private extension CommandRouter {
             try await addTask(d, p, x.s, "Again", check: "true", greenOk: true)
             let r = try await run(d, p, x.s, args, approve: false)
             guard case .object(let ran)? = r.result else { Issue.record("\(r)"); return }
-            #expect(ran["state"] == .string("running"), "\(ran)")
+            #expect(ran["state"] == .string("starting"), "\(ran)")
             #expect(await d.router.appCards.isEmpty)
             #expect(await loopEnded(d, x.work))
         }
@@ -790,4 +882,9 @@ private extension CommandRouter {
         #expect(!CommandRouter.loopSharesWorktree(t("/tmp/slides"), dir))
         #expect(!CommandRouter.loopSharesWorktree(t("/tmp/collie-wt/collie-other"), dir))   // a prefix of the name is not inside
     }
+}
+
+private extension CommandRouter {
+    func c5cReserve(_ p: UUID) { loopPaddocks.insert(p) }
+    func c5cHold(_ h: (@Sendable () async -> Void)?) { workRunHeld = h }
 }

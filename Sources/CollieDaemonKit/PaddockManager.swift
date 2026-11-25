@@ -6,6 +6,8 @@ struct LandResult: Codable, Sendable {
     var mode: LandMode
     var commit: String?
     var prURL: String?
+    /// C3a: the base branch's HEAD read right before the merge (under the caller's claim); nil for a pr.
+    var before: String? = nil
 }
 
 /// Worktree-based paddocks over a git repo (the "pasture"), and folder paddocks (no git). No workspace state.
@@ -76,7 +78,10 @@ enum PaddockManager {
         if f.isFolder { throw fail("o cercado \(f.name) é uma pasta, sem branch: não tem land nem PR") }
     }
 
-    static func land(_ f: inout Paddock, mode: LandMode, message: String?) async throws(ProtocolError) -> LandResult {
+    /// C3b: `base`, the commit the base branch must be on right before the merge (the auto-land's judged base): another
+    /// one throws `.conflict` and nothing is merged. nil: not checked (`paddock land` by hand).
+    /// C4a: `failAfterMerge`, the tests' seam: a throw once the base moved (as a failing `rev-parse` would).
+    static func land(_ f: inout Paddock, mode: LandMode, message: String?, base: String? = nil, failAfterMerge: Bool = false) async throws(ProtocolError) -> LandResult {
         try refuseFolder(f)
         let fl = f
         let pasture = URL(fileURLWithPath: fl.repoRoot), paddock = URL(fileURLWithPath: fl.path)
@@ -89,6 +94,11 @@ enum PaddockManager {
         }
         let cur = try await currentBranch(pasture)
         guard cur == fl.baseBranch else { throw fail("pasture is on '\(cur)', expected base branch '\(fl.baseBranch)'") }
+        // C3a: read here, right before the merge: equal to the commit after, the land made no commit (nothing to integrate)
+        let before = mode == .pr ? nil : try await git(["rev-parse", "HEAD"], in: pasture)
+        if let base, before != base {
+            throw ProtocolError(code: .conflict, message: "a base está em \(before?.prefix(12) ?? "?"), o land foi julgado em \(base.prefix(12)); nada integrado")
+        }
 
         /// On failure: list conflicted files, abort, throw.
         func run(_ args: [String], in dir: URL, abort: [String]) async throws(ProtocolError) {
@@ -103,6 +113,9 @@ enum PaddockManager {
 
         switch mode {
         case .merge:
+            // C2: `--no-ff` always makes a merge commit (two parents) when the paddock has commits the base lacks, a fast
+            // forward included: `after` is never the paddock's own tip, and `before` (read above) is its first parent. With
+            // nothing new ("Already up to date") no commit is made: before == after, which the auto-land stops as `landNothing`
             try await run(["merge", "--no-ff", "--no-edit", "-m", msg, fl.branch], in: pasture, abort: ["merge", "--abort"])
         case .squash:
             // a squash leaves no MERGE_HEAD; reset restores the clean pasture
@@ -126,9 +139,10 @@ enum PaddockManager {
             f.status = .done; f.landedAt = Date()
             return LandResult(mode: mode, commit: commit, prURL: url)
         }
+        if failAfterMerge { throw fail("falhou depois do merge (teste)") }
         let commit = try await git(["rev-parse", "HEAD"], in: pasture)
         f.status = .done; f.landedAt = Date()
-        return LandResult(mode: mode, commit: commit, prURL: nil)
+        return LandResult(mode: mode, commit: commit, prURL: nil, before: before)
     }
 
     /// The paddock's memory travels with its land: commits `.collie/memory` (or a legacy `.orq/memory`; only it) when it has changes.

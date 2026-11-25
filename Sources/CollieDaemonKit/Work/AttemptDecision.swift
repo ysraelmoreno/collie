@@ -12,6 +12,8 @@ enum AttemptDecision {
         var checkStatus: Int32?
         /// The gate's result: nil when it passed, did not need to run or there is none.
         var gate: String?
+        /// F3: the runtime acceptance's result: nil when it passed, did not need to run or the task has none.
+        var accept: String?
         var committed = false
         var dirty = false
         /// The check or the gate moved HEAD, in that order.
@@ -49,7 +51,7 @@ enum AttemptDecision {
     static func reason(_ f: Facts) -> String? {
         if let failure = f.failure { return failure }
         let v = WorkLoop.verdict(checkStatus: f.broken == nil ? f.checkStatus : 0, gate: f.gate, committed: f.committed, dirty: f.dirty)
-        let reasons = [f.broken, v].compactMap { $0 } + f.moves + [f.review].compactMap { $0 }
+        let reasons = [f.broken, v, f.accept].compactMap { $0 } + f.moves + [f.review].compactMap { $0 }
         return reasons.isEmpty ? nil : reasons.joined(separator: "; ")
     }
 

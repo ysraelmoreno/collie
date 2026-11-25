@@ -97,7 +97,7 @@ private let profile = #"""
         #expect(try await call(d, p, m, "paddock.create", ["name": .string("feat")]).ok)
         let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true, paddock: "feat")
         #expect(try await call(d, p, s, "work.start", ["title": .string("Loop work")]).ok)
-        #expect(try await call(d, p, s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
+        #expect(try await call(d, p, s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
         let dir = repo.appendingPathComponent(".collie/paddocks/feat")
         // a persona catalog at HEAD: --review (from the flag or the profile) needs one
         try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
@@ -107,7 +107,7 @@ private let profile = #"""
 
     /// `work run`, the owner's Permitir, then the loop as recorded and the `work.status` text; the loop stopped after.
     private func runAndRead(_ d: Daemon, _ p: Paths, _ x: Pad, _ args: [String: JSONValue]) async throws -> (Response, WorkLoopState?, String) {
-        let r = try await call(d, p, x.s, "work.run", ["max": .number(3)].merging(args) { $1 })
+        let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)].merging(args) { $1 })
         guard r.ok else { return (r, nil, "") }
         _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
         let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
@@ -167,7 +167,7 @@ private let profile = #"""
             #expect(l.tries == 5 && l.budget == 900, "\(l)")
             #expect(l.origins == ["review": "flag", "budget": "perfil", "tries": "flag"], "\(String(describing: l.origins))")
             #expect(status.contains("revisão: desligada") && !status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), "\(status)")
-            let both = try await call(d, p, x.s, "work.run", ["max": .number(3), "review": .bool(true), "no-review": .bool(true)])
+            let both = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "review": .bool(true), "no-review": .bool(true)])
             #expect(both.error?.code == .invalidArgs, "\(both)")
         }
     }
@@ -200,7 +200,7 @@ private let profile = #"""
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["seguranca"] } } }"#, in: x.dir)
-            let r = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)])
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.review.personas") == true
                     && r.error?.message.contains("testes") == true, "\(r)")
             #expect(await !d.router.appCards.contains { $0.app == "work-loop" })
@@ -209,8 +209,21 @@ private let profile = #"""
             let git = try await GitRunner.run(["rm", "-q", "-r", CommandRouter.personasDir], in: x.dir, timeout: .seconds(30))
             #expect(git.status == 0)
             _ = try await GitRunner.run(["commit", "-q", "-m", "no personas"], in: x.dir, timeout: .seconds(30))
-            let none = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            let none = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)])
             #expect(none.error?.message.contains("factory.review do collie-work.json liga a revisão, mas não há personas em HEAD") == true, "\(none)")
+        }
+    }
+
+    /// C1 (B1-a): the profile's personas are checked even with the review off: an unknown one warns, in the reply
+    /// and in `work status`, and refuses nothing.
+    @Test func anUnknownProfilePersonaWarnsWithTheReviewOff() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["testes", "seguranca"] } } }"#, in: x.dir)
+            let (r, loop, status) = try await runAndRead(d, p, x, ["no-review": .bool(true)])
+            #expect(r.ok && warningOf(r)?.contains("persona desconhecida em HEAD: seguranca") == true, "\(r)")
+            #expect(loop?.review == nil && loop?.origins?["unknownPersonas"] == "seguranca", "\(String(describing: loop))")
+            #expect(status.contains("persona desconhecida em HEAD: seguranca"), "\(status)")
         }
     }
 
@@ -221,7 +234,7 @@ private let profile = #"""
             let id = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
             _ = try await d.router.setFactory(id, true)
             let (r, _, _) = try await runAndRead(d, p, x, [:])
-            #expect(warningOf(r)?.contains("auto-land ainda não existe (A4); segue manual") == true, "\(r)")
+            #expect(warningOf(r)?.contains("o auto-land só liga com work run --auto-land; segue manual") == true, "\(r)")
             #expect(warningOf(r)?.contains("não tem a marca") == false, "\(r)")
         }
     }
@@ -231,7 +244,7 @@ private let profile = #"""
             let x = try await pad(d, p)
             try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "guardrails": { "maxTries": 99 } } }"#, in: x.dir)
             // with --gate and --precheck given too: the factory block is still read
-            let r = try await call(d, p, x.s, "work.run", ["max": .number(3), "gate": .string("true"), "precheck": .string("true")])
+            let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "gate": .string("true"), "precheck": .string("true")])
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.guardrails.maxTries") == true, "\(r)")
             #expect(r.error?.message.contains("\n") == false)
             #expect(await !d.router.appCards.contains { $0.app == "work-loop" })

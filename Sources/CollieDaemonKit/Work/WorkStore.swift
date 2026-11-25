@@ -112,6 +112,7 @@ actor WorkStore {
             guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
             w.tasks[i].state = state; w.tasks[i].reason = reason; w.tasks[i].updatedAt = at
             w.tasks[i].forgetResume()   // M2b.1: a state set by hand is no interrupted attempt
+            if state == .done { w.tasks[i].clearVerdicts() }   // C4a: done by hand is no review nor acceptance of the loop's
             out = w.tasks[i]
         }
         return out
@@ -131,6 +132,7 @@ actor WorkStore {
                 if !keepTries { w.tasks[i].tries = nil }
                 if w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }   // F2 X3: reopened, the refusals in a row start over
                 w.tasks[i].forgetResume()   // M2b.1: it starts over, with a fresh agent
+                w.tasks[i].clearVerdicts()   // C4a: and nothing of a former attempt's review or acceptance counts for it
                 w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
             }
             out = (w.tasks[i], from, w.loop.map { $0.state == .running && ($0.tasks?.contains(task) ?? true) } ?? false)

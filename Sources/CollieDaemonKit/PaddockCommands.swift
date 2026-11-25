@@ -41,7 +41,7 @@ extension CommandRouter {
             }
             let factory = flag(r, "factory")
             if factory {   // A2: the owner's alone, and only over a profile the doctor passes
-                guard caller == nil else { throw Self.factoryOwnerOnly }
+                guard caller == nil else { throw Self.factoryCreateOwnerOnly }
                 // ponytail: checked on the source (the folder, or the repo's working tree) before the worktree exists;
                 // a profile changed but not committed can differ from the new branch's. `paddock factory on` reads the paddock itself
                 let source: URL; if let folder { source = folder } else { source = try await PaddockManager.repoRoot(of: repo) }
@@ -86,14 +86,7 @@ extension CommandRouter {
             var f = try findPaddock(try need(r, "name"))
             try PaddockManager.refuseFolder(f)
             guard isCreator(f) else { throw refuse("only the Shepherd that created paddock '\(f.name)' can land it") }
-            try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
-            let res = try await PaddockManager.land(&f, mode: mode, message: str(r, "message"))
-            let i = ws.paddocks.firstIndex { $0.id == f.id }
-            let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
-            if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
-            try await save(f)
-            if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
-            if apps { await publishPlugins() }
+            let res = try await landPaddock(&f, mode: mode, message: str(r, "message"))
             guard case .object(var o) = try isoJSON(res) else { return .null }
             o["paddock"] = try isoJSON(f)
             return .object(o)
@@ -168,12 +161,18 @@ extension CommandRouter {
         return SignedAppCheck.realPath(pasture) == SignedAppCheck.realPath(root)
     }
 
+    /// C6 (S8): `paddock create --factory` by an agent: what it asked is to create, not to switch on or off.
+    static let factoryCreateOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono pode criar como fábrica (o app ou a CLI do dono), nunca um agente")
     static let factoryOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente")
     static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
 
     /// B1: why the worktree's `collie-work.json` is not HEAD's, in one line; nil: it is (or git says so).
+    /// C1 (B1-b): an ignored file is no change to `git status`, yet HEAD may lack it or hold another: refused.
     static func factoryDirty(_ dir: URL) async -> String? {
         let name = ProjectWorkConfig.fileName
+        if let ig = try? await GitRunner.run(["check-ignore", "-q", "--", name], in: dir, timeout: .seconds(30)), ig.status == 0 {
+            return "o perfil está no .gitignore: o motor lê o commit base, não a árvore"
+        }
         guard let st = try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", name], in: dir, timeout: .seconds(30)),
               st.status == 0 else { return "\(name) não pôde ser comparado com o commit HEAD (git status falhou)" }
         return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil
@@ -203,6 +202,36 @@ extension CommandRouter {
         guard let fid = rec.paddockId, paddockDeleting.contains(fid) || !ws.paddocks.contains(where: { $0.id == fid }) else { return }
         try? await remove(rec)
         throw ProtocolError(code: .notFound, message: "Paddock of '\(rec.name)' was deleted")
+    }
+
+    /// `paddock land` once the caller may: claimed, landed (`PaddockManager.land`), saved, its apps' approvals ended and
+    /// its works closed by merge. A4: also the loop's `--auto-land` (`loopLand`), always `.merge`.
+    func landPaddock(_ f: inout Paddock, mode: LandMode, message: String?) async throws -> LandResult {
+        let (res, late) = try await landPaddockKeepingLate(&f, mode: mode, message: message, stopAtLate: true)
+        if let late { throw late }
+        return res
+    }
+
+    /// C2: `landPaddock`, with a failure AFTER the merge (the save) given back as `late` instead of thrown: the base moved
+    /// and the caller (`loopLand`) records it. `stopAtLate`: as `landPaddock` always did, nothing more runs after it.
+    /// C3b: `base` (the auto-land's), the base's commit the merge must still find under the claim (`PaddockManager.land`).
+    func landPaddockKeepingLate(_ f: inout Paddock, mode: LandMode, message: String?, stopAtLate: Bool = false, base: String? = nil) async throws -> (LandResult, (any Error)?) {
+        try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
+        let res = try await PaddockManager.land(&f, mode: mode, message: message, base: base, failAfterMerge: landFailsAfterMerge)
+        let id = f.id, i = ws.paddocks.firstIndex { $0.id == id }
+        let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
+        if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
+        var late: (any Error)?
+        do { try await saveAfterLand(f) } catch { late = error; if stopAtLate { return (res, late) } }
+        if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
+        if apps { await publishPlugins() }
+        return (res, late)
+    }
+
+    /// C2: the save after a land; the tests' seam (`landSaveFails`) fails it, as a full disk would.
+    private func saveAfterLand(_ f: Paddock) async throws {
+        if landSaveFails { throw ProtocolError(code: .internal, message: "a gravação do cercado falhou (teste)") }
+        try await save(f)
     }
 
     func claim(_ name: String) throws(ProtocolError) {

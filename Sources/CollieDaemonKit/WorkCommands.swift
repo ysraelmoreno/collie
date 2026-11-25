@@ -171,6 +171,15 @@ extension CommandRouter {
     /// F2 R1: the agents `work task add --agent` takes (who works on the task).
     static let taskAgents = ["claude", "cursor", "codex"]
 
+    /// F3: why `work task add --accept` refuses this command (already trimmed); nil: taken. As the check: not empty and
+    /// at most `maxWorkText` characters; and no control character but a tab or a newline.
+    static func acceptRefusal(_ a: String) -> String? {
+        if a.isEmpty { return "está vazio" }
+        if a.count > maxWorkText { return "tem mais de \(maxWorkText) caracteres" }
+        if a.unicodeScalars.contains(where: { $0.properties.generalCategory == .control && $0 != "\n" && $0 != "\t" }) { return "tem caractere de controle" }
+        return nil
+    }
+
     func workCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin (the user / app)
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -268,24 +277,13 @@ extension CommandRouter {
             let areas = try strings("area")
             if let areas {
                 guard check == nil else { throw invalid("--area e --check não andam juntos: --area monta o check a partir do collie-work.json; use um ou outro") }
-                if let empty = areas.firstIndex(where: \.isEmpty) { throw invalid("--area: o nome #\(empty + 1) está vazio") }
-                let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
-                let built: String
-                switch WorkConfigFile.config(root: root) {
-                case .failure(let e): throw invalid("--area: " + e.message)
-                case .success(nil):
-                    throw invalid("--area precisa de um \(ProjectWorkConfig.fileName) na raiz do projeto (\(RerailText.clean(root.path, max: 300))); não há nenhum")
-                case .success(let c?):
-                    switch c.composeCheck(areas: areas) {
-                    case .failure(let e): throw invalid("--area: " + RerailText.clean(e.message, max: 1500))
-                    case .success(let s): built = s
-                    }
-                }
-                guard built.count <= Self.maxWorkText else {
-                    throw invalid("o check montado por --area tem \(built.count) caracteres; o limite de um check é \(Self.maxWorkText)")
-                }
-                check = built
+                check = try areaCheck(areas, for: t)
             }
+            // F3: the acceptance as the check (trimmed, not empty, bounded), and no control character but a tab or a newline
+            let accept = str(r, "accept").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            if let accept, let why = Self.acceptRefusal(accept) { throw invalid("--accept " + why) }
+            let acceptTimeout = try num(r, "accept-timeout", max: Double(WorkTask.acceptTimeoutMax)).map { Int($0) }
+            if acceptTimeout != nil, accept == nil { throw invalid("--accept-timeout precisa de --accept") }
             let evidence = str(r, "evidence")
             if let evidence, let why = EvidenceFiles.refusal(evidence) { throw invalid("--evidence \(why)") }
             var spec: String?
@@ -312,6 +310,7 @@ extension CommandRouter {
             var task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope,
                             greenOk: flag(r, "green-ok") ? true : nil)
             task.agent = agent; task.model = model
+            task.accept = accept; task.acceptTimeout = acceptTimeout
             try await work.update(w.id) { $0.tasks.append(task) }
             guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
             o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "
@@ -457,6 +456,7 @@ extension CommandRouter {
                 if let d = a.openedAt { o["openedAt"] = .string(iso.string(from: d)) }
                 if let d = a.closedAt { o["closedAt"] = .string(iso.string(from: d)) }
                 if let s = a.stopReason { o["stopReason"] = .string(s) }
+                if let s = a.stopDetail { o["stopDetail"] = .string(s) }   // A5: `Stop.finishes` reads it
                 if a.reconstructed { o["reconstructed"] = .bool(true) }
                 return .object(o)
             }), "output": .string(rows.isEmpty ? "Nenhum trabalho fechado neste cercado." : rows.map { a in
@@ -514,7 +514,7 @@ extension CommandRouter {
             return try await rerail(t, w, now: now, wait: t.id != caller?.id)
 
         case "work.run": return try await workRun(r, caller: caller, starter: try target())
-        case "work.stop": return try await workStop(try target())
+        case "work.stop": return try await workStop(try target(), now: flag(r, "now"))
 
         case "work.config": return try workConfig(try target())   // M13.1: read only, runs nothing
         case "factory.doctor":   // U3: routed here for the same reach rules; read only, runs nothing
@@ -524,6 +524,33 @@ extension CommandRouter {
         case "factory.ratchet.check", "factory.ratchet.update", "factory.ratchet.raise":   // U5: runs the ratchet's measure once
             let action = FactoryRatchet.Action(rawValue: String(r.command.dropFirst("factory.ratchet.".count)))!
             return try await factoryRatchet(try target(), action, name: try text("name"), reason: str(r, "reason"))
+
+        // F5: the PRD and the plan package; adding and applying are the owner's alone, showing and linting only read
+        case "work.prd.add":
+            guard caller == nil else {
+                throw ProtocolError(code: .unauthorized, message: "'work.prd.add' é do dono (a CLI fora de um terminal); um agente lê o PRD com collie work prd show")
+            }
+            return try await prdAdd(r, try await active(try target()), now: now)
+        case "work.prd.show":
+            let w = if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) }
+            return try prdShow(w)
+        case "work.plan.lint":
+            let t: TerminalRecord? = caller != nil || str(r, "terminal") != nil ? try target() : nil
+            let dir = try await planDir(r, t, confined: caller != nil)
+            // C4a: a terminal's lint reads only inside its project (links, special files and `..` refused)
+            // C5b: no root found is a refusal, never the package's own folder as the fence (that read anything it links to)
+            var root: URL?
+            if let t {
+                do { root = try await projectRoot(of: t) }
+                catch { throw ProtocolError(code: .internal, message: "não achei a raiz do projeto de '\(t.name)' (\(error)): o lint não lê o pacote sem ela") }
+            }
+            return PlanLint.json(PlanLint.lint(dir, root: root))
+        case "work.plan.apply":
+            guard caller == nil else {
+                throw ProtocolError(code: .unauthorized, message: "'work.plan.apply' é do dono (a CLI fora de um terminal): ele aprova o pacote que viu")
+            }
+            let t = try target()
+            return try await planApply(r, t, try await active(t), now: now)
 
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }
@@ -589,6 +616,7 @@ extension CommandRouter {
         if let n = WorkStatusText.modelLine(w) { lines.append(n) }   // M5.6
         if let n = WorkStatusText.reviewLine(w) { lines.append(n) }   // F2 R1
         lines += WorkStatusText.originLines(w)   // A1: none without a factory profile
+        if let p = PrdStore.line(w) { lines.append(p) }   // F5: none without a PRD or a plan
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
@@ -597,7 +625,7 @@ extension CommandRouter {
             let ts = w.tasks.filter { $0.state == state }
             guard !ts.isEmpty else { continue }
             lines.append("\(label) (\(ts.count)):")
-            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + WorkStatusText.workerLabel($0) + " [\($0.id)]" }
+            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + WorkStatusText.workerLabel($0) + WorkStatusText.acceptLabel($0) + " [\($0.id)]" }
         }
         let jobs = w.jobs.filter { $0.state == .running || $0.state == .unknown }
         if !jobs.isEmpty { lines.append("Jobs:"); lines += jobs.map { "  - \($0.kind.rawValue) \($0.label) (\($0.state.rawValue))" } }
@@ -629,7 +657,8 @@ extension CommandRouter {
     /// Never fails the land.
     func closeMerged(_ f: Paddock) async {
         do {
-            for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.gitBranch) {
+            // A5: a queued work (approved, waiting for an auto-land chain) stays open across the land
+            for w in try await work.list(includeClosed: false) where w.loop?.state != .queued && (w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.gitBranch)) {
                 let lot = ws.lot(of: w.terminalId)?.id
                 try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge"; $0.lotId = lot } }
             }

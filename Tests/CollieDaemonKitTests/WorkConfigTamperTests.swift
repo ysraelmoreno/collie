@@ -84,7 +84,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     /// The `work.run` reply (its `warning`) and the approval card's text.
     private func cardAndReply(_ d: Daemon, _ p: Paths, _ x: Pad) async throws -> (Response, String) {
-        let r = try await work(d, p, x.s, "work.run", ["max": .number(3)])
+        let r = try await work(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)])
         #expect(r.ok)
         var text = ""
         if await waitFor(20, { await d.router.appCards.contains { $0.app == "work-loop" } }) {

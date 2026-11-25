@@ -11,6 +11,9 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
     public var commits: [String]; public var shortstat: String; public var checkTail: String
     public var seconds: Int; public var attempt: Int
     public var files: [String]?; public var filesDir: String?
+    /// F3: the runtime acceptance's whole output (`WorkLoop.acceptOutput`: scrubbed, head and tail, at most 64 KB); nil:
+    /// the task has no `--accept`.
+    public var acceptOutput: String?
     public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int,
                 files: [String]? = nil, filesDir: String? = nil) {
         self.commits = commits; self.shortstat = shortstat; self.checkTail = checkTail; self.seconds = seconds; self.attempt = attempt
@@ -54,6 +57,21 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// F2 R4: the last review of the task, as the summary shows it ("parecer: sem veto (personas: a, b; 2 achados)"),
     /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
     public var review: String?; public var reviewRejects: Int?
+    /// A4: the task's last attempt was reviewed and every persona answered with no veto (no mute or invalid one, the tree
+    /// as judged). nil: not so, or no review ran in it (cleared as each attempt starts). What `--auto-land` requires.
+    public var reviewClean: Bool?
+    /// C3a: the HEAD the clean review judged (set with `reviewClean`): a land whose HEAD is past it is no approval.
+    public var reviewedHead: String?
+    /// F3, `work task add --accept`: a shell command that judges the RESULT running (exit 0 = accepted), run by the loop
+    /// after the check and the gate, in the check's conditions; `acceptTimeout` its seconds (nil: `acceptTimeoutDefault`,
+    /// at most `acceptTimeoutMax`). The owner's, kept in the work's state: the loop never reads it from the worktree.
+    public var accept: String?; public var acceptTimeout: Int?
+    public static let acceptTimeoutDefault = 600, acceptTimeoutMax = 1800
+    /// F3: the acceptance of the task's LAST attempt passed (true) / failed or did not run (false); nil: it never ran
+    /// in that attempt (cleared as each attempt starts). What `--auto-land` requires of a task with `accept`.
+    public var acceptPassed: Bool?
+    /// F3: one line on that last acceptance ("passou (exit 0)", "falhou (exit 1)", "não rodou: ..."), for the owner.
+    public var acceptResult: String?
     /// P2: the free retries the loop spent on this task because an attempt's prompt was not delivered (nil: none).
     public var promptRetries: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
@@ -65,6 +83,9 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var resumeAt: Date?
     /// M2b.1: nothing to resume: the three go together.
     public mutating func forgetResume() { resumeFrom = nil; resumeBranch = nil; resumeAt = nil }
+    /// C4a: the loop's verdicts on the task (a clean review, the HEAD it judged, a passed acceptance) dropped: what the
+    /// auto-land trusts is only ever an attempt's own (`work task done` by hand, `work task reopen`).
+    public mutating func clearVerdicts() { reviewClean = nil; reviewedHead = nil; acceptPassed = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
                 evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil, greenOk: Bool? = nil) {
@@ -97,6 +118,12 @@ public struct WorkTask: Codable, Sendable, Equatable {
         review = (try? c.decodeIfPresent(String.self, forKey: .review)) ?? nil   // F2 R4: tolerant too
         reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
         promptRetries = (try? c.decodeIfPresent(Int.self, forKey: .promptRetries)) ?? nil   // P2: tolerant too
+        reviewClean = (try? c.decodeIfPresent(Bool.self, forKey: .reviewClean)) ?? nil   // A4: tolerant too
+        reviewedHead = (try? c.decodeIfPresent(String.self, forKey: .reviewedHead)) ?? nil   // C3a: tolerant too
+        accept = (try? c.decodeIfPresent(String.self, forKey: .accept)) ?? nil   // F3: tolerant too
+        acceptTimeout = (try? c.decodeIfPresent(Int.self, forKey: .acceptTimeout)) ?? nil
+        acceptPassed = (try? c.decodeIfPresent(Bool.self, forKey: .acceptPassed)) ?? nil
+        acceptResult = (try? c.decodeIfPresent(String.self, forKey: .acceptResult)) ?? nil
     }
 }
 
@@ -158,6 +185,17 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         /// P2: the attempt's prompt was not delivered and the attempt starts over with a new agent, not counted (detail:
         /// the task's free retries used, `n/2`).
         case promptRetry
+        /// A4, `--auto-land`: the paddock was landed (merge) once every task was done (detail: "<base before> -> <after>").
+        case landed
+        /// F3: the task's runtime acceptance (`--accept`) started / passed / failed or did not run (detail: `exit n`,
+        /// `timeout` or `não rodou`).
+        case acceptStarted, acceptPassed, acceptFailed
+        /// C5c: the loop's first phase, the open tasks' checks run once at the paddock's HEAD (`checkAlreadyGreen`)
+        /// started / finished (detail: how many passed).
+        case preCheckStarted, preCheckFinished
+        /// C6, `--auto-land`: the land's gate and its local CI started / finished (detail: `exit n em s s`, `timeout em s s`
+        /// or `não rodou`).
+        case landGateStarted, landGateFinished, landCiStarted, landCiFinished
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
@@ -178,7 +216,9 @@ public struct LoopEvent: Codable, Sendable, Equatable {
 /// later waits for the next run; nil: every open task); `gate`: a command run after every task's check, in the same
 /// conditions, that must also exit 0 (nil: none).
 public struct WorkLoopState: Codable, Sendable, Equatable {
-    public enum State: String, Codable, Sendable { case running, stopped, finished }
+    /// A5: `queued`, a `work run --auto-land --queue` the owner approved on the card (its tasks, checks, gate and limits)
+    /// that waits in its paddock's queue: no engine runs it until an auto-land chain activates it (`running`).
+    public enum State: String, Codable, Sendable { case running, stopped, finished, queued }
     public var state: State
     public var task: String?
     public var attempt: Int
@@ -190,6 +230,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
     /// agent is told its output's tail once (nil: none, the loop as before).
     public var precheck: String?
+    /// C5c: set by `work run`: the loop's first phase runs every open task's check once (not `--green-ok`) and stops
+    /// with `checkAlreadyGreen` when one already passes. nil: none (a loop from before, or a test's).
+    public var greenPreCheck: Bool?
     /// C3, `work run --escalate agent:model,…`: the agent of attempt `n` of a task is entry `min(n, count) - 1`; with it
     /// set, `preset`/`model`/`command` are nil. nil: every attempt runs the same agent, as before.
     public var escalate: [String]?
@@ -219,8 +262,12 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
         /// F2 R3: `review`, the personas judging the attempt.
-        case agent, check, gate, review
-        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão" } }
+        /// C5c: `preCheck`, the loop's first phase (the open tasks' checks before any attempt).
+        case agent, check, gate, review, preCheck
+        public var label: String {
+            switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão"
+            case .preCheck: "verificando checks que já passam" }
+        }
     }
     public var phase: Phase?
     /// When `phase` last changed (`show`); nil: no phase, or a loop written before this existed.
@@ -240,6 +287,33 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 case adoptionFailed
                 /// M5.3: the attempt's agent hit the model's usage limit (detail: the dialog's text, short): not counted.
                 case usageLimit
+                /// A4, `--auto-land`: every task done and the paddock landed (merge; detail: "<base before> -> <base after>").
+                /// The loop `finished`; the others stop it before any land: the gate red, a veto or no clean review, the
+                /// local CI red, a dirty tree or another agent busy, the land refused (a conflict or any failure), the
+                /// paddock no longer a factory's.
+                case landed, landGateRed, landReviewVeto, landCiRed, landDirty, landConflict, landNotFactory
+                /// A5, after a land: no approved work left in the paddock's queue (no error: the loop finished); the
+                /// paddock's lands in the last 24 h reached `factory.guardrails.autoLandPerDay`; the factory doctor of
+                /// the paddock no longer passes the minimum (static and judge at least 1). `maxReached` with a detail:
+                /// `--auto-land-max` lands made while approved works still wait.
+                case queueEmpty, landDailyCap, landDoctorRegressed
+                /// C3a: the merge made no commit (the paddock had nothing new, or was integrated already): no land, not
+                /// counted in the daily cap nor in the chain.
+                case landNothing
+                /// F3: a task of the work has `--accept` and its last acceptance did not pass in the winning attempt.
+                case landAcceptRed
+                /// C3b: the base branch is not the commit it was when the last attempt began (`AutoLand.baseHead`), or no
+                /// such commit is known: the merge would integrate a tree nobody judged on that base. The owner redoes it.
+                case landBaseMoved
+                /// C4a: the merge was made but the paddock's land record (`Paddock.autoLands`, what the daily cap counts)
+                /// could not be written: the loop stops rather than land on uncounted; the owner is told.
+                case landRegistryFailed
+                /// C5a: `--auto-land` and a task of the run not done (deferred by a red gate or acceptance, or still open):
+                /// nothing integrated (detail: the tasks' titles). Not a finish.
+                case landTasksNotDone
+                /// C5c: the loop's pre-check found an open task (not `--green-ok`) whose check already passes at the
+                /// paddock's HEAD: no attempt ran (detail: the tasks' titles). Not a finish.
+                case checkAlreadyGreen
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -250,7 +324,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .requested: "pedido pelo dono (work stop)"
             case .workGone: "trabalho fechado ou parado por fora"
             case .starterGone: "o Pastor que iniciou sumiu"
-            case .maxReached: "limite de tentativas (--max) atingido"
+            case .maxReached: detail.map { "teto do auto-land atingido (\($0))" } ?? "limite de tentativas (--max) atingido"
             case .budgetSpent: "orçamento de tempo esgotado"
             case .gitFailed: "git falhou"
             case .dirtyTree: "arquivos rastreados modificados fora do laço"
@@ -260,14 +334,76 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
             case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
             case .usageLimit: "o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>"
+            case .landed: "integrado (auto-land, merge local; sem push)" + (detail.map { ": \($0)" } ?? "")
+            case .landGateRed: "auto-land: portão vermelho no HEAD do cercado; nada integrado"
+            case .landReviewVeto: "auto-land: revisão com veto ou sem parecer em \(detail ?? "uma tarefa"); nada integrado"
+            case .landCiRed: "auto-land: CI local vermelho; nada integrado"
+            case .landDirty: "auto-land: árvore suja ou outro agente trabalhando (\(detail ?? "cercado")); nada integrado"
+            case .landConflict: "auto-land: o land (merge) falhou (\(detail ?? "conflito")); nada integrado"
+            case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
+            case .queueEmpty: "auto-land: nenhum outro trabalho aprovado na fila do cercado"
+            case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
+            case .landAcceptRed: "auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado"
+            case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
+            case .landBaseMoved: "auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova"
+            case .landRegistryFailed: "auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono"
+            case .landTasksNotDone: "auto-land: tarefa(s) não feitas (\(detail ?? "alguma tarefa")); nada integrado"
+            case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
+            case .checkAlreadyGreen: "o check já passa antes da tarefa (\(detail ?? "uma tarefa")); nenhuma tentativa; reescreva o check ou marque --green-ok"
             case .unknown: "motivo desconhecido"
             }
         }
-        /// The note every stopped loop leaves.
-        public var note: String { "[loop] laço parado: \(label)" }
+        /// The note every stopped loop leaves (A4: a landed one is no stop).
+        /// A5: nor is the end of a chain (`queueEmpty`, `maxReached` of the auto-land).
+        public var note: String { finishes ? "[loop] laço terminou: \(label)" : "[loop] laço parado: \(label)" }
+        /// A4/A5: the codes a loop `finished` with (a land made, nothing failed).
+        public var finishes: Bool { Self.finishes(code: code.rawValue, detail: detail) }
+        /// The one rule of "finished" over a stop's two raw fields (the app's history rows have only those): `landed`,
+        /// `queueEmpty`, and `maxReached` with a detail (only the auto-land's chain gives it one).
+        public static func finishes(code: String?, detail: String?) -> Bool {
+            switch code.flatMap(Code.init(rawValue:)) {
+            case .landed?, .queueEmpty?: true
+            case .maxReached?: detail != nil
+            default: false
+            }
+        }
     }
     /// Set when the loop ends `stopped`; nil while it runs and when it `finished`.
     public var stopReason: Stop?
+    /// A4, `work run --auto-land`: what the land runs, all from the profile committed at the loop's base: its `gate`,
+    /// the local CI (`factory.autoland.ci`, else `scripts/ci/run-tests.sh`) and its timeout (seconds). `before`/`after`:
+    /// the base branch's commit before and after the land (nil: no land yet). nil: no auto-land (the loop as before).
+    public struct AutoLand: Codable, Sendable, Equatable {
+        public static let defaultCI = "scripts/ci/run-tests.sh", defaultTimeout = 1800
+        public var gate: String; public var ci: String; public var timeout: Int
+        public var before: String?, after: String?
+        /// A6: the absolute path of the run's summary (`<daemon root>/work-loops/<work>/autoland/<stamp>.md`, 0444);
+        /// nil: none written yet.
+        public var summary: String?
+        /// A5: `--auto-land-max` (nil: 1, at most `maxMax`), `factory.guardrails.autoLandPerDay` (nil: 3) and the lands
+        /// earlier works of the same execution made (nil: none; carried to the next work the chain activates).
+        public static let maxMax = 5, defaultPerDay = 3
+        public var max: Int?, perDay: Int?, chained: Int?
+        /// C3b: when the owner approved the queued work (its card answered, or the trusted paddock's `work run`): the
+        /// queue's order, oldest approval first. nil: a loop from before (its `startedAt` stands in).
+        public var approvedAt: Date?
+        /// C3b: `work stop` took the approved work out of the queue: the loop stays `queued` (not terminal) and
+        /// `approvedAt` stays, but no chain activates it while this is set; the work's next `work run` makes a new loop
+        /// (none set: back in the queue). nil: in the queue.
+        public var dequeuedAt: Date?
+        /// C3b: the base branch's commit when the last attempt of a task began (what the agent worked on): the land
+        /// needs the base to be exactly this. Written only at an attempt's start (never with nil over a value), carried
+        /// to the work's next `work run`, taken again when a chain activates the work. nil: unknown, the land fails closed.
+        public var baseHead: String?
+        /// C5c: the paddock's HEAD when the work began (`work run`, or the engine's start when unknown): a land that does
+        /// not integrate resets the paddock back to it. Carried to the work's next `work run` only when that loop did not
+        /// land; cleared by a land that integrated. nil: unknown (the engine takes HEAD when it starts).
+        public var startHead: String?
+        public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout, max: Int? = nil, perDay: Int? = nil) {
+            self.gate = gate; self.ci = ci; self.timeout = timeout; self.max = max; self.perDay = perDay
+        }
+    }
+    public var autoLand: AutoLand?
     /// The loop's journal, oldest first: a ring of the `eventsMax` newest (`record`). nil: none yet, or a loop written
     /// before the journal existed. A new `work run` is a new `WorkLoopState`: it starts empty.
     public var events: [LoopEvent]?
@@ -354,6 +490,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
         precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
+        greenPreCheck = (try? c.decodeIfPresent(Bool.self, forKey: .greenPreCheck)) ?? nil   // C5c: tolerant too
         escalate = (try? c.decodeIfPresent([String].self, forKey: .escalate)) ?? nil
         review = (try? c.decodeIfPresent(Bool.self, forKey: .review)) ?? nil   // F2 R1: tolerant, like the newer ones
         personas = (try? c.decodeIfPresent([String].self, forKey: .personas)) ?? nil
@@ -362,6 +499,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         reviewThreshold = (try? c.decodeIfPresent(String.self, forKey: .reviewThreshold)) ?? nil
         origins = (try? c.decodeIfPresent([String: String].self, forKey: .origins)) ?? nil
         destructive = (try? c.decodeIfPresent(Int.self, forKey: .destructive)) ?? nil
+        autoLand = (try? c.decodeIfPresent(AutoLand.self, forKey: .autoLand)) ?? nil   // A4: tolerant too
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {
@@ -424,6 +562,11 @@ public struct Work: Codable, Sendable, Equatable {
     /// so it never goes back across a daemon restart). `work wait --since` waits for it to pass a value. nil: never
     /// written by a store that counts.
     public var version: Int?
+    /// F5: the PRDs kept for this work (`collie work prd add`), oldest first: the last is the current one, the ones
+    /// before it were replaced (`--replace`; their files stay). nil: none.
+    public var prd: [WorkPrd]?
+    /// F5: the plan package applied to it (`collie work plan apply`). nil: none.
+    public var plan: WorkPlan?
     public init(id: UUID = UUID(), title: String, terminalId: UUID, paddockId: UUID? = nil, branch: String? = nil, openedAt: Date = Date(),
                 closedAt: Date? = nil, closedBy: String? = nil, tasks: [WorkTask] = [], jobs: [WorkJob] = [], notes: [WorkNote] = [],
                 commits: [String] = []) {
@@ -431,7 +574,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, askedAt, proposedAt, proposedCommit, lotId, loop, version }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, askedAt, proposedAt, proposedCommit, lotId, loop, version, prd, plan }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -451,6 +594,26 @@ public struct Work: Codable, Sendable, Equatable {
         lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
         loop = (try? c.decodeIfPresent(WorkLoopState.self, forKey: .loop)) ?? nil   // malformed = no loop
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
+        prd = (try? c.decodeIfPresent([WorkPrd].self, forKey: .prd)) ?? nil   // F5: tolerant, like the newer ones
+        plan = (try? c.decodeIfPresent(WorkPlan.self, forKey: .plan)) ?? nil
+    }
+}
+
+/// F5: a PRD kept for a work: the markdown the owner's CLI read, immutable in the work's own folder
+/// (`<root>/work-loops/<work>/prd/<sha256>.md`, 0444). `origin`: where it came from, opaque text (never fetched).
+public struct WorkPrd: Codable, Sendable, Equatable {
+    public var sha256: String; public var origin: String?; public var addedAt: Date; public var bytes: Int
+    public init(sha256: String, origin: String? = nil, addedAt: Date = Date(), bytes: Int) {
+        self.sha256 = sha256; self.origin = origin; self.addedAt = addedAt; self.bytes = bytes
+    }
+}
+
+/// F5: the plan package (`waves.md`, `tasks/*.md`) applied to a work: its folder, the sha256 the owner approved and
+/// the ids of the tasks it created. `work run` lints the folder again and refuses when its hash is no longer this one.
+public struct WorkPlan: Codable, Sendable, Equatable {
+    public var dir: String; public var sha256: String; public var appliedAt: Date; public var tasks: [String]
+    public init(dir: String, sha256: String, appliedAt: Date = Date(), tasks: [String]) {
+        self.dir = dir; self.sha256 = sha256; self.appliedAt = appliedAt; self.tasks = tasks
     }
 }
 

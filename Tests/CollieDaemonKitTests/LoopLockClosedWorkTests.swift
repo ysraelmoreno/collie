@@ -58,11 +58,11 @@ private func write(_ text: String, _ file: String, in dir: URL) throws {
             let added = try await call(d, p, s, "work.task.add", ["title": .string("T"), "check": .string("true")])
             #expect(started.ok && added.ok, "\(started) \(added)")
 
-            let refused = try await call(d, p, s, "work.run", ["max": .number(1)])
+            let refused = try await call(d, p, s, "work.run", ["command": .string("cat"), "max": .number(1)])
             #expect(refused.error?.code == .invalidArgs && refused.error?.message.contains("a loop is already running in paddock 'feat'") == true, "\(refused)")
 
             try await d.router.work.update(a.id) { $0.loop?.state = .stopped }
-            let accepted = try await call(d, p, s, "work.run", ["max": .number(1)])
+            let accepted = try await call(d, p, s, "work.run", ["command": .string("cat"), "max": .number(1)])
             #expect(accepted.ok, "\(accepted)")
             if accepted.ok { try await refuseCard(d, p) }
         }

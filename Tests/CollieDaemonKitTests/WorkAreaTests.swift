@@ -110,6 +110,7 @@ private let withSmoke = """
     /// `work.run --max 3` plus `args`; the owner's card text, then the card withdrawn (nothing runs).
     private func runCard(_ d: Daemon, _ p: Paths, _ x: Pad, _ args: [String: JSONValue] = [:]) async throws -> (Response, String) {
         var a = args; a["max"] = .number(3)
+        if a["command"] == nil && a["preset"] == nil { a["command"] = .string("cat") }   // C5a: a shell Shepherd's own agent is refused
         let r = try await work(d, p, x.s, "work.run", a)
         #expect(r.ok, "\(r)")
         var text = ""

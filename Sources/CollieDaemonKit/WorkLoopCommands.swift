@@ -25,13 +25,18 @@ extension CommandRouter {
         guard let pid = t.paddockId, let paddock = ws.paddocks.first(where: { $0.id == pid }), !paddock.isFolder else {
             throw invalid("'\(t.name)' is not in a paddock: a loop resets its worktree between attempts; ask the owner for a paddock")
         }
+        // A5: `--queue` runs nothing now: it only waits, approved, for a chain (no reservation, no idle paddock needed)
+        let queue = flag(r, "queue")
+        if queue, !flag(r, "auto-land") { throw invalid("--queue needs --auto-land: only an auto-land chain runs a queued work") }
+        if r.args["auto-land-max"] != nil, !flag(r, "auto-land") { throw invalid("--auto-land-max needs --auto-land") }
+        let landMax = try num(r, "auto-land-max", max: Double(WorkLoopState.AutoLand.maxMax)).map(Int.init)
         // reserved before the first await: a concurrent work.run (actor reentrancy) finds it taken
-        guard !loopPaddocks.contains(pid) else {
+        guard queue || !loopPaddocks.contains(pid) else {
             throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
-        loopPaddocks.insert(pid)
+        if !queue { loopPaddocks.insert(pid) }
         var started = false
-        defer { if !started { loopPaddocks.remove(pid) } }
+        defer { if !started && !queue { loopPaddocks.remove(pid) } }
         guard let max = try num(r, "max", max: Self.loopMaxMax).map(Int.init) else {
             throw invalid("--max is required: the attempts the loop may use in all (1-\(Int(Self.loopMaxMax)))")
         }
@@ -47,12 +52,14 @@ extension CommandRouter {
         guard unchecked.isEmpty else {
             throw invalid("every open task needs a --check; these have none: " + unchecked.map { "\"\($0.title)\" [\($0.id)]" }.joined(separator: ", "))
         }
+        // F5: a work with a PRD runs the plan the owner approved, still passing the linter
+        if let why = Self.prdPlanRefusal(w) { throw invalid(why) }
         // M7.2 (A2): a closed work's loop may still run (M6.4: it ends at its next wake, after its lanes): it holds the paddock too
         let others = try await work.list(includeClosed: true).filter { $0.paddockId == paddock.id }
-        if workLoops[w.id] != nil || others.contains(where: { $0.loop?.state == .running }) {
+        if workLoops[w.id] != nil || (!queue && others.contains(where: { $0.loop?.state == .running })) {
             throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
-        for o in ws.terminals where o.paddockId == paddock.id && o.id != t.id && !o.isShepherd && Self.loopSharesWorktree(o, URL(fileURLWithPath: paddock.path)) {
+        for o in ws.terminals where !queue && o.paddockId == paddock.id && o.id != t.id && !o.isShepherd && Self.loopSharesWorktree(o, URL(fileURLWithPath: paddock.path)) {
             if await targetBusy(o.id) {
                 throw invalid("'\(o.name)' is working in paddock '\(paddock.name)': the loop needs the worktree to itself; wait for it, or run the loop in its own paddock")
             }
@@ -61,7 +68,7 @@ extension CommandRouter {
         let st = try await GitRunner.run(["status", "--porcelain", "--untracked-files=no"], in: dir, timeout: .seconds(30))
         guard st.status == 0 else { throw invalid("'\(paddock.path)' is not a git worktree") }
         let dirty = st.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard dirty.isEmpty else { throw invalid("tracked files are dirty in paddock '\(paddock.name)'; commit or discard them first:\n\(dirty.prefix(500))") }
+        guard queue || dirty.isEmpty else { throw invalid("tracked files are dirty in paddock '\(paddock.name)'; commit or discard them first:\n\(dirty.prefix(500))") }
 
         // the summon's own checks run again per attempt; these only save three failed attempts
         if let p = str(r, "preset") { _ = try Preset.parse(p) }
@@ -108,6 +115,8 @@ extension CommandRouter {
         let triesFlag = try num(r, "tries", max: Self.loopTriesMax), budgetFlag = try num(r, "budget", max: Self.loopBudgetMax)
         // ponytail: the profile allows a budget up to 86400 s, the engine's ceiling is lower: capped, not refused
         let profileBudget = factory?.budgetSeconds.map { min(Double($0), Self.loopBudgetMax) }
+        // C5a: an agent with no end of turn (a shell, given or the Shepherd's) would hold the paddock until the turn's timeout
+        if escalate == nil, Self.loopAgentRefused(preset: str(r, "preset"), command: str(r, "command"), shepherd: t) { throw invalid(Self.loopAgentRefusal) }
         var loop = WorkLoopState(state: .running, tries: Int(triesFlag ?? factory?.maxTries.map(Double.init) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
@@ -126,35 +135,64 @@ extension CommandRouter {
             loop.origins = ["review": origin(reviewFlag || noReview, file.reviewPresent), "budget": origin(budgetFlag != nil, profileBudget != nil),
                             "tries": origin(triesFlag != nil, factory.maxTries != nil)]
             if review.on, file.reviewPresent, review.personas == nil, !factory.personas.isEmpty { loop.reviewOnly = factory.personas }
+            // C1 (B1-a): the profile's persona names are checked whenever it is read, not only when they pick the review
+            // (`loopReview` refuses those): an unknown one off the review is a warning, here and in `work status`
+            if !fromProfile, !factory.personas.isEmpty {
+                let known = await Self.committedPersonas(dir), bad = factory.personas.filter { !known.contains($0) }
+                if !bad.isEmpty {
+                    let names = bad.map { RerailText.clean($0, max: 60) }.joined(separator: ", ")
+                    loop.origins?["unknownPersonas"] = names
+                    warning = [warning, WorkStatusText.unknownPersonasLine(names)].compactMap { $0 }.joined(separator: "; ")
+                }
+            }
             if review.on, file.reviewPresent { loop.reviewThreshold = factory.threshold.rawValue }
             if !factory.destructive.isEmpty { loop.destructive = factory.destructive.count }
             // nit (B1): the engine's ceiling cuts the profile's budget; `work status` says so
             if let b = factory.budgetSeconds, Double(b) > Self.loopBudgetMax, budgetFlag == nil { loop.origins?["budgetCut"] = String(b) }
-            // ponytail: auto-land is A4; until then factory-paddock only warns, by the mark (A2) the paddock carries or not
-            if factory.land == .factoryPaddock {
-                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock', mas o auto-land ainda não existe (A4); segue manual"
+            // A4: auto-land only by --auto-land; the profile's land alone only warns
+            if factory.land == .factoryPaddock, !flag(r, "auto-land") {
+                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock'; o auto-land só liga com work run --auto-land; segue manual"
                     : "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
                 warning = [warning, w].compactMap { $0 }.joined(separator: "; ")
             }
         }
+        // A4: `--auto-land`, refused unless the paddock is a factory's, the committed profile has a gate and the review is on
+        if flag(r, "auto-land") {
+            loop.autoLand = try Self.loopAutoLand(factory: paddock.factory, config: fileConfig, review: review.on, noReview: noReview, max: landMax)
+            // C3b: the base the work's last attempt began on stays the reference until a new attempt takes its own
+            loop.autoLand?.baseHead = w.loop?.autoLand?.baseHead
+            // C5c: the commit the work began on carries over only from a loop that did not land (after a land, the paddock's
+            // HEAD now is where this work begins: the engine takes it)
+            loop.autoLand?.startHead = Self.loopStartHead(after: w.loop)
+        }
+        if queue { loop.state = .queued }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from, profileReviewOff: profileReviewOff) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
-        // C2: a check that already passes at the cercado's HEAD measures nothing: refused before anything reaches the card
-        if let why = await alreadyGreen(open, work: w.id, paddock: paddock, starter: t.id, dir: dir) { throw invalid(why) }
+        // C2/C5c: a check that already passes at the cercado's HEAD measures nothing: the loop's first phase finds it
+        // (`WorkLoop.greenPreCheck`), never `work run`, which a slow check would hold past the client's wait
+        loop.greenPreCheck = true
+        if let held = workRunHeld { await held() }
+        // C5c: a client that gave up (the command's `Task` cancelled) starts nothing; the `defer` above frees the paddock
+        try Task.checkCancellation()
         let id = w.id, starter = t.id, title = w.title
         // a paddock the owner trusts for loops (read now, after the awaits): no card. Everything above held all the same
         // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
         if ws.paddocks.first(where: { $0.id == pid })?.trustLoops == true {
+            if queue {
+                var l = loop; l.autoLand?.approvedAt = Date()   // C3b: the trusted paddock's run is the approval
+                try await work.update(id) { $0.loop = l }
+                return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("queued")], warning)
+            }
             guard await startLoop(id, loop, paddock: paddock, starter: starter, dir: dir) else {
                 throw ProtocolError(code: .unavailable, message: "the loop did not start")
             }
             started = true   // the reservation now belongs to the loop
             let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate, profileReviewOff: profileReviewOff)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
-            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], warning)
+            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("starting")], warning)
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
@@ -165,33 +203,30 @@ extension CommandRouter {
             let allowed = await self.confirmCard(card, wait: self.config.loopCardWait)
             let withdrawn = await self.takeLoopCard(id)
             guard allowed, !withdrawn else {
-                await self.loopDenied(paddock: pid, starter: starter, title: title, withdrawn: withdrawn)
+                await self.loopDenied(paddock: queue ? nil : pid, starter: starter, title: title, withdrawn: withdrawn)
                 return
             }
+            // C3b: the queue's order is the card's answer (`approvedAt`), not the run's `startedAt`
+            if queue { var l = loop; l.autoLand?.approvedAt = Date(); try? await self.work.update(id) { $0.loop = l }; return }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], warning)
     }
 
-    /// C2: the open tasks (not `--green-ok`) whose check exits 0 at the paddock's HEAD as it is now (the tree is clean: `work run`
-    /// refused a dirty one), run as the loop runs it (its sandbox, its env, its timeout). nil: none; else the refusal naming them.
-    /// A check that fails, times out or cannot run counts as red: it goes on.
-    private func alreadyGreen(_ tasks: [WorkTask], work id: UUID, paddock: Paddock, starter: UUID, dir: URL) async -> String? {
-        let todo = tasks.filter { $0.greenOk != true }
-        guard !todo.isEmpty else { return nil }
-        // the loop's own profile (made again by `startLoop`); removed when done, so a refusal leaves nothing behind
-        if config.sandboxHome != nil { _ = try? prepareLoopSandbox(id, paddock: paddock) }
-        defer { if config.sandboxHome != nil { SandboxLaunch.remove(id, root: config.paths.root) } }
-        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
-                                  sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
-        var green: [WorkTask] = []
-        for task in todo {
-            // ponytail: serial, the loop's own check timeout; a slow suite of checks delays `work run`, add parallelism if it bites
-            if let res = try? await host.check(task.check ?? "false", in: dir, timeout: WorkLoop.defaultCheckTimeout), res.status == 0 { green.append(task) }
-        }
-        guard !green.isEmpty else { return nil }
-        return "\(GreenCheck.reason): " + green.map { "\"\(RerailText.clean($0.title))\" [\($0.id)] check «\(RerailText.clean($0.check ?? "", max: 200))»" }.joined(separator: ", ")
-            + ". \(GreenCheck.hint.prefix(1).uppercased() + GreenCheck.hint.dropFirst()) (collie work task add … \(GreenCheck.flag))"
+    /// C5c: the commit the work began on, from its previous loop: only one that did not land (nil: the engine takes HEAD).
+    static func loopStartHead(after previous: WorkLoopState?) -> String? {
+        previous?.stopReason?.code == .landed ? nil : previous?.autoLand?.startHead
+    }
+
+    /// A4: `--auto-land`'s settings from the profile committed at the base (`config`), or why it is refused.
+    static func loopAutoLand(factory: Bool, config: ProjectWorkConfig?, review: Bool, noReview: Bool, max: Int? = nil) throws(ProtocolError) -> WorkLoopState.AutoLand {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard factory else { throw invalid("--auto-land: o cercado não está marcado como fábrica (só o dono liga: collie paddock factory <nome> on)") }
+        guard let gate = config?.gate else { throw invalid("--auto-land: o \(ProjectWorkConfig.fileName) commitado não tem 'gate'; o auto-land exige portão") }
+        guard review, !noReview else { throw invalid("--auto-land exige revisão: tire --no-review ou ligue factory.review no perfil (ou use --review)") }
+        return WorkLoopState.AutoLand(gate: gate, ci: config?.factory?.autolandCI ?? WorkLoopState.AutoLand.defaultCI,
+                                      timeout: config?.factory?.autolandTimeout ?? WorkLoopState.AutoLand.defaultTimeout,
+                                      max: max, perDay: config?.factory?.autoLandPerDay)
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
@@ -255,6 +290,24 @@ extension CommandRouter {
         guard let preference, let p = preset.map({ Preset(rawValue: $0) }) ?? t.preset else { return nil }
         let probe = TerminalRecord(id: UUID(), name: "loop", preset: p, command: command ?? (preset == nil ? t.command : nil), cwd: "/", isShepherd: false)
         return p == .claude || AgentLaunch.isClaude(probe) ? preference : nil
+    }
+
+    /// C5a: why a loop's agent must end its turns.
+    static let loopAgentRefusal = "o laço precisa de um agente com fim de turno (claude, codex ou cursor); passe --preset claude"
+
+    /// C5a: the attempt's agent, as the summon resolves it (`--preset`, else the Shepherd's, with its command), would be a
+    /// shell or a custom preset with no command: nothing that ends a turn. A command given (or the Shepherd's) is a
+    /// program the owner named: it passes (decision: `--command` is the agent, whatever the preset).
+    static func loopAgentRefused(preset: String?, command: String?, shepherd t: TerminalRecord) -> Bool {
+        let p = preset.map { Preset(rawValue: $0) ?? .custom } ?? t.preset
+        let c = command ?? (preset == nil ? t.command : nil)
+        return (p == .shell || p == .custom) && (c ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// C5a: `loopAgentRefused` for a loop's summon as `starter` (gone: not refused here, the summon refuses).
+    func loopAgentRefused(_ r: Request, as starter: UUID) -> Bool {
+        guard let me = ws.terminals.first(where: { $0.id == starter }) else { return false }
+        return Self.loopAgentRefused(preset: str(r, "preset"), command: str(r, "command"), shepherd: me)
     }
 
     /// `admin.loop-model` (app only): nil reads; "" clears; else a model id (`CollieSettings.isLoopModel`), saved.
@@ -335,8 +388,8 @@ extension CommandRouter {
     /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.
     private func takeLoopCard(_ work: UUID) -> Bool { loopCards.removeValue(forKey: work) == nil }
 
-    private func loopDenied(paddock: UUID, starter: UUID, title: String, withdrawn: Bool) async {
-        loopPaddocks.remove(paddock)
+    private func loopDenied(paddock: UUID?, starter: UUID, title: String, withdrawn: Bool) async {
+        if let paddock { loopPaddocks.remove(paddock) }
         let t = RerailText.clean(title)
         let line = withdrawn ? "[collie] O laço de \"\(t)\" foi cancelado antes da aprovação; nada rodou."
             : "[collie] O dono não aprovou o laço de \"\(t)\"; nada rodou."
@@ -356,16 +409,64 @@ extension CommandRouter {
             }
         }
         do { try await work.update(id) { $0.loop = loop } } catch { loopPaddocks.remove(paddock.id); return false }
-        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
+        runEngine(id, paddock: paddock.id, starter: starter, dir: dir)
+        return true
+    }
+
+    /// The engine of `id`'s loop, registered in `workLoops` before this returns (no await in between). `ready` (A5, a
+    /// chained work): the engine runs only once it yields true, after the router made the loop `running`; false: it
+    /// never runs (the caller undoes the entry).
+    private func runEngine(_ id: UUID, paddock pid: UUID, starter: UUID, dir: URL, ready: AsyncStream<Bool>? = nil) {
+        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: pid, dir: dir,
                                   sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let engine = WorkLoop(store: work, host: host)
-        let pid = paddock.id
         let task = Task { [weak self] in
+            if let ready {
+                var go = false
+                for await v in ready { go = v; break }
+                guard go else { return }
+            }
             _ = await engine.run(work: id, dir: dir)
-            await self?.loopEnded(id, starter: starter, paddock: pid)
+            let next = await engine.takeNext(after: id)
+            await self?.loopEnded(id, starter: starter, paddock: pid, next: next)
         }
         workLoops[id] = (engine, task, false)
-        return true
+    }
+
+    /// A5: the queued work an auto-land chain picked (`c.next`), run by a new engine of its own with the chain's starter,
+    /// on the reservation of the paddock the chain already holds (the caller frees it when this is false). The engine is
+    /// in `workLoops` before the loop turns `running` (`WorkLoop.activate`), so a `work stop` reaches it from the first
+    /// instant and no `running` loop is ever left with no engine. False: nothing started and the work stays `queued`
+    /// (the paddock gone, the sandbox not made, the work no longer queued).
+    /// C3a: and only while the paddock still carries the factory mark and its doctor at HEAD passes, checked before
+    /// any agent of the next work runs. Returns nil when it started, else why not.
+    func chainLoop(_ c: WorkLoop.Chain, paddock pid: UUID, starter: UUID) async -> String? {
+        let id = c.next
+        let notStarted = "o trabalho não pôde começar"
+        guard workLoops[id] == nil, let p = ws.paddocks.first(where: { $0.id == pid }), !p.isFolder else { return notStarted }
+        guard p.factory else { return "o cercado não está mais marcado como fábrica" }
+        if let why = await FactoryDoctorReader.headRefusal(dir: URL(fileURLWithPath: p.path)) {
+            return "o factory doctor do cercado não passa mais o mínimo (\(why))"
+        }
+        // the doctor's read awaited: the work may have been started (or the paddock changed) meanwhile
+        guard workLoops[id] == nil, ws.paddocks.first(where: { $0.id == pid })?.factory == true else { return notStarted }
+        if config.sandboxHome != nil {
+            do { _ = try prepareLoopSandbox(id, paddock: p) } catch { return notStarted }
+        }
+        // C3b: the base after the land before it, read before the engine is registered (no await between that and activate)
+        let base = (try? await loopBaseHead(pid)) ?? nil
+        guard workLoops[id] == nil else { return notStarted }
+        let (ready, go) = AsyncStream<Bool>.makeStream()
+        runEngine(id, paddock: pid, starter: starter, dir: URL(fileURLWithPath: p.path), ready: ready)
+        let at = Date()
+        try? await work.update(id) { _ = WorkLoop.activate(&$0, c, at: at, base: base) }
+        let ok = (try? await work.get(id))?.loop.map { $0.state == .running && $0.startedAt == at } ?? false
+        go.yield(ok); go.finish()
+        if !ok {
+            workLoops[id] = nil
+            SandboxLaunch.remove(id, root: config.paths.root)
+        }
+        return ok ? nil : notStarted
     }
 
     /// `admin.paddock.trust-loops` (app only: no agent command sets it): `--on` trusts the paddock for loops, without it
@@ -419,12 +520,17 @@ extension CommandRouter {
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + review
+            + (l.autoLand.map { "AUTO-LAND no fim: portão \(quoted($0.gate)), CI \(quoted($0.ci)) (até \($0.timeout) s), então paddock land por merge local, sem push. " } ?? "")
+            // A5: the chain's limits, and a queued work's wait
+            + (l.autoLand.map { "Até \($0.max ?? 1) trabalho(s) nesta execução, \($0.perDay ?? WorkLoopState.AutoLand.defaultPerDay) por dia no cercado. " } ?? "")
+            + (l.state == .queued ? "NA FILA: nada roda agora; uma corrente do auto-land roda este trabalho depois de um land do cercado. " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {
             xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
         }
         for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (t.greenOk == true ? " \(GreenCheck.flag)" : "")
+                + (t.accept.map { " aceite \(quoted($0))" + (t.acceptTimeout.map { " até \($0) s" } ?? "") } ?? "")
                 + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
                 + (i < tasks.count - 1 ? ";" : ".")
         }
@@ -433,30 +539,78 @@ extension CommandRouter {
 
     /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
     /// M9.2 (B5): a closed work of `t`'s whose loop still runs (M6.4: it ends at its next wake) is reached too.
-    func workStop(_ t: TerminalRecord) async throws -> JSONValue {
+    /// C5a: `now`: the attempt in course is dropped at once (`WorkLoop.stop(now:)`); a plain stop already asked may be
+    /// turned into it.
+    func workStop(_ t: TerminalRecord, now: Bool = false) async throws -> JSONValue {
         let active = try await work.active(terminal: t.id)
         if let w = active, let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
             await dropAppCard(card)
             return .object(["state": .string("cancelled")])
         }
+        // C3b: an approved work waiting in the auto-land queue has no engine: it leaves the queue (still `queued`, not
+        // terminal, `dequeuedAt` set: no chain activates it), still approved; its next `work run` puts it back
+        if let w = active, w.loop?.state == .queued, w.loop?.autoLand?.dequeuedAt == nil, workLoops[w.id] == nil {
+            let now = Date()
+            try await work.update(w.id) { x in
+                guard x.loop?.state == .queued, x.loop?.autoLand?.dequeuedAt == nil else { return }
+                x.loop?.autoLand?.dequeuedAt = now
+                x.notes.append(WorkNote(at: now, text: "[loop] auto-land: tirado da fila (work stop): segue aprovado, fora da fila; "
+                    + "a corrente não o roda; um novo work run o põe de volta"))
+            }
+            // the state as it is now: a chain that activated it during the update is a running loop, stopped below
+            if try await work.get(w.id)?.loop?.autoLand?.dequeuedAt == now { return .object(["state": .string("dequeued")]) }
+        }
         var id = active.flatMap { workLoops[$0.id] == nil ? nil : $0.id }
         if id == nil {
             for k in Array(workLoops.keys) {
                 if try await work.get(k)?.terminalId == t.id { id = k; break }
+                // A5: a work an auto-land chain runs is the chain starter's to stop too
+                if let l = workLoops[k], (l.engine.host as? RouterLoopHost)?.starter == t.id { id = k; break }
             }
         }
-        guard let id, let l = workLoops[id], !l.stopping else {
+        guard let id, let l = workLoops[id], !l.stopping || now else {
+            if await releaseOrphanReservation(of: t) { return .object(["state": .string("released")]) }
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }
         workLoops[id]?.stopping = true
-        await l.engine.stop(work: id)
+        await l.engine.stop(work: id, now: now)
         return .object(["state": .string("stopped")])
     }
 
+    /// C5c: the paddock of `t` reserved (`loopPaddocks`) with no loop of it running (`workLoops`) and no card of it
+    /// waiting (`loopCards`): a reservation nothing will free. Freed; true when it was.
+    /// ponytail: a `work run` still between its reservation and its card counts too; a second run then is refused by
+    /// the work's own checks (its loop running) or simply waits its turn
+    private func releaseOrphanReservation(of t: TerminalRecord) async -> Bool {
+        guard let pid = t.paddockId, loopPaddocks.contains(pid) else { return false }
+        for k in Array(workLoops.keys) + Array(loopCards.keys) where (try? await work.get(k))?.paddockId == pid { return false }
+        guard loopPaddocks.contains(pid), !workLoops.values.contains(where: { ($0.engine.host as? RouterLoopHost)?.paddock == pid }) else { return false }
+        loopPaddocks.remove(pid)
+        return true
+    }
+
     /// M3.6: the lanes the engine left (it removes its own: none, but for a fall in between) go before the loop's profile does.
-    func loopEnded(_ id: UUID, starter: UUID, paddock: UUID) async {
-        workLoops[id] = nil; loopPaddocks.remove(paddock)
+    /// A5: `next`, the work the auto-land chain picked: it starts first, on this loop's reservation of the paddock (never
+    /// freed and taken again), before this loop's notice (whose quiet wait can hold for 30 min). A `work stop` that
+    /// came after the engine's end, or the daemon's cancel, ends the chain here: the work stays `queued`.
+    func loopEnded(_ id: UUID, starter: UUID, paddock: UUID, next: WorkLoop.Chain? = nil) async {
+        let halted = workLoops[id]?.stopping == true || Task.isCancelled
+        workLoops[id] = nil
+        var chained = false, refused: String?
+        if let next, !halted { refused = await chainLoop(next, paddock: paddock, starter: starter); chained = refused == nil }
+        if !chained { loopPaddocks.remove(paddock) }
+        // the engine left the owner's line to the chain's next work: it did not start, so this loop tells, counting its lands
+        if let next, !chained, let w = try? await work.get(id) {
+            let title = RerailText.clean((try? await work.get(next.next))?.title ?? "?", max: 80)
+            let why = halted ? "a corrente foi parada (work stop)" : refused ?? "o trabalho não pôde começar"
+            try? await work.update(id) { $0.notes.append(WorkNote(at: Date(), text: "[loop] auto-land: \(why); \"\(title)\" segue na fila")) }
+            let line = AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: halted ? .init(.requested) : w.loop?.stopReason,
+                                                 left: 0, path: w.loop?.autoLand?.summary, error: nil, landed: next.chained)
+            // C2: the whole line through the scrub, as the engine's own (`AutoLandSummary.ownerLine`)
+            let all = LotBoards.scrub(line + " Próximo da fila: \"\(title)\" não começou (\(why)) e segue na fila.", secrets: await auth.secrets())
+            await hub.emit(.notify(starter, message: String(all.prefix(2000))))
+        }
         if let w = try? await work.get(id) {
             await removeLanes(of: w)
             if w.loop?.lanes != nil { try? await work.update(id) { $0.loop?.lanes = nil } }
@@ -726,6 +880,63 @@ extension CommandRouter {
 
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
+    /// A4: the paddock carries the factory mark (A2) now.
+    func loopFactory(_ paddock: UUID) -> Bool { ws.paddocks.first { $0.id == paddock }?.factory == true }
+
+    /// C3a: the paddock's auto-lands (`Paddock.autoLands`), the daily cap's count.
+    func loopAutoLands(_ paddock: UUID) -> [Date] { ws.paddocks.first { $0.id == paddock }?.autoLands ?? [] }
+
+    /// C3b: the commit of the paddock's base branch in its repository, now (nil: a folder paddock, no base). A throw:
+    /// the paddock is gone or git could not read the branch.
+    func loopBaseHead(_ paddock: UUID) async throws(ProtocolError) -> String? {
+        guard let f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
+        guard f.kind == .worktree, !f.baseBranch.isEmpty else { return nil }
+        let r = try? await GitRunner.run(["rev-parse", "--verify", "-q", "refs/heads/\(f.baseBranch)^{commit}"], in: URL(fileURLWithPath: f.repoRoot), timeout: .seconds(30))
+        guard let r, r.status == 0 else { throw ProtocolError(code: .internal, message: "git rev-parse \(f.baseBranch) failed") }
+        return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A4, `work run --auto-land`: `paddock land` of the loop's paddock by the command's own path (`landPaddock`), only
+    /// `merge` (never a push nor a PR), only while it is a factory's. The base branch's commit before and after.
+    /// C3b: `base`, the base's commit the land was judged on: another one under the claim, right before the merge, throws
+    /// `.conflict` and merges nothing.
+    func loopLand(_ paddock: UUID, mode: LandMode, message: String, base: String? = nil) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
+        guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
+        guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
+        guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
+        // C4a: the base before, for a throw that comes after the merge (inside `PaddockManager.land`): it counts too
+        // ponytail: read before the land's claim; another paddock landing on the same base in between counts here as
+        // well (the cap errs toward stopping)
+        let start = try? await loopBaseHead(paddock)
+        do {
+            // C2: a failure after the merge (the save) comes back as `late`, never as a throw: the base moved
+            let (res, late) = try await landPaddockKeepingLate(&f, mode: .merge, message: message, base: base)
+            // C3a: `before` is the base's HEAD read under the land's claim right before the merge (another paddock landing
+            // on the same base before it is in it); equal to `after`: the merge made no commit, nothing is counted
+            guard let after = res.commit, let before = res.before else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
+            let unrecorded = before == after ? nil : await recordAutoLand(paddock)
+            return (before, after, late.map { ($0 as? ProtocolError)?.message ?? "\($0)" }, unrecorded)
+        } catch {
+            let e = (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)")
+            // C4a: the merge happened (the base moved) before the throw: a land all the same, in the cap
+            if e.code != .conflict, let start, let now = try? await loopBaseHead(paddock), now != start { _ = await recordAutoLand(paddock) }
+            throw e
+        }
+    }
+
+    /// C4a: a land of `paddock` now, in its daily record (`Paddock.autoLands`), persisted. nil: recorded; else why it
+    /// could not be written (the record stays in memory, so this daemon still counts it).
+    func recordAutoLand(_ paddock: UUID) async -> String? {
+        guard let i = ws.paddocks.firstIndex(where: { $0.id == paddock }) else { return "o cercado sumiu" }
+        let now = Date()
+        ws.paddocks[i].autoLands = (ws.paddocks[i].autoLands ?? []).filter { $0 > now.addingTimeInterval(-86_400) } + [now]
+        do {
+            if landRecordFails { throw ProtocolError(code: .internal, message: "a gravação do registro falhou (teste)") }
+            try await persist()
+            return nil
+        } catch { return (error as? ProtocolError)?.message ?? "\(error)" }
+    }
+
     func loopDismiss(_ id: UUID) async {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
         loopReviewers.remove(id)
@@ -868,7 +1079,9 @@ struct RouterLoopHost: LoopHost {
     }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, lane: lane?.path)
+        let request = summonRequest(name, loop)
+        if await router.loopAgentRefused(request, as: starter) { throw ProtocolError(code: .invalidArgs, message: CommandRouter.loopAgentRefusal) }
+        let id = try await router.loopSummon(request, as: starter, lane: lane?.path)
         guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
@@ -911,6 +1124,7 @@ struct RouterLoopHost: LoopHost {
         return UsageLimit.detect(s.lines, quiet: s.quiet)
     }
     func screen(_ terminal: UUID) async -> [String]? { await router.asks.screen(terminal, quiet: .seconds(10))?.lines }
+    func secrets() async -> Set<String> { await router.auth.secrets() }
     func tokens(_ terminal: UUID) async -> TokenCount? { await router.attemptTokens(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
     func anyoneWorking() async -> String? { await router.loopAnyoneWorking(paddock: paddock, starter: starter, work: work, dir: dir) }
@@ -919,6 +1133,15 @@ struct RouterLoopHost: LoopHost {
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
+    func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
+        try await router.loopLand(paddock, mode: mode, message: message, base: base)
+    }
+    func notifyOwner(_ line: String) async { await router.hub.emit(.notify(starter, message: String(line.prefix(2000)))) }
+    /// C3a: read at the paddock's HEAD, never from the tree the agent edits.
+    func doctorRefusal() async -> String? { await FactoryDoctorReader.headRefusal(dir: dir) }
+    func autoLands() async -> [Date] { await router.loopAutoLands(paddock) }
+    func baseHead() async throws(ProtocolError) -> String? { try await router.loopBaseHead(paddock) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
     func profile() throws(ProtocolError) -> URL? {

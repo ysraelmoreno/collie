@@ -80,7 +80,7 @@ struct LoopSection: Equatable {
         }
     }
     private static func shortPhase(_ p: WorkLoopState.Phase) -> String {
-        switch p { case .agent: "agente"; case .check: "check"; case .gate: "portão"; case .review: "revisão" }
+        switch p { case .agent: "agente"; case .check: "check"; case .gate: "portão"; case .review: "revisão"; case .preCheck: "pré-check" }
     }
     private static func hourMinute(_ d: Date, _ tz: TimeZone) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = tz; f.dateFormat = "HH:mm"
@@ -120,6 +120,7 @@ struct LoopCard: Equatable {
         case .check?: "check rodando"
         case .gate?: "portão rodando"
         case .review?: "revisão rodando"
+        case .preCheck?: "verificando checks que já passam"
         case nil: "preparando"
         }
         return LoopCard(title: w.title, done: s.rows.filter { $0.state == .done }.count, total: s.rows.count,
@@ -147,7 +148,9 @@ struct HistoryRow: Equatable, Identifiable {
 
     init(_ e: HistoryEntry, timeZone: TimeZone = .current) {
         id = e.id; title = e.title
-        outcome = !(e.stopReason ?? "").isEmpty ? .stopped : e.deferred > 0 ? .withDeferred : .complete
+        // A5: the engine's one rule of "finished" (`Stop.finishes`), never a list of its own
+        let stopped = !(e.stopReason ?? "").isEmpty && !WorkLoopState.Stop.finishes(code: e.stopReason, detail: e.stopDetail)
+        outcome = stopped ? .stopped : e.deferred > 0 ? .withDeferred : .complete
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = "dd/MM HH:mm"
         whenText = f.string(from: e.closedAt)
         resultText = "\(e.done)/\(e.total) feitas" + (e.deferred > 0 ? " · \(e.deferred) " + (e.deferred == 1 ? "adiada" : "adiadas") : "")
@@ -171,6 +174,22 @@ struct HistoryRow: Equatable, Identifiable {
         case .internal?: return "erro interno"
         case .adoptionFailed?: return "adoção falhou"
         case .usageLimit?: return "limite de uso do modelo"
+        case .landed?: return "integrado (auto-land)"
+        case .landGateRed?: return "auto-land: portão vermelho"
+        case .landReviewVeto?: return "auto-land: revisão sem aprovação"
+        case .landAcceptRed?: return "auto-land: aceite em runtime vermelho"
+        case .landCiRed?: return "auto-land: CI vermelho"
+        case .landDirty?: return "auto-land: árvore suja"
+        case .landConflict?: return "auto-land: land falhou"
+        case .landNotFactory?: return "auto-land: cercado não é fábrica"
+        case .queueEmpty?: return "auto-land: fila vazia"
+        case .landDailyCap?: return "auto-land: teto diário"
+        case .landDoctorRegressed?: return "auto-land: doctor regrediu"
+        case .landNothing?: return "auto-land: nada a integrar"
+        case .landBaseMoved?: return "auto-land: base mudou"
+        case .landRegistryFailed?: return "auto-land: registro do land não gravado"
+        case .landTasksNotDone?: return "auto-land: tarefas não feitas"
+        case .checkAlreadyGreen?: return "check já passa"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

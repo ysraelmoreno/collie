@@ -57,6 +57,8 @@ public struct WorkArchive: Codable, Sendable, Equatable {
     public var openedAt: Date?, closedAt: Date?
     /// The daemon's raw stop code (`Stop.Code`), kept as text so a newer code is still shown.
     public var stopReason: String?
+    /// A5: the stop's detail (`Stop.finishes` needs it: `maxReached` with one is a chain's normal end); nil: none.
+    public var stopDetail: String?
     public var tasks: [Task], timeline: [Event], notes: [String]
     public var loopSummary: String
     public var reconstructed: Bool, truncated: Bool
@@ -66,14 +68,14 @@ public struct WorkArchive: Codable, Sendable, Equatable {
     public init(id: String, title: String = "", paddock: String = "", branch: String = "", terminal: String = "",
                 openedAt: Date? = nil, closedAt: Date? = nil, stopReason: String? = nil, tasks: [Task] = [],
                 timeline: [Event] = [], notes: [String] = [], loopSummary: String = "", reconstructed: Bool = false, truncated: Bool = false,
-                paddockId: String? = nil, terminalId: String? = nil) {
+                paddockId: String? = nil, terminalId: String? = nil, stopDetail: String? = nil) {
         version = 1; self.id = id; self.title = title; self.paddock = paddock; self.branch = branch; self.terminal = terminal
         self.openedAt = openedAt; self.closedAt = closedAt; self.stopReason = stopReason; self.tasks = tasks
         self.timeline = timeline; self.notes = notes; self.loopSummary = loopSummary
         self.reconstructed = reconstructed; self.truncated = truncated
-        self.paddockId = paddockId; self.terminalId = terminalId
+        self.paddockId = paddockId; self.terminalId = terminalId; self.stopDetail = stopDetail
     }
-    private enum K: String, CodingKey { case version, id, title, paddock, branch, terminal, openedAt, closedAt, stopReason, tasks, timeline, notes, loopSummary, reconstructed, truncated, paddockId, terminalId }
+    private enum K: String, CodingKey { case version, id, title, paddock, branch, terminal, openedAt, closedAt, stopReason, stopDetail, tasks, timeline, notes, loopSummary, reconstructed, truncated, paddockId, terminalId }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         version = (try? c.decode(Int.self, forKey: .version)) ?? 1
@@ -81,7 +83,7 @@ public struct WorkArchive: Codable, Sendable, Equatable {
         title = (try? c.decode(String.self, forKey: .title)) ?? ""; paddock = (try? c.decode(String.self, forKey: .paddock)) ?? ""
         branch = (try? c.decode(String.self, forKey: .branch)) ?? ""; terminal = (try? c.decode(String.self, forKey: .terminal)) ?? ""
         openedAt = try? c.decode(Date.self, forKey: .openedAt); closedAt = try? c.decode(Date.self, forKey: .closedAt)
-        stopReason = try? c.decode(String.self, forKey: .stopReason)
+        stopReason = try? c.decode(String.self, forKey: .stopReason); stopDetail = try? c.decode(String.self, forKey: .stopDetail)
         // one malformed task or event is dropped, the rest stand
         tasks = ((try? c.decode([Lossy<Task>].self, forKey: .tasks)) ?? []).compactMap(\.value)
         timeline = ((try? c.decode([Lossy<Event>].self, forKey: .timeline)) ?? []).compactMap(\.value)
@@ -144,7 +146,8 @@ extension WorkArchive {
                            stopReason: w.loop?.stopReason?.code.rawValue, tasks: tasks, timeline: timeline,
                            notes: w.notes.suffix(notesMax).map(\.text), loopSummary: loopSummary,
                            reconstructed: reconstructed, truncated: truncated,
-                           paddockId: w.paddockId?.uuidString.lowercased(), terminalId: w.terminalId.uuidString.lowercased()).fitted()
+                           paddockId: w.paddockId?.uuidString.lowercased(), terminalId: w.terminalId.uuidString.lowercased(),
+                           stopDetail: w.loop?.stopReason?.detail).fitted()
     }
 
     /// M10.3: per task, its attempts the journal still has (oldest first): the counts its `agentDismissed` carries,

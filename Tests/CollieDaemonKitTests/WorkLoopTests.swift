@@ -51,6 +51,9 @@ actor LoopFakeHost: LoopHost {
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?
     func setProbe(_ p: @escaping @Sendable (String) async -> Void) { probe = p }
+    /// C5c: answers a check (command, timeout) in place of bash; nil from it: bash runs (a test holds, counts or times out a check).
+    var checkStub: (@Sendable (String, Duration) async throws(ProtocolError) -> ProcessResult?)?
+    func setCheckStub(_ s: @escaping @Sendable (String, Duration) async throws(ProtocolError) -> ProcessResult?) { checkStub = s }
     /// In order: "dismiss <name>", "check".
     var events: [String] = []
     /// Another terminal of the paddock in a turn (blocks the loop's reset).
@@ -92,6 +95,59 @@ actor LoopFakeHost: LoopHost {
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
     func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
+    /// A4 (AutoLandTests): the paddock's factory mark, every land asked (only `merge` is accepted: anything else is an
+    /// issue and refused), the error a land throws (nil: it lands), and each line the owner got (`notifyOwner`).
+    var isFactory = false, lands: [LandMode] = [], landError: ProtocolError?, ownerNotices: [String] = []
+    static let landedBefore = String(repeating: "a", count: 40), landedAfter = String(repeating: "b", count: 40)
+    func setFactory(_ f: Bool) { isFactory = f }
+    func setLandError(_ e: ProtocolError?) { landError = e }
+    func factoryPaddock() async -> Bool { isFactory }
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
+        lands.append(mode); landBases.append(base)
+        guard mode == .merge else { Issue.record("land by \(mode)"); throw ProtocolError(code: .invalidArgs, message: "only merge") }
+        if let landError { throw landError }
+        await landHook?()
+        if let (router, paddock) = landRouter { return try await router.loopLand(paddock, mode: mode, message: message, base: base) }
+        // C3a: as the router does: a merge with no commit is no land and is not recorded
+        if landsNothing { return (Self.landedAfter, Self.landedAfter, nil, nil) }
+        landedAt.append(now())
+        return (Self.landedBefore, Self.landedAfter, landLate, landUnrecorded)
+    }
+    /// C2: what fails after the merge (the router's save): the land happened all the same.
+    var landLate: String?
+    func setLandLate(_ l: String?) { landLate = l }
+    /// C4a: the land merged but its record (`Paddock.autoLands`) could not be written.
+    var landUnrecorded: String?
+    func setLandUnrecorded(_ u: String?) { landUnrecorded = u }
+    /// C3a: the paddock's durable land record (`Paddock.autoLands` in the router), and a land whose merge makes no commit.
+    var landedAt: [Date] = [], landsNothing = false
+    func autoLands() async -> [Date] {
+        if let (router, paddock) = landRouter { return await router.loopAutoLands(paddock) }
+        return landedAt
+    }
+    /// C3b: the land, its record and the base are a real router's (`loopLand`, `Paddock.autoLands`, `loopBaseHead`).
+    var landRouter: (CommandRouter, UUID)?
+    func setLandRouter(_ r: CommandRouter, _ paddock: UUID) { landRouter = (r, paddock) }
+    /// C3b: the base branch's commit (nil: no base, the checks against it skipped); `baseError`: its read throws.
+    var base: String?, baseError: ProtocolError?
+    func setBase(_ b: String?) { base = b }
+    func setBaseError(_ e: ProtocolError?) { baseError = e }
+    func baseHead() async throws(ProtocolError) -> String? {
+        if let baseError { throw baseError }
+        if let (router, paddock) = landRouter { return try await router.loopBaseHead(paddock) }
+        return base
+    }
+    /// C3b: the `base` each land was asked to find; `landHook` runs right before the land (the base moving then).
+    var landBases: [String?] = [], landHook: (@Sendable () async -> Void)?
+    func setLandHook(_ h: @escaping @Sendable () async -> Void) { landHook = h }
+    func addLands(_ at: [Date]) { landedAt += at }
+    func setLandsNothing(_ on: Bool) { landsNothing = on }
+    func notifyOwner(_ line: String) async { ownerNotices.append(line) }
+    /// A5: why the paddock's factory doctor no longer passes (nil: it passes).
+    var doctorWhy: String?, doctorProbe: (@Sendable () async -> Void)?
+    /// `probe` runs inside the doctor's read (a `work stop` that lands during it).
+    func setDoctor(_ why: String?, probe: (@Sendable () async -> Void)? = nil) { doctorWhy = why; doctorProbe = probe }
+    func doctorRefusal() async -> String? { await doctorProbe?(); return doctorWhy }
     /// M3.8: names a live terminal already has (the attempt's agent takes another).
     var taken: Set<String> = []
     func setTaken(_ n: Set<String>) { taken = n }
@@ -123,6 +179,9 @@ actor LoopFakeHost: LoopHost {
     /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
     var reviewTimeouts: Set<String> = []
     func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    /// C1 (P1-a): reviewers (by name or persona) whose ask throws this error, as the router's would.
+    var reviewErrors: [String: ProtocolError] = [:]
+    func setReviewError(_ who: String, _ e: ProtocolError) { reviewErrors[who] = e }
     /// P1: answers (by name or persona) taken one per ask, before `reviewAnswers` (a retried review gets the next one).
     var reviewAnswerQueue: [String: [String?]] = [:]
     func queueReviewAnswers(_ who: String, _ texts: [String?]) { reviewAnswerQueue[who] = texts }
@@ -159,6 +218,7 @@ actor LoopFakeHost: LoopHost {
             snapshotFiles[name] = files
         }
         if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
+        if let e = reviewErrors[name] ?? reviewErrors[persona] { throw e }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
         let nonce = Self.nonce(in: prompt)
         let queued = reviewAnswerQueue[name] != nil ? name : persona
@@ -196,7 +256,7 @@ actor LoopFakeHost: LoopHost {
             return s.source
         }
         // P2: an ask that never reached the agent (one per ask, before the script; the name is the same after a retry)
-        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); throw e }
+        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); advance(askErrorAdvance); throw e }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -211,6 +271,13 @@ actor LoopFakeHost: LoopHost {
     /// P2: errors the attempt's ask throws (by name, one per ask) before its script runs, and who got one.
     var askErrors: [String: [ProtocolError]] = [:], notDelivered: [String] = []
     func queueAskErrors(_ name: String, _ e: [ProtocolError]) { askErrors[name] = e }
+    /// C1 (P2-a/b): seconds the fake clock moves on at each queued ask error (a prompt not delivered after a long wait).
+    var askErrorAdvance: TimeInterval = 0
+    func setAskErrorAdvance(_ s: TimeInterval) { askErrorAdvance = s }
+    /// C1 (P2-d): the daemon's live tokens, as `secrets` reads them.
+    var liveSecrets: Set<String> = []
+    func setSecrets(_ s: Set<String>) { liveSecrets = s }
+    func secrets() async -> Set<String> { liveSecrets }
     /// P2: each agent's screen (by name), as `screen` reads it.
     var screens: [String: [String]] = [:]
     func setScreen(_ name: String, _ lines: [String]) { screens[name] = lines }
@@ -301,6 +368,7 @@ actor LoopFakeHost: LoopHost {
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)
+        if let stub = checkStub, let r = try await stub(command, timeout) { return r }
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }
@@ -335,7 +403,8 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil, precheck: String? = nil, escalate: [String]? = nil,
-         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0) async throws {
+         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0,
+         stopGrace: Duration = WorkLoop.defaultStopGrace) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
@@ -349,7 +418,7 @@ struct LoopRig {
         try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
-                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero)
+                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero, stopGrace: stopGrace)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
@@ -706,7 +775,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     }
 
     @Test func gateTimeoutFails() async throws {
-        let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 5", checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 30", checkTimeout: .seconds(3)); defer { r.cleanup() }
         await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].lastFailure == "gate timed out")

@@ -83,6 +83,9 @@ public struct WorkSummary: Codable, Sendable, Equatable {
     /// F2 R4: one line per task the review judged ("<title>: parecer: sem veto (personas: a, b; n achados)"); nil (and
     /// absent from the JSON and the markdown) when no review ran.
     public var reviews: [String]?
+    /// A6: the text of the loop's auto-land summary file (`loop.autoLand.summary`), at most `AutoLandSummary.shownMax`
+    /// characters; nil (and absent) when the loop wrote none. What `work summary` and the app's card show.
+    public var autoLand: String?
 
     // ponytail: `terminalAlive` is accepted for the interface but unused: job liveness is already in the job states
     // (`gone`/`unknown`, set by the sweeps); use it if a live terminal should downgrade `running` jobs.
@@ -105,7 +108,8 @@ public struct WorkSummary: Codable, Sendable, Equatable {
         let reviews = w.tasks.compactMap { t in t.review.map { c(t.title) + ": " + c($0) } }
         return WorkSummary(title: c(w.title), active: w.closedAt == nil, closedBy: w.closedBy, done: done, later: later,
                            notDone: notDone, stoppedAt: stopped, loop: LoopStats(work: w), tokens: WorkStatusText.tokens(w),
-                           reviews: reviews.isEmpty ? nil : reviews)
+                           reviews: reviews.isEmpty ? nil : reviews,
+                           autoLand: w.loop?.autoLand?.summary.flatMap { AutoLandSummary.read($0) })
     }
 
     /// Inline markdown characters backslash-escaped: the panel and the chat render markdown, and a task title must not
@@ -135,6 +139,8 @@ public struct WorkSummary: Codable, Sendable, Equatable {
                 lines += ["", "**\(head)**"] + items.prefix(k).map { "- " + $0 }
                 if items.count > k { lines.append("- … e mais \(items.count - k)") }
             }
+            // A6: the file's own text, as it is, in a fence (``` inside it cannot close the fence)
+            if let autoLand { lines += ["", "**Auto-land**", "```", autoLand.replacingOccurrences(of: "```", with: "'''"), "```"] }
             let text = lines.joined(separator: "\n")
             if text.count <= Self.limit || k == 0 { return text }
         }

@@ -86,6 +86,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
                              running: true)
         case .stopped: return LoopBadge(text: "laço parado (\(l.used) tentativas)", running: false)
         case .finished: return LoopBadge(text: "laço terminou (\(l.used) tentativas)", running: false)
+        case .queued: return LoopBadge(text: l.autoLand?.dequeuedAt != nil ? "aprovado, fora da fila (work stop)" : "na fila do auto-land (aprovado)", running: false)
         }
     }
     /// One line under a task that a loop ran: "2 tentativas · <lastFailure>" (nil when it has neither).

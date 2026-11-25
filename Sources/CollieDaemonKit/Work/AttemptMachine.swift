@@ -6,7 +6,7 @@ import CollieCore
 /// `attempt()` is the interpreter: it carries each effect out and hands the resulting event back, until `finished`.
 /// In every list `reduce` returns, only the last effect answers with an event (`Effect.answers`).
 enum AttemptMachine {
-    enum Phase: Sendable, Equatable, CaseIterable { case summoning, turn, waitingCommit, checking, gating, reviewing, deciding, finished }
+    enum Phase: Sendable, Equatable, CaseIterable { case summoning, turn, waitingCommit, checking, gating, accepting, reviewing, deciding, finished }
 
     /// What `measureFacts` read from the tree once the agent is gone.
     struct Measured: Sendable, Equatable {
@@ -24,7 +24,8 @@ enum AttemptMachine {
         case turnEnded(source: AskResult.Source), turnTimedOut(String), turnFailed(String)
         /// P2: the ask timed out before its prompt reached the agent (`AskCoordinator.promptNotDelivered`): the message,
         /// and the machine's load average then (for the owner's note when the free retries are spent).
-        case promptNotDelivered(String, load: Double)
+        /// C1 (P2-a): `fits`: what is left of the budget holds another try of the same attempt (the interpreter's sum).
+        case promptNotDelivered(String, load: Double, fits: Bool = true)
         /// M5.3: the agent sits in the model's usage-limit dialog (its text, short: `UsageLimit.excerpt`).
         case usageLimit(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
@@ -34,6 +35,9 @@ enum AttemptMachine {
         case precheckDone(status: Int32?, tail: String)
         /// The daemon stops / the work closed / the Shepherd that started the loop is gone: no verdict.
         case cancelled, workClosed, starterGone
+        /// C5a: `work stop --now` (or a plain stop past its grace): the attempt is dropped whatever its phase, judged by
+        /// nothing. `others`: a terminal of the paddock still working (its name): then nothing is discarded either.
+        case stopForced(others: String?)
         /// nil: the attempt failed before its check (summon or ask), nothing was measured.
         case measured(Measured?)
         /// `status` nil: timed out. `broken`: it could not even start (the whole reason).
@@ -41,6 +45,9 @@ enum AttemptMachine {
         /// The attempt did not change a script the gate runs / it did (why): `WorkLoop.tampered`.
         case gateClear, gateSkipped(String)
         case gateDone(status: Int32?, broken: String?)
+        /// F3: the attempt did not change a file the task's acceptance names / it did (why); then how it ran.
+        case acceptClear, acceptSkipped(String)
+        case acceptDone(status: Int32?, broken: String?)
         /// After the check or the gate: it `moved` HEAD; `reset`: there was something to put back (journal only).
         case settled(moved: Bool, reset: Bool)
         /// Another terminal of the paddock still working (its name), or none.
@@ -75,6 +82,9 @@ enum AttemptMachine {
         /// `loop.phase`, what `work status` and the app read.
         case show(WorkLoopState.Phase?)
         case runCheck, guardGate, runGate
+        /// F3: the task's `--accept`, after the check and the gate (the agent already gone): `acceptClear`/`acceptSkipped`,
+        /// then `acceptDone`.
+        case guardAccept, runAccept
         /// Gives another working terminal `othersWait` to finish: `blocked`.
         case awaitOthers
         case settle(reset: Bool)
@@ -100,7 +110,7 @@ enum AttemptMachine {
         /// Carrying it out answers with an event.
         var answers: Bool {
             switch self {
-            case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .runReview, .decide: true
+            case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .guardAccept, .runAccept, .awaitOthers, .settle, .runReview, .decide: true
             case .dismiss, .show, .promptRetry, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
@@ -129,9 +139,12 @@ enum AttemptMachine {
         /// P2: the free retries the TASK already spent (a prompt not delivered), across its attempts: at most
         /// `maxPromptRetries`; past them a prompt not delivered is a turn timed out, as before.
         var promptRetries: Int
+        /// F3: the task has a runtime acceptance (`--accept`): an attempt that passes its check and its gate runs it.
+        let hasAccept: Bool
 
         init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil, precheck: Bool = false,
-             reviewer: Bool = false, reviewRejectsInRow: Int = 0, promptRetries: Int = 0) {
+             reviewer: Bool = false, reviewRejectsInRow: Int = 0, promptRetries: Int = 0, accept: Bool = false) {
+            hasAccept = accept
             self.task = task; self.n = n; self.before = before; judged = before; hasPrecheck = precheck; self.reviewer = reviewer
             self.promptRetries = promptRetries
             self.name = name ?? AgentNaming.name(work: "", task: "", taskId: task, attempt: n, lane: nil)
@@ -148,6 +161,11 @@ enum AttemptMachine {
         case (_, .cancelled): return leave(&s, [.uncount, .stopLoop(.init(.cancelled))])
         case (_, .workClosed): return leave(&s, [.reopen(job: "work closed"), .stopLoop(.init(.workGone))])
         case (_, .starterGone): return leave(&s, [.reopen(job: "starter gone"), .stopLoop(.init(.starterGone))])
+        // C5a: the agent goes, its patch is discarded (never an adoption's, nor under another terminal at work), the task
+        // reopens and the loop stops as asked
+        case (_, .stopForced(let others)):
+            let patch: [Effect] = s.adopted ? [] : others.map { [.note(stopForcedKeptNote($0))] } ?? [.discard, .journal(.discarded, "\(s.task)-\(s.n).patch")]
+            return leave(&s, patch + [.reopen(job: "stop forçado"), .stopLoop(.init(.requested))])
 
         case (.summoning, .started):
             return (s, [.journal(.attemptStarted, nil), .summon])
@@ -172,15 +190,22 @@ enum AttemptMachine {
         // P2: the attempt's INITIAL prompt never reached the agent: nothing was tried, so the agent goes and the same
         // attempt starts over with a new one, not counted, at most `maxPromptRetries` times per task. A nudge's prompt
         // not delivered is not this: its agent already worked a turn, the check decides as for any timeout
-        case (.turn, .promptNotDelivered(let message, let load)) where s.agent != nil && !s.nudged && !s.prechecked:
+        case (.turn, .promptNotDelivered(let message, let load, let fits)) where s.agent != nil && !s.nudged && !s.prechecked:
             guard s.promptRetries < maxPromptRetries else {
                 s.phase = .waitingCommit
                 return (s, [.journal(.turnEnded, timeoutDetail(message)), .note(overloadNote(s, load)), .lookForCommit])
             }
+            // C1 (P2-a): a free retry with no budget to run in is no retry: the loop stops on the budget, the attempt
+            // not counted, the free retries kept and the load not blamed
+            guard fits else {
+                s.agent = nil; s.phase = .finished
+                return (s, [.journal(.turnEnded, timeoutDetail(message)), .dismiss, .journal(.agentDismissed, nil), .uncount,
+                            .note(promptRetryBudgetNote(s)), .stopLoop(.init(.budgetSpent))])
+            }
             s.promptRetries += 1; s.agent = nil; s.phase = .summoning
             return (s, [.journal(.turnEnded, timeoutDetail(message)), .dismiss, .journal(.agentDismissed, nil),
                         .journal(.promptRetry, "\(s.promptRetries)/\(maxPromptRetries)"), .promptRetry("\(s.promptRetries)/\(maxPromptRetries)"), .summon])
-        case (.turn, .promptNotDelivered(let message, _)):
+        case (.turn, .promptNotDelivered(let message, _, _)):
             s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, timeoutDetail(message)), .lookForCommit])
         // M5.3: the turn would only end at its timeout and the next attempts would hit the same limit: not counted,
@@ -238,7 +263,7 @@ enum AttemptMachine {
             if moved { s.facts.moves.append("o check moveu o HEAD") }
             let fx = resetLine(moved, reset), f = s.facts
             // the gate: only when nothing else already fails the attempt (no budget spent on a lost one)
-            guard f.hasGate, f.broken == nil, f.checkStatus == 0, f.committed, !f.dirty, f.moves.isEmpty else { return verdict(&s, fx) }
+            guard f.hasGate, f.broken == nil, f.checkStatus == 0, f.committed, !f.dirty, f.moves.isEmpty else { return accepting(&s, fx) }
             if f.blockedBy != nil {
                 s.facts.gate = "gate did not run (tree not reset)"
                 return verdict(&s, fx + [.journal(.gateFinished, "não rodou")])
@@ -257,6 +282,23 @@ enum AttemptMachine {
             return (s, [.journal(.gateFinished, ran(status, broken)), .awaitOthers])
         case (.gating, .settled(let moved, let reset)):
             if moved { s.facts.moves.append("o portão moveu o HEAD") }
+            return accepting(&s, resetLine(moved, reset))
+
+        // F3: the acceptance judges the result running, on the tree the check and the gate judged
+        case (.checking, .acceptSkipped(let why)), (.gating, .acceptSkipped(let why)):
+            s.facts.accept = why
+            return verdict(&s, [.journal(.acceptFailed, "não rodou")])
+        case (.checking, .acceptClear), (.gating, .acceptClear):
+            s.phase = .accepting
+            return (s, [.show(.check), .journal(.acceptStarted, nil), .runAccept])
+        case (.accepting, .acceptDone(let status, let broken)):
+            s.facts.accept = broken ?? WorkLoop.failure("accept", status)
+            return (s, [.journal(broken == nil && status == 0 ? .acceptPassed : .acceptFailed, ran(status, broken)), .awaitOthers])
+        case (.accepting, .blocked(let who)):
+            s.facts.blockedBy = who
+            return (s, [.settle(reset: who == nil)])
+        case (.accepting, .settled(let moved, let reset)):
+            if moved { s.facts.moves.append("o aceite moveu o HEAD") }
             return verdict(&s, resetLine(moved, reset))
 
         // F2 R3: a veto is a failure as any other (retry, defer on the last try or after two in a row)
@@ -304,12 +346,22 @@ enum AttemptMachine {
         }
     }
 
+    /// C5a: a forced stop found another terminal working: the tree is not reset under it.
+    static func stopForcedKeptNote(_ who: String) -> String {
+        "[loop] stop forçado: '\(who)' trabalha no cercado; a tentativa não foi descartada, worktree intocada"
+    }
+
     /// P2: free retries (a prompt not delivered) per task; the next one counts as a normal attempt.
     static let maxPromptRetries = 2
 
     /// P2: the journal's `turnEnded` detail of a timeout: its message, clean, at most 120 characters.
     static func timeoutDetail(_ message: String) -> String {
         message.isEmpty ? "timeout" : "timeout: " + String(WorkLoop.eventDetail(message).prefix(120))
+    }
+
+    /// C1 (P2-a): the prompt was not delivered and the budget left holds no other try.
+    static func promptRetryBudgetNote(_ s: State) -> String {
+        "[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue e o orçamento de tempo que resta não cabe outra tentativa: tentativa não contada; laço parado"
     }
 
     /// P2: the task spent its free retries and its prompt was not delivered again: load is the likely cause.
@@ -328,6 +380,20 @@ enum AttemptMachine {
         let open: [Effect] = s.agent == nil ? [] : [.dismiss, .journal(.agentDismissed, nil)]
         s.agent = nil; s.phase = .finished
         return (s, open + fx)
+    }
+
+    /// F3: after the check and the gate, the task's acceptance, only when nothing already fails the attempt (as the gate);
+    /// a tree that was not reset (another terminal working) runs no acceptance, and that fails it. Else the verdict.
+    private static func accepting(_ s: inout State, _ fx: [Effect]) -> (State, [Effect]) {
+        let f = s.facts
+        guard s.hasAccept, f.failure == nil, f.broken == nil, f.checkStatus == 0, f.gate == nil, f.committed, !f.dirty, f.moves.isEmpty else {
+            return verdict(&s, fx)
+        }
+        if f.blockedBy != nil {
+            s.facts.accept = "accept did not run (tree not reset)"
+            return verdict(&s, fx + [.journal(.acceptFailed, "não rodou")])
+        }
+        return (s, fx + [.guardAccept])
     }
 
     /// Into `deciding`, after `fx`. A failed attempt that did not ask yet (it failed before its check, or its tree was

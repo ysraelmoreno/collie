@@ -21,4 +21,4 @@ Personas: `docs/fabrica/personas/` deste repositório (as mesmas que o `--review
 - A catraca `todo` conta `TODO` por arquivo. O baseline inicial nasce com `collie factory ratchet raise todo --reason "baseline inicial (factory init)"`; `update` só grava melhorias. O `measure` roda com `set -o pipefail` e falha se a pasta medida não existe: troque a pasta pela do projeto, senão a catraca recusa em vez de medir nada.
 - **Protegido** (o juiz recusa a tentativa que o muda): `scripts/gate.sh`. **Não protegido:** `Package.swift` (manifesto). Copie o texto inteiro do gate para a linha `run:` do CI.
 - Limite: o gate não enxerga binários em pastas ignoradas como node_modules/.bin ou .venv (nem .build; o `git diff` não os lista); um runner trocado ali passa. Quem pega é o revisor ou o CI, que instala do zero.
-- `destructive`, `budgetSeconds`, `maxTries` e `land` vêm da entrevista; os valores daqui são o ponto de partida.
+- `destructive`, `budgetSeconds`, `maxTries`, `land` e `autoLandPerDay` (A5: quantos auto-lands o cercado pode fazer em 24 h, de 1 a 20; padrão 3) vêm da entrevista; os valores daqui são o ponto de partida.

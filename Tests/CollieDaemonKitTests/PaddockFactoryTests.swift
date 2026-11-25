@@ -200,6 +200,46 @@ private func collieProfile(_ dir: URL, land: String = "manual") throws {
         }
     }
 
+    /// C3a: the auto-land's doctor reads the paddock's HEAD: a profile improved only in the tree never passes, the
+    /// committed one decides, a doctor's file changed only in the tree refuses, and an ignored file of the tree alone
+    /// (an agent's `.claude/`) is no part of what it reads.
+    @Test func theEnginesDoctorReadsHEADNotTheTree() async throws {
+        let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+        try await commit("collie-work.json", #"{"version": 1, "smoke": "swift test"}"#, in: repo)   // no gate: static 0 at HEAD
+        try collieProfile(repo)   // the agent's tree: a good profile, not committed
+        #expect(FactoryDoctorReader.factoryRefusal(root: repo) == nil)   // the tree's read alone would pass
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) != nil)
+        if case .success = await FactoryDoctorReader.headSnapshot(dir: repo) { Issue.record("the tree's profile was read") }
+        try await commit(".gitignore", ".claude/\n", in: repo)   // commits the good profile too
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) == nil)
+        try put(repo, ".claude/settings.local.json", "{}")
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo) == nil)
+        try put(repo, "scripts/ci/check-architecture.sh", "#!/bin/bash\nexit 1\n")
+        #expect(await FactoryDoctorReader.headRefusal(dir: repo)?.contains("difere do commit HEAD") == true)
+    }
+
+    /// C1 (B1-b): a profile the paddock's git ignores is no profile the loop reads: on refuses and says why.
+    @Test func onRefusesAnIgnoredProfile() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            #expect(try await call(d, p, nil, "paddock.create", ["name": .string("k"), "repo": .string(repo.path)]).ok)
+            let dir = repo.appendingPathComponent(".collie/paddocks/k")
+            try collieProfile(dir)
+            try put(dir, ".gitignore", "collie-work.json\n")
+            let on = try await call(d, p, nil, "paddock.factory", ["name": .string("k"), "state": .string("on")])
+            #expect(on.error?.code == .invalidArgs
+                    && on.error?.message.contains("o perfil está no .gitignore: o motor lê o commit base, não a árvore") == true, "\(on)")
+            #expect(await d.router.ws.paddocks.first { $0.name == "k" }?.factory == false)
+        }
+    }
+
+    /// C1 (B1-a): an unknown profile persona the review does not use is told in `work status`.
+    @Test func statusWarnsAnUnknownProfilePersona() {
+        var w = Work(title: "W", terminalId: UUID())
+        w.loop = WorkLoopState(max: 3, tasks: ["a"]); w.loop?.origins = ["review": "flag", "unknownPersonas": "seguranca"]
+        #expect(WorkStatusText.originLines(w).contains("aviso: factory.review.personas do collie-work.json tem persona desconhecida em HEAD: seguranca"))
+    }
+
     /// `factory doctor` says whether the paddock is marked, and warns on land = factory-paddock without the mark.
     @Test func doctorShowsTheMark() async throws {
         try await folder { dir in

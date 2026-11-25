@@ -583,7 +583,7 @@ extension WorkCommandTests {
             #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
             let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true, paddock: "feat")
             #expect(try await work(d, p, s, "work.start", ["title": "Loop work"]).ok)
-            #expect(try await work(d, p, s, "work.task.add", ["title": "A", "check": "true"]).ok)
+            #expect(try await work(d, p, s, "work.task.add", ["title": "A", "check": "true"], flags: ["green-ok"]).ok)
             let base = ["max": "3", "command": "true"]
             #expect(try await work(d, p, s, "work.run", base.merging(["personas": "correcao"]) { $1 }).error?.code == .invalidArgs)
             #expect(try await work(d, p, s, "work.run", base.merging(["reviewer-model": "opus"]) { $1 }).error?.code == .invalidArgs)

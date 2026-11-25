@@ -130,9 +130,9 @@ import CollieProtocol
     @Test func aTaskNotDoneLandsNothing() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
         try await r.store.update(r.work) { $0.tasks[0].check = "false" }
-        #expect(await r.run() == .finished)
+        #expect(await r.run() == .stopped)   // C5a: its own stop, never a finish
         let w = try await r.get()
-        #expect(w.tasks[0].state == .deferred && w.loop?.stopReason == nil && w.loop?.autoLand?.after == nil)
+        #expect(w.tasks[0].state == .deferred && w.loop?.stopReason?.code == .landTasksNotDone && w.loop?.autoLand?.after == nil)
         let notices = await r.host.ownerNotices
         #expect(await r.host.lands.isEmpty && notices.count == 1)
     }

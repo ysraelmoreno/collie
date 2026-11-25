@@ -362,13 +362,14 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     @Test func aShellShepherdsLoopNeedsAnAgentWithAnEndOfTurn() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try await addTask(d, p, x.s, "A", check: "true")
+            try await addTask(d, p, x.s, "A", check: "true", greenOk: true)
             let shell = try await work(d, p, x.s, "work.run", ["max": .number(3)])
             #expect(shell.error?.code == .invalidArgs && shell.error?.message == CommandRouter.loopAgentRefusal, "\(shell)")
             let given = try await work(d, p, x.s, "work.run", ["max": .number(3), "preset": .string("shell")])
             #expect(given.error?.message == CommandRouter.loopAgentRefusal, "\(given)")
             #expect(await d.router.appCards.isEmpty)
-            #expect(try await run(d, p, x.s, ["preset": .string("claude")], approve: false).ok)
+            let claude = try await run(d, p, x.s, ["preset": .string("claude")], approve: false)
+            #expect(claude.ok, "\(claude)")
         }
     }
 

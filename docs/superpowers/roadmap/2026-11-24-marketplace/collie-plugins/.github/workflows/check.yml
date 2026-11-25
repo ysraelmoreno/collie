@@ -1,0 +1,45 @@
+# Every pull request: each touched plug-in version passes `collie plugin validate` (the app's own install checks plus
+# no network and an author-signed helper), its publisher exists and is the PR author (scripts/check-pr.sh).
+# No secrets here: the PR's code is data, never run (the author's repo is cloned and copied, nothing more).
+name: check
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # the collie of the app's last release: validate is exactly what the users' daemon will accept
+      - name: Collie
+        run: |
+          TAG="$(gh release view --repo ysraelmoreno/collie --json tagName -q .tagName)"
+          git clone -q --depth 1 --branch "$TAG" https://github.com/ysraelmoreno/collie "$RUNNER_TEMP/collie"
+          (cd "$RUNNER_TEMP/collie" && swift build -c release --product collie)
+          echo "COLLIE=$(cd "$RUNNER_TEMP/collie" && swift build -c release --show-bin-path)/collie" >> "$GITHUB_ENV"
+
+      - name: Check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          # the scripts of the base branch (the PR's own copy would check itself); the very first PR has none yet
+          S="$RUNNER_TEMP/base"; mkdir -p "$S"
+          if git cat-file -e "$BASE:scripts/check-pr.sh" 2>/dev/null; then git archive "$BASE" scripts | tar -x -C "$S"; else cp -R scripts "$S/"; fi
+          "$S/scripts/check-pr.sh" "$BASE" "$HEAD" "$AUTHOR"

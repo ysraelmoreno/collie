@@ -170,6 +170,26 @@ case "$event" in
 esac
 ```
 
+## Catálogo
+
+Além da pasta, o usuário instala do catálogo assinado (spec `docs/superpowers/specs/2026-11-24-plugin-marketplace-design.md`).
+O daemon baixa `plugins.json` e `plugins.json.sig` da release `plugins-catalog` e aceita o catálogo só com assinatura
+Ed25519 válida (`PluginCatalog.publicKeys`), `format` 1 e `sequence` ≥ o do último aceito. O aceito fica em
+`<raiz>/plugins/catalog.json` (+ `.sig`, 0600). Sem rede, vale o guardado. Um catálogo recusado não substitui o guardado.
+
+- `plugin.catalog [--refresh]` (admin) devolve `{state: ok|stale|unavailable, reason?, generatedAt, items}`. Um item
+  traz `latest` (a maior versão não recolhida para este Collie), `installed` (`version`, `source`), `update` e `recalled`.
+  `stale`: `generatedAt` passou de 30 dias.
+- `plugin.install-catalog <id> --version <v>` (admin) instala um pacote por vez por id; o segundo recebe `já instalando <id>`.
+  O pacote é baixado só de `…/releases/download/plugin-…` com limite pelo `size`. Depois vem a conferência do `sha256`.
+  Qualquer entrada do tar com caminho absoluto ou `..` é recusada antes de extrair. O pacote tem uma só pasta, sem links
+  nem arquivo especial, dentro dos limites da instalação. O `PluginStore.treeHash` dela precisa dar o `treeSha256`.
+  Um helper exige `helperTeamId`, com a assinatura do time e o identificador `dev.collie.plugin.<id>`. Então entra na
+  instalação de sempre, com `source: catalog`. O staging é apagado em qualquer saída.
+- Recall: cada catálogo aceito (na partida, com o guardado, e na checagem periódica, a cada 12 h) marca `recalled` e
+  desliga todo instalado cujo hash da árvore foi recolhido, também quando ele veio de pasta. Um recolhido não liga
+  nem reinstala a mesma árvore; só outra versão o limpa.
+
 ## Later phases
 
 - **Phase 2: helpers.** A process the daemon starts, run under the terminals' sandbox. Commands with `runs: "helper"`.

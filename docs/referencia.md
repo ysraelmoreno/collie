@@ -311,6 +311,8 @@ em `<raiz>/plugins/<id>/<versão>/` e é conferida por hash a cada início do se
 `collie panel open <id>`, rebanhos) sem rede nem acesso ao projeto, e os comandos `collie <id> <cmd>` chegam aos agentes
 ligados a um painel dele pela guia. Exemplo: `Examples/plugins/notas`. Referência: [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
 
+Plug-ins do catálogo assinado: `collie plugin catalog [--refresh]` lista e `collie plugin install-catalog <id> --version <v>` instala ou atualiza (só o usuário); o daemon confere assinatura, sha256 e hash da árvore, e uma versão recolhida no catálogo fica desligada. Ver "Catálogo" em [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
+
 Um plug-in também pode ter `helper` e `hooks` (`edit`, `stop`) para receber os eventos dos agentes Claude e orientar ou bloquear; a instalação mostra antes o que ele pode fazer. Ver "Ganchos de agente" em [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
 
 ## Design systems

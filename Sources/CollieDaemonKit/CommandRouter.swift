@@ -75,6 +75,8 @@ actor CommandRouter {
     nonisolated let artifacts: ArtifactStore
     /// External plug-ins the user installed (`<root>/plugins`).
     nonisolated let plugins: PluginStore
+    /// The signed plug-in catalog: listing, installing from it, recalls (`<root>/plugins/catalog.json`).
+    nonisolated let pluginCatalog: PluginCatalogService
     /// What each terminal's agent is doing (`<root>/work`).
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
@@ -264,7 +266,10 @@ actor CommandRouter {
             enabled: { CollieSettings.load(updateRoot).updates?.auto ?? true })
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
-        self.plugins = PluginStore(root: config.paths.root)
+        let plugins = PluginStore(root: config.paths.root); self.plugins = plugins
+        self.pluginCatalog = PluginCatalogService(root: config.paths.root, store: plugins,
+            collie: config.version.flatMap { $0.first?.isNumber == true ? $0 : nil } ?? "9999",
+            onRecall: { _ in await me.router?.publishPlugins() })
         let workDir = config.paths.root.appendingPathComponent("work")
         let remoteEvents = RemoteEventBus(); self.remoteEvents = remoteEvents
         self.work = WorkStore(dir: workDir, namer: { w in await me.router?.archiveNames(w) ?? (nil, nil) }) { id in

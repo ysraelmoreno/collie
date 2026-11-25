@@ -23,13 +23,16 @@ enum AndroidDownload {
         guard u.scheme?.lowercased() == "https", let host = u.host?.lowercased(), hosts.contains(host),
               u.port == nil, u.user == nil, u.password == nil else { return false }
         return host != "github.com"
-            || (["/adoptium/", figcraftReleases, collieLatest, collieReleases].contains(where: u.path.hasPrefix)
+            || (["/adoptium/", figcraftReleases, collieLatest, collieReleases, pluginReleases, pluginCatalog].contains(where: u.path.hasPrefix)
                 && !u.pathComponents.contains(".."))
     }
     static let figcraftReleases = "/ysraelmoreno/collie/releases/download/figcraft-v"
     /// The app updater: `update.json` through the stable latest link, the dmg by its `vX.Y.Z` tag (spec 2026-11-17 §2).
     static let collieLatest = "/ysraelmoreno/collie/releases/latest/download/"
     static let collieReleases = "/ysraelmoreno/collie/releases/download/v"
+    /// The plug-in catalog (spec 2026-11-24): a package by its `plugin-<id>-v<version>` tag, the catalog's fixed release.
+    static let pluginReleases = "/ysraelmoreno/collie/releases/download/plugin-"
+    static let pluginCatalog = "/ysraelmoreno/collie/releases/download/plugins-catalog/"
 
     /// A downloaded archive: where, how big, its checksum and the checksum's algorithm (`sha256` or `sha1`).
     struct Archive: Equatable { var url: URL, size: Int64, checksum: String, type: String }

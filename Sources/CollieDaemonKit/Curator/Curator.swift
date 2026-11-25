@@ -485,9 +485,19 @@ actor Curator {
         names[job.id] = nil; backoff[job.id] = nil
     }
 
+    /// A failure that says nothing about the job: the sandbox blocked the CLI, there is no network or name resolution, or its
+    /// workspace folder is gone. Retried later without spending an attempt (63 jobs once went to `failed/` in a day on a DNS error).
+    static func isEnvironmentFailure(_ message: String) -> Bool {
+        ["curador bloqueado pelo sandbox", "getaddrinfo", "enotfound", "eai_again", "econnrefused", "enetunreach", "enetdown",
+         "could not resolve host", "network is unreachable", "workspace directory does not exist"]
+            .contains { message.range(of: $0, options: .caseInsensitive) != nil }
+    }
+
     /// One runner call: the input cut to `inputMax` unicode scalars (≤ 48 KB of argv), counted against today's cap,
     /// usage persisted. R7: only the cap waits; any failure of the run itself (nonzero exit, `is_error`, junk, timeout)
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
+    /// Two exceptions wait without spending one: the runner exhausted (quota) and an environment failure (the provider
+    /// unavailable, or `isEnvironmentFailure`); the latter counts as a bad call, so a provider that never works gets paused.
     private func call(_ c: CuratorCall, job: CuratorJob) async throws(ProtocolError) -> CuratorOutput {
         if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
         // the provider is fixed for this call: a switch meanwhile takes the next one
@@ -520,6 +530,9 @@ actor Curator {
             if error.message.hasPrefix("resposta ilegível") { note(p, bad: true) }   // the runner couldn't read it either
             // E6: a credit/quota refusal left the runner exhausted: the job waits, no attempt spent (`drain` gives it back)
             if case .exhausted = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
+            // not this job's fault: the CLI cannot run here (no login, blocked, no network); it waits and is not marked failed
+            if case .unavailable = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
+            if Self.isEnvironmentFailure(error.message) { note(p, bad: true); throw ProtocolError(code: .unavailable, message: error.message) }
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }
         logged(true, nil, out)

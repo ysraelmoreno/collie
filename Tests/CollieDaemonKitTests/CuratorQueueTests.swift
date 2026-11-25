@@ -238,6 +238,41 @@ private let oneCall: Curator.Handler = { j, call in
         await c.stop()
     }
 
+    /// An environment failure (here the real DNS error of the sandboxed Cursor call) spends no attempt: the job waits, never
+    /// reaches failed/; a plain failure of the run still spends one.
+    @Test func environmentFailureSpendsNoAttempt() async throws {
+        let fake = FakeCurator(), clock = ManualClock(), dir = tempDir()
+        fake.failOn = "dns"
+        fake.failMessage = "cursor saiu com 1: Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh"
+        let c = Curator(dir: dir, runner: fake, clock: clock)
+        _ = await c.enqueue(job(prompt: "dns"))
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls >= 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await c.queued(kind: .correction).first?.attempts == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path).isEmpty)
+        await c.stop()
+
+        let plain = FakeCurator()
+        plain.failOn = "x"
+        plain.failMessage = "claude saiu com 1"
+        let c2 = Curator(dir: tempDir(), runner: plain, clock: ManualClock())
+        _ = await c2.enqueue(job(prompt: "x"))
+        await c2.start(handler: oneCall)
+        #expect(await waitFor(10) { await c2.queued(kind: .correction).first?.attempts == 1 })
+        await c2.stop()
+    }
+
+    @Test func environmentFailureMessages() {
+        for m in ["cursor saiu com 1: Error: Workspace directory does not exist: /var/folders/x", "curador bloqueado pelo sandbox: /private/var/x",
+                  "Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh", "connect ECONNREFUSED 127.0.0.1:443"] {
+            #expect(Curator.isEnvironmentFailure(m), "\(m)")
+        }
+        for m in ["claude saiu com 1", "curator: junk answer (items)", "resposta ilegível do claude", "claude não respondeu"] {
+            #expect(!Curator.isEnvironmentFailure(m), "\(m)")
+        }
+    }
+
     /// `failed/` keeps a parked job `failedKeep`, then it is deleted: the app's "curador falhando" alert goes away once the
     /// curator works again (63 environment failures in one day had left it on for good).
     @Test func failedJobsExpire() async throws {

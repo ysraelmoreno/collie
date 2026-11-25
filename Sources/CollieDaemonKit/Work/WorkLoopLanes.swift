@@ -44,7 +44,7 @@ extension WorkLoop {
             await note(id, "[loop] git falhou em \(dir.path); laço parado")
             return (.stopped, .init(.gitFailed))
         }
-        let integrator = LaneIntegrator(host: host, dir: dir, work: id)
+        let integrator = await host.integrator(dir: dir, work: id)   // F3: the paddock's one
         await integrator.clearQuarantine()   // M6.3: what the last loop's gates left goes now
         let (woken, signal) = AsyncStream<Wake>.makeStream()
         lanes[id] = Lanes(signal: signal)

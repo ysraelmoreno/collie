@@ -38,6 +38,10 @@ actor CommandRouter {
     var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
     /// F2 R4: the loops' reviewer terminals, alive: never counted as someone working in the paddock (`loopOthersWorking`).
     var loopReviewers: Set<UUID> = []
+    /// F3: one integrator per paddock (the loop's lanes and the fields share its FIFO queue), and the fields landing.
+    let integrators = PaddockIntegrators()
+    /// F3: `field land` requests in flight, per Shepherd: a wait like an `ask` (`fieldShepherdOnlyWaits`).
+    var fieldLandHolds: [UUID: Int] = [:]
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService

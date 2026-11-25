@@ -55,9 +55,12 @@ actor LaneIntegrator {
     static let quarantineFiles = 200, quarantineBytes = 5 * 1024 * 1024
     static let quarantineDir = "collie-gate-leftovers"
 
-    private let host: any LoopHost, dir: URL
+    /// F3: one integrator per paddock (`PaddockIntegrators`): the loop that takes it `adopt`s it, a field's land lends
+    /// its own host for its one integration (`integrate(as:)`).
+    private var host: any LoopHost
+    private let dir: URL
     /// M7.2. The loop's work: each box it makes carries it (`<n>.work`), and `clearQuarantine` empties only those.
-    private let work: UUID?
+    private var work: UUID?
     private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
     /// M3d.3. The untracked files the last gates made, by path: their `git hash-object` right after the gate.
     private var gateMade: [String: String] = [:]
@@ -67,6 +70,10 @@ actor LaneIntegrator {
     /// `host`: the paddock's (its `othersWorking` is about the paddock's worktree); `dir`: the paddock's worktree;
     /// `work`: the loop's (nil: its boxes carry no mark, and `clearQuarantine` empties nothing).
     init(host: any LoopHost, dir: URL, work: UUID? = nil) { self.host = host; self.dir = dir; self.work = work }
+
+    /// F3: the paddock's integrator taken by a loop: its host and work from now on. ponytail: one loop per paddock and
+    /// no field alongside a loop in lanes (`work run --parallel` refuses), so nothing else holds it then.
+    func adopt(host: any LoopHost, work: UUID?) { self.host = host; self.work = work }
 
     /// Integrations waiting for the one running.
     var waiting: Int { waiters.count }
@@ -85,14 +92,19 @@ actor LaneIntegrator {
     }
 
     /// `gateTimeout`: the engine's conditions, measured by the caller (`min(checkTimeout, what is left of the budget)`).
-    /// Throws only for a branch that is not a lane's (nothing ran).
-    func integrate(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async throws(ProtocolError) -> Result {
-        guard lane.branch.hasPrefix(LaneWorktree.branchPrefix) else {
+    /// Throws only for a branch that is not a lane's (nothing ran). F3: a field's (`collie/field/`) too.
+    /// `other`: the host for this integration only (a field's land), in the same queue; the integrator's own after it.
+    func integrate(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration,
+                   as other: (any LoopHost)? = nil) async throws(ProtocolError) -> Result {
+        guard lane.branch.hasPrefix(LaneWorktree.branchPrefix) || lane.isField else {
             throw ProtocolError(code: .invalidArgs, message: "'\(lane.branch)' is not a lane branch")
         }
         // FIFO: an actor is reentrant at each await, so the turn is handed over explicitly (`busy` stays true)
         if busy { await withCheckedContinuation { queued($0) } } else { busy = true }
         defer { if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() } }
+        let own = host
+        if let other { host = other }
+        defer { host = own }   // runs before the turn is handed over
         return await run(lane, title: title, attempt: attempt, tries: tries, gate: gate, gateTimeout: gateTimeout)
     }
 

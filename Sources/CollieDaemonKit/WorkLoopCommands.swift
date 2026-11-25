@@ -92,6 +92,9 @@ extension CommandRouter {
         // the task's id
         let parallel = try num(r, "parallel", max: Double(TaskScheduler.maxParallel)).map { Int($0) }
         if let parallel, parallel > 1 {
+            // F3: lanes and fields share the paddock's integrator and its tree's rules; never both at once
+            let fields = ws.terminals.filter { $0.paddockId == pid && $0.field != nil }.compactMap { $0.field?.name }
+            if !fields.isEmpty { throw invalid("há fields vivos neste cercado: \(fields.sorted().joined(separator: ", ")); --parallel > 1 espera que saiam") }
             guard config.sandboxHome != nil else { throw invalid("--parallel needs the terminal sandbox: a lane's agent, check and git run only sandboxed") }
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
@@ -839,6 +842,12 @@ struct RouterLoopHost: LoopHost {
         return forLane(lane)
     }
     func laneGone(_ lane: Lane) async { SandboxLaunch.remove(CommandRouter.laneSandboxId(work, lane), root: root) }
+    /// F3: the paddock's one integrator (`PaddockIntegrators`), adopted by this loop.
+    func integrator(dir: URL, work: UUID) async -> LaneIntegrator {
+        let i = await router.integrators.integrator(paddock: paddock) { LaneIntegrator(host: self, dir: dir, work: work) }
+        await i.adopt(host: self, work: work)
+        return i
+    }
 
     /// What the profile and its shims live under: the work, or the lane's own id.
     var sandboxId: UUID { lane.map { CommandRouter.laneSandboxId(work, $0) } ?? work }

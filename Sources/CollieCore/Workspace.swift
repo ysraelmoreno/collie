@@ -43,13 +43,15 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     /// The Shepherd that summoned it (`summon`, the loop); nil: made by the app, or a record from before this field.
     /// A sub-Shepherd is a Shepherd with this set: its depth and its ceiling are counted along it.
     public var summonedBy: UUID?
+    /// Fields: the agent's own worktree (`summon --field`); nil: none, or a record from before fields.
+    public var field: FieldRef?
     public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil,
                 sandbox: TerminalSandbox = .sandboxed, projectRoot: String? = nil) {
         self.id = id; self.name = name; self.preset = preset; self.command = command
         self.cwd = cwd; self.isShepherd = isShepherd; self.paddockId = paddockId
         self.sandbox = sandbox; self.projectRoot = projectRoot
     }
-    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode, model, summonedBy }
+    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode, model, summonedBy, field }
     private enum Legacy: String, CodingKey { case isMaestro, floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self), l = try d.container(keyedBy: Legacy.self)
@@ -63,6 +65,17 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
         startMode = try? c.decodeIfPresent(SandboxMode.self, forKey: .startMode)
         model = try? c.decodeIfPresent(String.self, forKey: .model)
         summonedBy = try? c.decodeIfPresent(UUID.self, forKey: .summonedBy)
+        field = try? c.decodeIfPresent(FieldRef.self, forKey: .field)
+    }
+}
+
+/// Fields: a summoned agent's own worktree, `<repo>/.collie/paddocks/field-<name>` on `collie/field/<name>`, cut from
+/// the paddock's HEAD `base`. Kept in the workspace so a field outlives a daemon restart; its worktree is found by `path`.
+public struct FieldRef: Codable, Sendable, Equatable {
+    public enum State: String, Codable, Sendable { case working, ready, landing, landed, conflict, behind }
+    public var name: String, branch: String, base: String, path: String, state: State
+    public init(name: String, branch: String, base: String, path: String, state: State = .working) {
+        self.name = name; self.branch = branch; self.base = base; self.path = path; self.state = state
     }
 }
 

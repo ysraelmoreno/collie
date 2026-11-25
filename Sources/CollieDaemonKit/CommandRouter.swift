@@ -979,6 +979,9 @@ actor CommandRouter {
 
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
+        // F4 (answer 8): a field's agent leaves its field: the uncommitted as a patch, the worktree after any land, the
+        // branch kept. Read from the record on file (a failed summon clears it first: `unfield`)
+        let field = ws.terminals.first { $0.id == t.id }?.field
         await cursorTerminalEnded(t.id)   // before the record goes: the capture needs it
         await discard(t.id)
         await inbox.drop(terminal: t.id)
@@ -995,6 +998,13 @@ actor CommandRouter {
         await hub.emit(.removed(t.id))
         await closeRemoved(terminal: t.id, cwd: t.cwd)
         await closeHeadless(of: t.id)
+        if let field, let p = ws.paddocks.first(where: { $0.id == t.paddockId }) {
+            let line = await retireField(field, paddock: p)
+            if field.state != .landed, let s = t.summonedBy.flatMap({ id in ws.terminals.first { $0.id == id } }), Self.isAgent(s) {
+                let asks = asks
+                Task { try? await asks.inject(to: s.id, prompt: line, hold: .seconds(1800), afterQuiet: true) }
+            }
+        }
     }
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.

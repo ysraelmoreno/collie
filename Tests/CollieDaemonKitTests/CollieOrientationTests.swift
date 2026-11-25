@@ -10,6 +10,26 @@ import CollieProtocol
         CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: pref, lot: lot)
     }
 
+    /// F4: an agent in a field hears where it works and how its work goes back, in every form, within the cap; a
+    /// Shepherd hears of fields only where it fits.
+    @Test func fieldLineWithinCap() {
+        let line = "- Field \"bob\" (branch collie/field/bob): commite aqui; o Pastor integra."
+        let plain = CollieOrientation.text(terminal: "bob", isShepherd: false, paddock: "p", peers: [], panels: [], field: "bob")
+        #expect(plain.contains(line) && plain.count <= 1500)
+        // the fullest text an agent gets: the line stays, under the cap
+        let many = (1...40).map { "agent-with-a-long-name-\($0)" }
+        let full = CollieOrientation.text(terminal: "bob", isShepherd: false, paddock: "p", peers: many,
+                                          panels: [("D", "design"), ("B", "browser"), ("V", "device")],
+                                          lot: (name: String(repeating: "l", count: 40), goal: String(repeating: "g", count: 300)),
+                                          sharedFolder: many, field: "bob")
+        #expect(full.contains(line) && full.count <= 1500, "\(full.count)")
+        #expect(!text().contains("- Field "))
+        // a Shepherd: the hint only where it fits, never at the cost of the form chosen without it
+        let bare = text(shepherd: true), crowded = text(shepherd: true, paddock: "F", peers: many, panels: [("D", "design")])
+        #expect(bare.count <= 1500 && crowded.count <= 1500)
+        #expect(!text().contains(CollieOrientation.fieldsHint) && !text(paddock: "F", peers: many).contains(CollieOrientation.fieldsHint))
+    }
+
     @Test func orientationFollowsReach() {
         let none = text()
         #expect(none.hasPrefix("You are running inside Collie, terminal \"Ana\"."))

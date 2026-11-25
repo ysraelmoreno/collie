@@ -120,8 +120,11 @@ enum SandboxProfile {
         // M3.3: a lane is strict whatever the workspace's mode. Its paddock's worktree, and any `lane-*` sibling of the
         // project (a regex: a lane made after this profile too; the same shape as an `EssentialPaths` `x*` entry).
         let strict = i.mode == .strict || i.lanePaddock != nil
-        let laneClosed = i.lanePaddock.map {
-            [sub(real($0)), rx("^" + re(URL(fileURLWithPath: project).deletingLastPathComponent().path + "/" + LaneWorktree.dirPrefix) + "[^/]*(/|$)")]
+        // F4: a field is lane-shaped; it is closed to the other fields too (and a lane to the fields)
+        let laneClosed = i.lanePaddock.map { p in
+            [sub(real(p))] + [LaneWorktree.dirPrefix, LaneWorktree.fieldDirPrefix].map {
+                rx("^" + re(URL(fileURLWithPath: project).deletingLastPathComponent().path + "/" + $0) + "[^/]*(/|$)")
+            }
         } ?? []
         if !strict {
             // user decision (2026-10-25): everything in the account is open but Collie's internals: its data (below), the
@@ -181,9 +184,11 @@ enum SandboxProfile {
                     // owner packs every lane's ref and prunes the folder mid-lane, the lane's commit fails and the
                     // attempt is retried in a new lane; open `file-write-create` on them if that is ever seen.
                     writes += [sub(common + "/objects"), sub(worktree)]
+                    // F4: a field the same, with its own branch (`field-<name>` → `collie/field/<name>`)
                     let folder = URL(fileURLWithPath: project).lastPathComponent
-                    if folder.hasPrefix(LaneWorktree.dirPrefix), folder.count > LaneWorktree.dirPrefix.count {
-                        let ref = "/refs/heads/" + LaneWorktree.branchPrefix + folder.dropFirst(LaneWorktree.dirPrefix.count)
+                    for (dir, branch) in [(LaneWorktree.dirPrefix, LaneWorktree.branchPrefix), (LaneWorktree.fieldDirPrefix, LaneWorktree.fieldBranchPrefix)]
+                    where folder.hasPrefix(dir) && folder.count > dir.count {
+                        let ref = "/refs/heads/" + branch + folder.dropFirst(dir.count)
                         writes += [lit(common + ref), lit(common + ref + ".lock"), lit(common + "/logs" + ref)]
                     }
                 } else if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD

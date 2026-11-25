@@ -672,6 +672,32 @@ um Pastor forte reparte, um sub-Pastor coordena a sua parte com workers baratos.
   `lot post`, nunca com `ask` bloqueante. Quem não é Pastor e tenta `summon` lê como pedir a marca (a quem o convocou ou ao
   usuário, no app).
 
+### Fields (`summon --field`)
+
+```
+collie summon <nome> --field [--prompt …]   # worktree própria cortada do HEAD do cercado; o agente trabalha nela
+collie summon <nome> --no-field             # sem field mesmo com fields.default: true
+collie field list                           # name, agent, branch, base, commits, state dos fields do cercado
+collie field land <nome>                    # integrador do cercado: merge no branch do cercado e gate de novo
+collie field drop <nome> [--keep-branch]    # dispensa o agente e tira a worktree; sem --keep-branch: patch e apaga o branch
+```
+
+- **Onde:** `<repo>/.collie/paddocks/field-<nome>`, branch `collie/field/<nome>` (o nome do agente: `a-z`, `0-9`, `-`),
+  feito e removido pelo git do próprio daemon. Sandbox estrito como uma faixa do laço: grava a própria árvore, os objetos
+  e só o próprio `collie/field/<nome>`; o cercado, as faixas e os outros fields ficam fechados. O primeiro build é frio.
+- **Recusas:** sem sandbox, para shell, com `--paddock`, `--cwd` ou `--shepherd`, fora de um cercado git, com um laço em
+  faixas (`work run --parallel > 1`) rodando no cercado, ou com `fields.max` fields vivos (a mensagem dá o número).
+- **Padrão do projeto:** `"fields": {"default": true, "max": 4}` no `collie-work.json` **commitado** no HEAD do cercado
+  (a árvore não conta); `max` de 1 a 8, padrão 4. O padrão só vale onde `--field` seria aceito.
+- **`land`/`drop`:** só o Pastor que convocou o agente (CLI; o app fica para depois). `land` espera o cercado ficar
+  limpo e livre até 10 min; depois responde `waiting` com o motivo e o field fica `ready`. Conflito ou gate quebrado:
+  desfeito, `<raiz>/fields/<nome>-<n>.patch` (0600), estado `conflict`.
+- **Dispensa** (`dismiss`, Encerrar ramo, a cascata): grava o não commitado (rastreado e não rastreado, sem ignorados) em
+  `<raiz>/fields/<nome>-wip.patch`, tira a worktree (depois de um land em curso) e **mantém o branch**; o Pastor recebe
+  a linha com o branch e o patch. `field drop <nome>` depois apaga o branch, guardando `<nome>-<n>.patch`.
+- **Orientação:** o agente recebe `- Field "<nome>" (branch collie/field/<nome>): commite aqui; o Pastor integra.`;
+  o Pastor aprende `summon --field` e `field list|land|drop` só se couber no limite.
+
 ### `ask` com portão (`--check`)
 
 ```

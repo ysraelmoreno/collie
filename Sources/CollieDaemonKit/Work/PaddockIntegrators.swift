@@ -18,6 +18,8 @@ actor PaddockIntegrators {
     /// The field (`branch`) starts landing; false: it already is.
     func beginLanding(_ branch: String) -> Bool { landing.insert(branch).inserted }
     func endLanding(_ branch: String) { landing.remove(branch) }
+    /// F4: the field (`branch`) is landing now (its dismissal removes the worktree only after).
+    func isLanding(_ branch: String) -> Bool { landing.contains(branch) }
 }
 
 /// F3: a field's land: the integrator joins the field's branch to the paddock's, the gate again on the merged tree.
@@ -114,6 +116,13 @@ struct FieldLandHost: LoopHost {
     }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         try await RouterLoopHost.runCheck(command, in: dir, profile: try live(), env: env, timeout: timeout)
+    }
+    /// F4: the fields' birth and removal (`CommandRouter.fieldGit`): the daemon's own git, never a profile, as the lanes'.
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await RouterLoopHost.loopGit(args, in: dir, profile: nil)
+    }
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await RouterLoopHost.loopGit(args, in: dir, profile: nil, stdin: stdin, timeout: timeout, cap: cap)
     }
     func readSpec(_ path: String) async -> String? { nil }
     func exists(_ path: String, in dir: URL) async -> Bool { false }

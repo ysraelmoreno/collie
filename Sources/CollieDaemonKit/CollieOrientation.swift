@@ -26,6 +26,12 @@ enum CollieOrientation {
     static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it. Reads slow (~2 s)? collie device helper status says why. No tree match: find and tap --text read the screen by OCR (via ocr, no click proof: --then screen)."
     static let deviceShort = "collie device screen; tap --text … --then screen."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
+    /// F4: a Shepherd learns fields only where the text has room for it (never at the cost of another line's form).
+    static let fieldsHint = "- Fields (own worktree): summon <n> --field; field list|land|drop <n>."
+    /// F4: an agent in a field: every form carries it (where it works and how its work goes back).
+    static func fieldLine(_ name: String) -> String {
+        "- Field \(quote(name)) (branch \(LaneWorktree.fieldBranchPrefix)\(name)): commite aqui; o Pastor integra."
+    }
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -49,7 +55,7 @@ enum CollieOrientation {
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
                      sharedFolder: [String] = [], figcraftAvailable: Bool = true, memoryTask: Bool = false,
-                     candidates: Int = 0, parent: String? = nil) -> String {
+                     candidates: Int = 0, parent: String? = nil, field: String? = nil) -> String {
         // no engine (absent or out of date): the FigCraft and ask preferences fall back to a page, with a note
         let note = !figcraftAvailable && designFirst != .artifact
         let designFirst = figcraftAvailable ? designFirst : .artifact
@@ -69,12 +75,14 @@ enum CollieOrientation {
         for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {
             for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
                 for (lc, wait) in loopLines {
-                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, loopWait: wait, candidates: cands, parent: parent)
-                    if t.count <= limit { return t }
+                    func form(_ hint: Bool) -> String { build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, loopWait: wait, candidates: cands, parent: parent, field: field, fieldsHint: hint) }
+                    let t = form(false)
+                    // F4: the fields hint last of all: only on the form chosen without it, and only if it still fits
+                    if t.count <= limit { let h = isShepherd && n >= 0 ? form(true) : t; return h.count <= limit ? h : t }
                 }
             }
         }
-        func last(_ parent: String?) -> String { build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask, parent: parent) }
+        func last(_ parent: String?) -> String { build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask, parent: parent, field: field) }
         // ponytail: the cap outranks the line: where not even the tight form has room for it, a sub-Shepherd loses it
         let withParent = last(parent)
         return withParent.count <= limit ? withParent : last(nil)
@@ -85,7 +93,8 @@ enum CollieOrientation {
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
                               _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false,
-                              loopCommand: Bool = false, loopWait: String = "", candidates: Int = 0, parent: String? = nil) -> String {
+                              loopCommand: Bool = false, loopWait: String = "", candidates: Int = 0, parent: String? = nil,
+                              field: String? = nil, fieldsHint: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -102,6 +111,7 @@ enum CollieOrientation {
         // agent-comms: a crossed blocking ask (or wait) is refused as a deadlock; a hookless Cursor answers by command
         // ponytail: no warning line for a Shepherd: at the 1500 cap already, its ask line teaches --no-wait
         if !peers.isEmpty && !isShepherd && !tight { lines[1] += " Don't block-ask one who may wait on you: --no-wait or lot post." }
+        if let field { lines.insert(fieldLine(field), at: 1) }
         if agent == "cursor" {
             // A6: Cursor's MCP client drops a blocking call near 60 s, so the detached form comes first
             lines[1] = "- Leashed agents (\(peers.isEmpty ? "none yet" : names(peers))): collie list / check <name> / ask <name> \"<prompt>\" --no-wait"
@@ -168,6 +178,7 @@ enum CollieOrientation {
                 lines.append("- Loop\(loopCommand ? " (owner: /collie:loop <request>)" : ""): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. \(loopWait)")
             }
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
+            if fieldsHint { lines.append(Self.fieldsHint) }
             // the owner's language: the Shepherd relays it (`text` drops it where it can't fit)
             if candidates > 0 {
                 lines.append("- \(candidates) \(candidates == 1 ? "armadilha recorrente pode" : "armadilhas recorrentes podem") virar checagem: collie memory list --candidates")

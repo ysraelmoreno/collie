@@ -110,13 +110,15 @@ extension WorkLoop {
         guard (try? await host.git(["reset", "-q", "--hard", start], in: dir))?.status == 0 else { return await keep("git reset falhou") }
         try? await store.update(id) { $0.loop?.autoLand?.startHead = nil }   // back on it: nothing left to carry
         let reopened = await reopenDiscarded(id, dropped)
-        let line = "[loop] auto-land: nada integrado, então descartei do cercado os commits da tentativa (\(start.prefix(12))..\(head.prefix(12))): "
-            + commits.split(separator: "\n").joined(separator: "; ") + ". Arquivos: \(files). O cercado voltou a \(start.prefix(12)). "
-            + "Patch: \(file.path). Para recuperar, no cercado: git am \(AgentLaunch.quote(file.path))"
-            + (reopened.isEmpty ? "" : ". Reabertas (voltam à fila): " + reopened.joined(separator: ", "))
+        let list: String = commits.split(separator: "\n").joined(separator: "; ")
+        let again: String = reopened.joined(separator: ", ")
+        var line = "[loop] auto-land: nada integrado, então descartei do cercado os commits da tentativa (\(start.prefix(12))..\(head.prefix(12))): "
+        line += "\(list). Arquivos: \(files). O cercado voltou a \(start.prefix(12)). "
+        line += "Patch: \(file.path). Para recuperar, no cercado: git am \(AgentLaunch.quote(file.path))"
+        if !reopened.isEmpty { line += ". Reabertas (voltam à fila): \(again)" }
         await note(id, LotBoards.scrub(String(line.prefix(Self.noteChars))))
-        return "Descartei do cercado \(commits.split(separator: "\n").count) commit(s) da tentativa; patch: \(file.path) (git am)"
-            + (reopened.isEmpty ? "" : "; reabertas: " + reopened.joined(separator: ", "))
+        let owner = "Descartei do cercado \(commits.split(separator: "\n").count) commit(s) da tentativa; patch: \(file.path) (git am)"
+        return reopened.isEmpty ? owner : owner + "; reabertas: \(again)"
     }
 
     /// C5d: after a discard, a `done` task whose commits went with it goes back to `open` (the next `work run` takes

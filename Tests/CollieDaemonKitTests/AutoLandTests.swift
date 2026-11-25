@@ -474,7 +474,8 @@ import CollieProtocol
         await r.loop.stop(work: r.work)
         #expect(await run.value == .stopped)
         let w = try await r.get()
-        #expect(w.loop?.stopReason?.code == .requested && await r.host.lands.isEmpty, "\(String(describing: w.loop?.stopReason))")
+        #expect(w.loop?.stopReason?.code == .requested, "\(String(describing: w.loop?.stopReason))")
+        #expect(await r.host.lands.isEmpty)
         let kinds = (w.loop?.events ?? []).map(\.kind)
         #expect(kinds.contains(.landCiStarted) && kinds.contains(.landCiFinished), "\(kinds)")
     }

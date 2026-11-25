@@ -286,4 +286,49 @@ private func runLoop(gate: String, starterBusy: String? = nil, disturb: @escapin
         #expect(note.contains("f.txt") && note.contains("nada foi resetado nem apagado"), "\(note)")
         #expect(read("f.txt", in: repo) == "the owner's\n")
     }
+
+    /// F3: the loop's lanes and the fields of one paddock land through one integrator (one FIFO queue); another
+    /// paddock has its own.
+    @Test func oneQueuePerPaddock() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let paddock = UUID(), work = UUID()
+            let loop = RouterLoopHost(router: d.router, starter: UUID(), root: repo, work: work, paddock: paddock, dir: repo, sandbox: nil)
+            let a = await loop.integrator(dir: repo, work: work), b = await loop.integrator(dir: repo, work: UUID())
+            let field = await d.router.integrators.integrator(paddock: paddock) { LaneIntegrator(host: LoopFakeHost(dir: repo), dir: repo) }
+            #expect(a === b && a === field)
+            let other = await d.router.integrators.integrator(paddock: UUID()) { LaneIntegrator(host: LoopFakeHost(dir: repo), dir: repo) }
+            #expect(other !== a)
+            // a field's branch is one it takes now; a paddock's is still refused
+            let host = LoopFakeHost(dir: repo), base = try await git(repo, "rev-parse", "HEAD")
+            let f = try await LaneWorktree.createField(repoRoot: repo, base: base, name: "q", owner: UUID(), host: host)
+            try await commit("q.txt", "q\n", in: f.path)
+            let r = try await field.integrate(f, title: "q", attempt: 1, tries: 1, gate: nil, gateTimeout: .seconds(60), as: host)
+            #expect(r.outcome == .integrated)
+            await #expect(throws: ProtocolError.self) {
+                _ = try await field.integrate(Lane(repoRoot: repo, path: repo, branch: "main", base: ""), title: "x", attempt: 1, tries: 1,
+                                              gate: nil, gateTimeout: .seconds(60), as: host)
+            }
+        }
+    }
+}
+
+extension LaneIntegratorRaceTests {
+    /// Fix 7: a loop that adopts the paddock's integrator while a field's land has lent its own host keeps it after
+    /// that land: the lend's end never undoes the adopt.
+    @Test func adoptDuringALendSticks() async throws {
+        let repo = try await makeRepo(), base = try await git(repo, "rev-parse", "HEAD")
+        let own = LoopFakeHost(dir: repo), field = LoopFakeHost(dir: repo), loop = LoopFakeHost(dir: repo)
+        let integ = LaneIntegrator(host: own, dir: repo)
+        let f = try await LaneWorktree.createField(repoRoot: repo, base: base, name: "q", owner: UUID(), host: own)
+        try await commit("q.txt", "q\n", in: f.path)
+        await field.setProbe { _ in await integ.adopt(host: loop, work: nil) }   // during the field land's gate
+        _ = try await integ.integrate(f, title: "q", attempt: 1, tries: 1, gate: "true", gateTimeout: .seconds(60), as: field)
+        let g = try await LaneWorktree.createField(repoRoot: repo, base: base, name: "r", owner: UUID(), host: own)
+        try await commit("r.txt", "r\n", in: g.path)
+        let before = await own.gits.count
+        _ = try await integ.integrate(g, title: "r", attempt: 1, tries: 1, gate: nil, gateTimeout: .seconds(60))
+        #expect(await !loop.gits.isEmpty, "the adopted host runs the next integration")
+        #expect(await own.gits.count == before)
+    }
 }

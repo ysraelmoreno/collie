@@ -48,6 +48,16 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
             #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)")
         }
     }
+    @Test func allowsPluginCatalogPaths() {
+        #expect(AndroidDownload.allowed(URL(string: "https://github.com/ysraelmoreno/collie/releases/download/plugin-vizinho-v0.1.0/vizinho-0.1.0.tar.gz")!))
+        #expect(AndroidDownload.allowed(URL(string: "https://github.com/ysraelmoreno/collie/releases/download/plugins-catalog/plugins.json")!))
+        for s in ["https://github.com/ysraelmoreno/collie/releases/download/plugins-catalogX/plugins.json",
+                  "https://github.com/ysraelmoreno/collie/releases/download/pluginx-1/x",
+                  "https://github.com/ysraelmoreno/collie/releases/download/plugin-x/../../../evil/x",
+                  "https://github.com/ysraelmoreno/other/releases/download/plugin-x/x"] {
+            #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)")
+        }
+    }
     @Test func refusesDotDotInFigcraftPath() {
         #expect(!AndroidDownload.allowed(URL(string:
             "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v1/../../../evil/x")!))

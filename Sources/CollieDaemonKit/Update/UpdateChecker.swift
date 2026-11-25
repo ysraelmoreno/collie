@@ -137,9 +137,10 @@ actor UpdateChecker {
     /// collied's periodic check: `first` after the start, then every `every`, only while the automatic check is on;
     /// with `download()` on, a new version is downloaded and verified in the background. Never throws.
     func loop(first: Duration = .seconds(60), every: Duration = .seconds(12 * 3600),
-              download: @escaping @Sendable () -> Bool) async {
+              download: @escaping @Sendable () -> Bool, tick: @escaping @Sendable () async -> Void = {}) async {
         try? await Task.sleep(for: first)
         while !Task.isCancelled {
+            await tick()   // the plug-in catalog's refresh rides this clock, whether updates are on or not
             if enabled() {
                 let s = await check()
                 if s.state == "available", download() { _ = try? await self.download() }

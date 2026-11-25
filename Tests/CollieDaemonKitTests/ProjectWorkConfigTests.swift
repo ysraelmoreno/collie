@@ -98,7 +98,7 @@ private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Respo
         let all: [ProjectWorkConfig.ConfigError] = [.notJSON, .notObject, .tooLarge(17000), .wrongType(key: "gate", expected: "texto"),
                                                     .unsupportedVersion("2"), .commandTooLong(key: "gate", length: 1001),
                                                     .controlCharacter(key: "gate"), .emptyCommand(key: "gate"), .badAreaName("A"),
-                                                    .tooManyAreas(51), .unknownArea("x", available: ["ask"]), .noAreas]
+                                                    .tooManyAreas(51), .unknownArea("x", available: ["ask"]), .noAreas, .fieldsMax(9)]
         #expect(Set(all.map(\.message)).count == all.count)
         #expect(all.allSatisfy { !$0.message.isEmpty })
     }
@@ -107,6 +107,33 @@ private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Respo
         guard case .success(let ok) = parse(#"{"version":1, "gate":"g", "futuro": {"x":1}, "outro": 2}"#) else { Issue.record("not ok"); return }
         #expect(ok.config.gate == "g")
         #expect(ok.warnings == ["chave desconhecida ignorada: futuro", "chave desconhecida ignorada: outro"])
+    }
+
+    // MARK: fields
+
+    @Test func fieldsParsed() throws {
+        let c = try config(#"{"version":1,"fields":{"default":true,"max":2}}"#)
+        #expect(c.fields == ProjectWorkConfig.FieldsConfig(default: true, max: 2))
+        #expect(try config(#"{"fields":{}}"#).fields == ProjectWorkConfig.FieldsConfig(default: false, max: 4))
+    }
+
+    @Test func fieldsAbsentIsNil() throws {
+        #expect(try config(#"{"version":1}"#).fields == nil)
+    }
+
+    @Test func fieldsMaxOutOfRange() {
+        #expect(error(#"{"fields":{"max":0}}"#) == .fieldsMax(0))
+        #expect(error(#"{"fields":{"max":9}}"#) == .fieldsMax(9))
+        #expect(error(#"{"fields":{"max":2.5}}"#) == .wrongType(key: "fields.max", expected: "número inteiro"))
+        #expect(error(#"{"fields":{"max":true}}"#) == .wrongType(key: "fields.max", expected: "número inteiro"))
+        #expect(error(#"{"fields":{"default":1}}"#) == .wrongType(key: "fields.default", expected: "true ou false"))
+        #expect(error(#"{"fields":[]}"#) == .wrongType(key: "fields", expected: "objeto"))
+    }
+
+    @Test func fieldsUnknownKeyWarns() throws {
+        guard case .success(let ok) = parse(#"{"version":1,"fields":{"warm":[".build"],"max":3}}"#) else { Issue.record("not ok"); return }
+        #expect(ok.config.fields?.max == 3)
+        #expect(ok.warnings == ["chave desconhecida ignorada: fields.warm"])
     }
 
     // MARK: composeCheck

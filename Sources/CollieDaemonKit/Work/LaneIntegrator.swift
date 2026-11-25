@@ -55,9 +55,12 @@ actor LaneIntegrator {
     static let quarantineFiles = 200, quarantineBytes = 5 * 1024 * 1024
     static let quarantineDir = "collie-gate-leftovers"
 
-    private let host: any LoopHost, dir: URL
+    /// F3: one integrator per paddock (`PaddockIntegrators`): the loop that takes it `adopt`s it, a field's land lends
+    /// its own host for its one integration (`integrate(as:)`).
+    private var host: any LoopHost
+    private let dir: URL
     /// M7.2. The loop's work: each box it makes carries it (`<n>.work`), and `clearQuarantine` empties only those.
-    private let work: UUID?
+    private var work: UUID?
     private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
     /// M3d.3. The untracked files the last gates made, by path: their `git hash-object` right after the gate.
     private var gateMade: [String: String] = [:]
@@ -67,6 +70,17 @@ actor LaneIntegrator {
     /// `host`: the paddock's (its `othersWorking` is about the paddock's worktree); `dir`: the paddock's worktree;
     /// `work`: the loop's (nil: its boxes carry no mark, and `clearQuarantine` empties nothing).
     init(host: any LoopHost, dir: URL, work: UUID? = nil) { self.host = host; self.dir = dir; self.work = work }
+
+    /// F3: the paddock's integrator taken by a loop: its host and work from now on. ponytail: one loop per paddock and
+    /// no field alongside a loop in lanes (`work run --parallel` refuses), so nothing else holds it then.
+    /// While a field's land has lent its host (`integrate(as:)`), the loop's host waits in `lentOver` and is the one
+    /// restored after it: the lend never undoes an `adopt`.
+    func adopt(host: any LoopHost, work: UUID?) {
+        if lentOver != nil { lentOver = host } else { self.host = host }
+        self.work = work
+    }
+    /// The integrator's own host while `integrate(as:)` runs with another.
+    private var lentOver: (any LoopHost)?
 
     /// Integrations waiting for the one running.
     var waiting: Int { waiters.count }
@@ -85,18 +99,26 @@ actor LaneIntegrator {
     }
 
     /// `gateTimeout`: the engine's conditions, measured by the caller (`min(checkTimeout, what is left of the budget)`).
-    /// Throws only for a branch that is not a lane's (nothing ran).
-    func integrate(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async throws(ProtocolError) -> Result {
-        guard lane.branch.hasPrefix(LaneWorktree.branchPrefix) else {
+    /// Throws only for a branch that is not a lane's (nothing ran). F3: a field's (`collie/field/`) too.
+    /// `other`: the host for this integration only (a field's land), in the same queue; the integrator's own after it.
+    /// `tip`: the commit merged (a sha of the branch: a field's judged commit), instead of the branch's tip now.
+    func integrate(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration,
+                   as other: (any LoopHost)? = nil, tip: String? = nil) async throws(ProtocolError) -> Result {
+        guard lane.branch.hasPrefix(LaneWorktree.branchPrefix) || lane.isField else {
             throw ProtocolError(code: .invalidArgs, message: "'\(lane.branch)' is not a lane branch")
         }
         // FIFO: an actor is reentrant at each await, so the turn is handed over explicitly (`busy` stays true)
         if busy { await withCheckedContinuation { queued($0) } } else { busy = true }
         defer { if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() } }
-        return await run(lane, title: title, attempt: attempt, tries: tries, gate: gate, gateTimeout: gateTimeout)
+        if let tip, tip.range(of: "^[0-9a-f]{40}([0-9a-f]{24})?$", options: .regularExpression) == nil {
+            throw ProtocolError(code: .invalidArgs, message: "'\(tip)' is not a commit sha")
+        }
+        if let other { lentOver = host; host = other }
+        defer { if let own = lentOver { host = own; lentOver = nil } }   // runs before the turn is handed over
+        return await run(lane, title: title, attempt: attempt, tries: tries, gate: gate, gateTimeout: gateTimeout, merging: tip ?? lane.branch)
     }
 
-    private func run(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async -> Result {
+    private func run(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration, merging target: String) async -> Result {
         var f = LaneIntegration.Facts(mergeResult: .noop, gateAfterMerge: .notRun, treeClean: false, othersWorking: nil, attempt: attempt, tries: tries)
         var kept: [String] = [], left: [String] = [], blockedBy: String?, undo: String?, swept = Swept()
         func done(_ f: LaneIntegration.Facts, _ output: String = "") async -> Result {
@@ -111,13 +133,13 @@ actor LaneIntegrator {
         f.treeClean = before != nil && dirt == ""
         guard f.othersWorking == nil, f.treeClean, let before else { return await done(f) }
         swept = await sweep()
-        if (try? await host.git(["merge-base", "--is-ancestor", lane.branch, "HEAD"], in: dir))?.status == 0 { return await done(f) }
+        if (try? await host.git(["merge-base", "--is-ancestor", target, "HEAD"], in: dir))?.status == 0 { return await done(f) }
         // M3b.6: cancelled (the loop or the daemon stopping) before its merge: nothing is merged, and it is no verdict
         if Task.isCancelled { return .init(outcome: .retryFromNewBase(Self.cancelled), head: before) }
 
         let loose = Set(await untracked())   // the owner's untracked files: never removed
         let message = "merge: " + WorkLoop.eventDetail(title)
-        let merge = try? await host.git(["merge", "--no-ff", "--no-edit", "-m", message, lane.branch], in: dir)
+        let merge = try? await host.git(["merge", "--no-ff", "--no-edit", "-m", message, target], in: dir)
         guard let merge, merge.status == 0, let merged = await out(["rev-parse", "HEAD"]), merged != before else {
             // a conflict, or git refused (an untracked file in the way, no identity): either way nothing stays merged
             _ = try? await host.git(["merge", "--abort"], in: dir)
@@ -127,7 +149,7 @@ actor LaneIntegrator {
             f.mergeResult = .conflict
             f.detail = merge.map { Self.firstLine($0.stdout + "\n" + $0.stderr) } ?? "git merge could not run"
             // M3d.3: an untracked file that is not the gate's (it was swept) in the lane's way: no retry fixes that
-            let way = await inTheWay(lane.branch, from: before)
+            let way = await inTheWay(target, from: before)
             if !way.isEmpty {
                 (blockedBy, kept, f.disturbed) = (s.who, kept + way.filter { !kept.contains($0) }, true)
                 f.detail = "arquivos não rastreados que não são do portão no caminho do merge: "

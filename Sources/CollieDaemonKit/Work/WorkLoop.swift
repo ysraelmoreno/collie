@@ -79,6 +79,9 @@ protocol LoopHost: Sendable {
     /// F2 V3: marks `reviewRoot` trusted in `globalConfigHome`'s `.claude.json` (`WorkLoop.trustReviewRoot`): the note to
     /// leave, nil when nothing was done.
     func trustReviewers() async -> String?
+    /// F3: the integrator of the paddock whose worktree is `dir`, taken for `work`'s loop: the paddock's one (fields
+    /// and the loop share its queue) on the daemon, a new one on a host with no daemon (the tests' fakes).
+    func integrator(dir: URL, work: UUID) async -> LaneIntegrator
     /// F2 A4/A5/V2 (f2fix9): the judged agent, by id, started open (or free of the sandbox): it writes the whole home, so
     /// a `plantedConfig` above the reviewers is no sign of tampering and is not asked. Read at the attempt's `.dismiss`,
     /// before the terminal goes (the review comes after it). The premise that `plantedConfig` would find the owner's own
@@ -146,6 +149,7 @@ extension LoopHost {
     func globalConfigHome() async -> URL { await strictWrites().home }
     /// The tests' fakes: never the user's `~/.claude.json`.
     func trustReviewers() async -> String? { nil }
+    func integrator(dir: URL, work: UUID) async -> LaneIntegrator { LaneIntegrator(host: self, dir: dir, work: work) }
     func startedOpen(_ agent: UUID) async -> Bool { false }
     /// A host with no paddock to land (the tests' fakes): never a factory's, and its land refuses.
     func factoryPaddock() async -> Bool { false }
@@ -1110,7 +1114,7 @@ actor WorkLoop {
     }
 
     /// The loop's one wait on the clock: its polls (a commit, another terminal, the agent's screen) have no event.
-    private static func nap(_ d: Duration, on clock: any Clock<Duration> = ContinuousClock()) async { try? await clock.sleep(for: d) }
+    static func nap(_ d: Duration, on clock: any Clock<Duration> = ContinuousClock()) async { try? await clock.sleep(for: d) }   // F3: the field land's wait too
 
     /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
     /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.

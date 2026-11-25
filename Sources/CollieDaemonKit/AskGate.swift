@@ -7,9 +7,24 @@ public struct AskCheckReport: Sendable, Equatable, Codable {
     public var status: Status
     public var tries: Int
     public var tail: String
-    var json: JSONValue { .object(["status": .string(status.rawValue), "tries": .number(Double(tries)), "tail": .string(tail)]) }
+    /// F5: the ask's target works in a field: what the passing check did with it (nil: no field, or the check failed).
+    public var field: FieldNote? = nil
+    var json: JSONValue {
+        var o: [String: JSONValue] = ["status": .string(status.rawValue), "tries": .number(Double(tries)), "tail": .string(tail)]
+        if let field { o["field"] = .object(["land": .string(field.land.rawValue), "reason": field.reason.map { .string($0) } ?? .null]) }
+        return .object(o)
+    }
     /// What the ask's failure says when the tries ran out.
     var failure: String { "check failed after \(tries) \(tries == 1 ? "try" : "tries")" }
+}
+
+/// F5: a passing check on a field's agent: its land `queued` (it runs after the ask, in the paddock's queue) or
+/// `skipped` (`reason`: another land of the field is running).
+public struct FieldNote: Sendable, Equatable, Codable {
+    public enum Land: String, Sendable, Codable { case queued, skipped }
+    public var land: Land
+    public var reason: String?
+    public init(land: Land, reason: String? = nil) { self.land = land; self.reason = reason }
 }
 
 /// C1: what an `ask --check` carries: the judge's command (kept here, in the daemon, never in the repository), the spec's
@@ -22,12 +37,16 @@ struct AskGate: Sendable {
     var dir: URL
     /// C2: `--green-ok`: the check may already pass before the attempt (it is not refused for that).
     var greenOk = false
+    /// F5 (spec, answer 4): the target works in a field: a passing check counts only on a committed tree; true here
+    /// (something tracked changed, or untracked and not ignored) fails the try with `uncommitted`.
+    var dirty: (@Sendable () async -> Bool)? = nil
 }
 
 typealias AskCheckRun = @Sendable (_ command: String, _ dir: URL, _ timeout: Duration) async throws(ProtocolError) -> ProcessResult
 
 extension AskGate {
     static let correctionHead = "O check falhou. Corrija e encerre o turno. Fim da saída:"
+    static let uncommitted = "O check passou, mas há mudanças sem commit no field: commite antes de encerrar."
     static func notice(_ command: String) -> String { "O Collie roda este check quando você terminar e só aceita a resposta se ele passar: \(command)" }
 
     /// The request, the spec's path (if any) and the fixed line about the check.
@@ -87,6 +106,7 @@ extension AskCoordinator {
                     let res = try await run(gate.command, gate.dir, gate.checkTimeout)
                     tail = WorkLoop.evidenceTail(check: res.stdout + res.stderr, gate: nil, lines: WorkLoop.precheckLines, chars: WorkLoop.precheckChars)
                     passed = res.status == 0
+                    if passed, let dirty = gate.dirty, await dirty() { passed = false; tail = AskGate.uncommitted }
                 } catch where error.code == .timeout {
                     tail = "o check passou de \(Int(gate.checkTimeout.components.seconds)) s"
                 } catch { tail = "o check não rodou: \(error.message)" }
@@ -95,7 +115,7 @@ extension AskCoordinator {
                 r.check = AskCheckReport(status: passed ? .passed : .failed, tries: tries, tail: tail)
                 return r
             }
-            next = AskGate.correctionHead + "\n" + tail
+            next = tail == AskGate.uncommitted ? tail : AskGate.correctionHead + "\n" + tail
         }
     }
 

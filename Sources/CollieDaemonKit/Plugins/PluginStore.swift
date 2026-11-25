@@ -52,7 +52,7 @@ actor PluginStore {
     func manifest(_ id: String) -> PluginManifest? { manifests[id] }
     /// The enabled plug-ins that passed verification.
     func loaded() -> [(PluginManifest, InstalledPlugin)] {
-        list().compactMap { e in e.enabled && e.error == nil ? manifests[e.id].map { ($0, e) } : nil }
+        list().compactMap { e in e.enabled && e.error == nil && e.recalled == nil ? manifests[e.id].map { ($0, e) } : nil }
     }
     /// The installed folder of a loaded plug-in.
     func folder(of id: String) -> URL? {
@@ -63,7 +63,9 @@ actor PluginStore {
     /// it and swaps it in: the previous version keeps working until the new one is complete, then goes.
     /// `expect`: the id and version the user was shown; a copy that differs is refused (the folder changed meanwhile).
     /// An installed id is replaced only with `replace`.
-    func install(from source: URL, expect: (id: String, version: String)? = nil, replace: Bool = true) throws(ProtocolError) -> InstalledPlugin {
+    /// A recalled tree of the same id is refused; another tree (a new version) installs clean.
+    func install(from source: URL, expect: (id: String, version: String)? = nil, replace: Bool = true,
+                 source origin: InstalledPlugin.Source = .folder) throws(ProtocolError) -> InstalledPlugin {
         let src = source.resolvingSymlinksInPath()   // the folder the user picked; links inside it are refused
         let fm = FileManager.default
         try io { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
@@ -81,6 +83,7 @@ actor PluginStore {
             throw ProtocolError(code: .conflict, message: "o plug-in '\(m.id)' \(e.version) já está instalado: use --replace para substituí-lo")
         }
         let hash = try Self.treeHash(staging, files)
+        if let e = entries.first(where: { $0.id == m.id }), e.sha256 == hash, let r = e.recalled { throw InstalledPlugin.recalledRefusal(r) }
         try Self.lock(staging, files)
 
         let idDir = dir.appendingPathComponent(m.id), dest = versionDir(m.id, m.version)
@@ -104,7 +107,7 @@ actor PluginStore {
             restore()
             throw ProtocolError(code: .internal, message: "não foi possível instalar o plug-in")
         }
-        let entry = InstalledPlugin(id: m.id, version: m.version, sha256: hash, enabled: true, installedAt: Date(), error: nil)
+        let entry = InstalledPlugin(id: m.id, version: m.version, sha256: hash, enabled: true, installedAt: Date(), error: nil, source: origin)
         let before = entries
         entries.removeAll { $0.id == m.id }; entries.append(entry)
         do { try save() } catch {
@@ -133,6 +136,7 @@ actor PluginStore {
     func setEnabled(_ id: String, _ on: Bool) throws(ProtocolError) {
         guard let i = entries.firstIndex(where: { $0.id == id }) else { throw notInstalled(id) }
         if on {
+            if let r = entries[i].recalled { throw InstalledPlugin.recalledRefusal(r) }
             switch Self.verify(entries[i], in: dir) {
             case .success(let m): manifests[id] = m; entries[i].error = nil
             case .failure(let e): entries[i].error = e.message; throw e
@@ -141,6 +145,22 @@ actor PluginStore {
         let was = entries[i].enabled
         entries[i].enabled = on
         do { try save() } catch { entries[i].enabled = was; throw error }
+    }
+
+    /// Marks recalled (and turns off) every installed tree the catalog recalls, whatever its source; the ids that
+    /// changed. One no longer recalled stays blocked: only a reinstall of another tree clears it.
+    func applyRecalls(_ recall: (_ treeSha256: String) -> PluginCatalog.Recall?) throws(ProtocolError) -> [String] {
+        let before = entries
+        var changed: [String] = []
+        for i in entries.indices {
+            guard let r = recall(entries[i].sha256), entries[i].recalled == nil || entries[i].enabled else { continue }
+            if entries[i].recalled == nil { entries[i].recalled = r }
+            entries[i].enabled = false
+            changed.append(entries[i].id)
+        }
+        guard !changed.isEmpty else { return [] }
+        do { try save() } catch { entries = before; throw error }
+        return changed.sorted()
     }
 
     // MARK: - files

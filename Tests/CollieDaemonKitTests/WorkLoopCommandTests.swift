@@ -20,6 +20,12 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     try await send(p, Request(id: "w", terminalId: t?.id, token: t?.token ?? d.adminToken, command: cmd, args: args), timeoutSeconds: 60)
 }
 
+private extension CommandRouter {
+    func setField(_ id: UUID, _ f: FieldRef?) {
+        if let i = ws.terminals.firstIndex(where: { $0.id == id }) { ws.terminals[i].field = f }
+    }
+}
+
 @Suite(.serialized) struct WorkLoopCommandTests {
     @Test func taskAddStoresSpecAndCheck() async throws {
         let repo = try await makeRepo()
@@ -462,6 +468,21 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let lanes = try await work(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "parallel": .number(2)])
             #expect(lanes.error?.code == .invalidArgs && lanes.error?.message.contains("--parallel") == true, "\(lanes)")
             #expect(await d.router.appCards.isEmpty)
+        }
+    }
+
+    /// F3: lanes and fields never run in one paddock: `--parallel > 1` refuses while a field lives there.
+    @Test func parallelRefusedWithLiveFields() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            await d.router.setField(x.s.uuid, FieldRef(name: "bob", branch: "collie/field/bob", base: "", path: "/x/field-bob"))
+            let r = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("há fields vivos neste cercado: bob") == true, "\(r)")
+            // the field gone: the refusal is the old one (this daemon sandboxes no terminal), not the fields'
+            await d.router.setField(x.s.uuid, nil)
+            let again = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            #expect(again.error?.message.contains("fields") != true, "\(again)")
         }
     }
 

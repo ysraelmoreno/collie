@@ -491,6 +491,11 @@ public actor AskCoordinator {
 
     public func endWait(_ token: UUID) { waitEdges[token] = nil }
 
+    /// F3: the asks and waits `from` blocks on now (not the detached ones): what it waits for, not work it does.
+    public func blocking(from: UUID) -> Int {
+        waiters.values.filter { $0.from == from && $0.to != from && !$0.detached }.count + waitEdges.values.filter { $0.from == from }.count
+    }
+
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
     /// terminal, so no edge in the deadlock graph (`from == to`, as `inject`).
     /// `onDelivered`: told once the prompt is written, as `ask`'s (the remote API's `askState delivered`).

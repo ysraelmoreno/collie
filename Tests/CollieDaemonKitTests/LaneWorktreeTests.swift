@@ -175,4 +175,86 @@ private func hasBranch(_ b: String, _ repo: URL) async throws -> Bool {
         #expect(await LaneWorktree.sweep(left, host: host).removed.isEmpty)
         #expect(try await git(repo, "status", "--porcelain") == "")
     }
+
+    // F2: fields
+
+    @Test func fieldNameValidation() throws {
+        try LaneWorktree.validate(field: "ok-1")
+        try LaneWorktree.validate(field: String(repeating: "a", count: 40))
+        for bad in ["A", "a/b", "..", "a b", String(repeating: "a", count: 41), "", "-a", "a.b", "a\nb"] {
+            #expect(throws: ProtocolError.self, "'\(bad)'") { try LaneWorktree.validate(field: bad) }
+        }
+    }
+
+    @Test func createFieldMakesBranchAndMarker() async throws {
+        let repo = try await makeRepo(), host = LoopFakeHost(dir: repo)
+        let sha = try await git(repo, "rev-parse", "HEAD"), owner = UUID()
+        let f = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "ok-1", owner: owner, host: host)
+        #expect(f.branch == "collie/field/ok-1" && f.isField && f.base == sha)
+        #expect(f.path.path == repo.appendingPathComponent(".collie/paddocks/field-ok-1").path)
+        #expect(try await git(f.path, "symbolic-ref", "--short", "HEAD") == f.branch)
+        #expect(LaneWorktree.ownsPath(f.path, repoRoot: repo) && LaneWorktree.isLane(f.path))
+        let common = URL(fileURLWithPath: try await git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+        let admin = try #require(LaneWorktree.adminDir(of: f.path, common: common))
+        let mark = try String(contentsOf: admin.appendingPathComponent(LaneWorktree.markerName), encoding: .utf8)
+        #expect(mark == "field \(owner.uuidString.lowercased())\n")
+        #expect(LaneWorktree.isMarked(f, owner: "", common: common) { $0 == owner })
+        #expect(!LaneWorktree.isMarked(f, owner: "", common: common) { _ in false })
+        #expect(try await git(repo, "status", "--porcelain") == "")
+        // found again by name (a daemon back up); unknown or invalid names are nil
+        #expect(await LaneWorktree.field(named: "ok-1", repoRoot: repo, host: host)?.path.lastPathComponent == "field-ok-1")
+        #expect(await LaneWorktree.field(named: "nope", repoRoot: repo, host: host) == nil)
+        #expect(await LaneWorktree.field(named: "../x", repoRoot: repo, host: host) == nil)
+        // a field is not an orphan lane
+        #expect(await LaneWorktree.orphans(repoRoot: repo, knownWork: [], host: host).isEmpty)
+    }
+
+    @Test func createFieldRefusesExisting() async throws {
+        let repo = try await makeRepo(), host = LoopFakeHost(dir: repo)
+        let sha = try await git(repo, "rev-parse", "HEAD")
+        let f = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "a", owner: UUID(), host: host)
+        try "mine\n".write(to: f.path.appendingPathComponent("wip.txt"), atomically: true, encoding: .utf8)
+        await #expect(throws: ProtocolError.self) {
+            _ = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "a", owner: UUID(), host: host)
+        }
+        #expect(exists(f.path.appendingPathComponent("wip.txt")))
+        // only the branch exists
+        try await commit("later.txt", "two\n", in: repo)
+        let head = try await git(repo, "rev-parse", "HEAD")
+        _ = try await git(repo, "branch", "collie/field/b", head)
+        await #expect(throws: ProtocolError.self) {
+            _ = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "b", owner: UUID(), host: host)
+        }
+        #expect(try await git(repo, "rev-parse", "collie/field/b") == head)
+        // only the path exists
+        let dir = repo.appendingPathComponent(".collie/paddocks/field-p")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        await #expect(throws: ProtocolError.self) {
+            _ = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "p", owner: UUID(), host: host)
+        }
+        #expect(!(try await hasBranch("collie/field/p", repo)))
+        // an invalid name: no git at all
+        let before = await host.gits.count
+        await #expect(throws: ProtocolError.self) {
+            _ = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "a/b", owner: UUID(), host: host)
+        }
+        #expect(await host.gits.count == before)
+    }
+
+    @Test func removeFieldKeepsBranch() async throws {
+        let repo = try await makeRepo(), host = LoopFakeHost(dir: repo)
+        let sha = try await git(repo, "rev-parse", "HEAD")
+        let f = try await LaneWorktree.createField(repoRoot: repo, base: sha, name: "keep", owner: UUID(), host: host)
+        try await commit("work.txt", "done\n", in: f.path)
+        let tip = try await git(f.path, "rev-parse", "HEAD")
+        try await LaneWorktree.remove(f, host: host)
+        #expect(!exists(f.path))
+        #expect(try await git(repo, "rev-parse", f.branch) == tip, "the field's branch and its commits stay")
+        #expect(!(try await git(repo, "worktree", "list", "--porcelain")).contains("field-"))
+        try await LaneWorktree.remove(f, host: host)   // twice: no error
+        // a field branch on a folder that is not a field's is refused
+        await #expect(throws: ProtocolError.self) {
+            try await LaneWorktree.remove(Lane(repoRoot: repo, path: repo.appendingPathComponent(".collie/paddocks/lane-x"), branch: f.branch, base: ""), host: host)
+        }
+    }
 }

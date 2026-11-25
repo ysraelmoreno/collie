@@ -246,7 +246,8 @@ extension CommandRouter {
                     agent: cursor ? "cursor" : "claude",
                     sharedFolder: await sharedFolder(me),
                     figcraftAvailable: { if case .installed = engineState() { true } else { false } }(), memoryTask: cursor && mode == .full, candidates: candidates,
-                    parent: me.isShepherd ? me.summonedBy.flatMap { up in ws.terminals.first { $0.id == up }?.name } : nil)
+                    parent: me.isShepherd ? me.summonedBy.flatMap { up in ws.terminals.first { $0.id == up }?.name } : nil,
+                    field: me.field?.name)
                 if cursor && mode == .off { text = orientation; return .object(["output": .string(text)]) }   // "Desligada": no memory block
                 // Cursor `full`: the time line (≤ 70 B) and the focus block, all under `cursorCap` with the orientation
                 let stamp = cursor && mode == .full ? "memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task" : ""

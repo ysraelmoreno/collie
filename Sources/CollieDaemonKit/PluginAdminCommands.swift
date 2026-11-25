@@ -29,6 +29,12 @@ extension CommandRouter {
                                               expect: expect, replace: flag(r, "replace"))
             await publishPlugins()
             return try await pluginRow(e)
+        case "plugin.catalog":
+            return try await pluginCatalogJSON(refresh: flag(r, "refresh"))
+        case "plugin.install-catalog":
+            let e = try await pluginCatalog.install(id: try need(r, "id"), version: try need(r, "version"))
+            await publishPlugins()
+            return try await pluginRow(e)
         case "plugin.uninstall":
             try await plugins.uninstall(try need(r, "id"))
             await publishPlugins()
@@ -58,6 +64,41 @@ extension CommandRouter {
     func pluginManifests(paddock: UUID? = nil) async -> [PluginManifest] {
         let installed = await plugins.loaded().map(\.0)
         return installed + approvedAppManifests(excluding: Set(installed.map(\.id)), paddock: paddock)
+    }
+
+    /// `plugin.catalog`: the stored (or freshly downloaded) catalog's items, each with its latest installable version,
+    /// what is installed of it, whether that is older and whether it is recalled.
+    private func pluginCatalogJSON(refresh: Bool) async throws -> JSONValue {
+        let (catalog, state, reason) = await pluginCatalog.current(refresh: refresh)
+        var o: [String: JSONValue] = ["state": .string(state.rawValue), "items": .array([])]
+        if let reason { o["reason"] = .string(reason) }
+        guard let catalog else { return .object(o) }
+        o["generatedAt"] = .string(ISO8601DateFormatter().string(from: catalog.generatedAt))
+        let installed = Dictionary(await plugins.list().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let names = Dictionary(catalog.publishers.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+        let collie = await pluginCatalog.collie
+        var items: [JSONValue] = []
+        for item in catalog.plugins {
+            var row: [String: JSONValue] = [
+                "id": .string(item.id), "name": .string(item.name), "publisher": .string(item.publisher),
+                "publisherName": .string(names[item.publisher] ?? item.publisher), "summary": .string(item.summary),
+                "kind": .string(item.kind.rawValue)]
+            let latest = catalog.latest(item.id, collie: collie)
+            if let v = latest {
+                var l: [String: JSONValue] = ["version": .string(v.version), "size": .number(Double(v.size)),
+                                              "permissions": .object(v.permissions ?? [:]), "hooks": .array((v.hooks ?? []).map { .string($0) })]
+                if let t = v.helperTeamId { l["helperTeamId"] = .string(t) }
+                row["latest"] = .object(l)
+            }
+            if let e = installed[item.id] {
+                row["installed"] = .object(["version": .string(e.version), "source": .string((e.source ?? .folder).rawValue)])
+                if let r = e.recalled { row["recalled"] = .object(["reason": .string(r.reason)]) }
+            }
+            row["update"] = .bool(latest.map { v in installed[item.id].map { PluginCatalog.compare(v.version, $0.version) == .orderedDescending } ?? false } ?? false)
+            items.append(.object(row))
+        }
+        o["items"] = .array(items)
+        return .object(o)
     }
 
     private func pluginRow(_ e: InstalledPlugin) async throws -> JSONValue {

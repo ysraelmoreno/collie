@@ -345,3 +345,82 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 }
+
+/// M2 (marketplace): where an install came from, and a recalled version staying off.
+extension PluginStoreTests {
+    private static let recall = PluginCatalog.Recall(reason: "vaza arquivos", at: Date(timeIntervalSince1970: 1_800_000_000))
+    private func message(_ body: () async throws -> Void) async -> ProtocolError? {
+        do { try await body(); return nil } catch let e as ProtocolError { return e } catch { return nil }
+    }
+
+    @Test func recallDisablesAndBlocks() async throws {
+        try await withTemp { d in
+            let root = d.appendingPathComponent("root"), store = PluginStore(root: root)
+            let p = try await store.install(from: try source(d), source: .catalog)
+            #expect(try await store.applyRecalls { $0 == p.sha256 ? Self.recall : nil } == ["notas"])
+            #expect(try await store.applyRecalls { $0 == p.sha256 ? Self.recall : nil } == [])   // already off
+            let e = await store.list()[0]
+            #expect(!e.enabled && e.recalled == Self.recall)
+            let r = await message { try await store.setEnabled("notas", true) }
+            #expect(r?.code == .conflict && r?.message == "versão recolhida: vaza arquivos. Atualize ou remova.")
+            #expect(await store.loaded().isEmpty)
+            // no longer recalled in the catalog: still blocked; a restart keeps it
+            #expect(try await store.applyRecalls { _ in nil } == [])
+            let again = PluginStore(root: root)
+            #expect(await again.list()[0].recalled == Self.recall)
+            #expect(await again.loaded().isEmpty)
+        }
+    }
+
+    @Test func recallMatchesFolderInstall() async throws {
+        try await withTemp { d in
+            let store = PluginStore(root: d.appendingPathComponent("root"))
+            let p = try await store.install(from: try source(d), source: .folder)
+            #expect(try await store.applyRecalls { $0 == p.sha256 ? Self.recall : nil } == ["notas"])
+            #expect(await store.list()[0].recalled != nil)
+        }
+    }
+
+    @Test func newVersionClearsRecall() async throws {
+        try await withTemp { d in
+            let store = PluginStore(root: d.appendingPathComponent("root"))
+            let p = try await store.install(from: try source(d))
+            _ = try await store.applyRecalls { $0 == p.sha256 ? Self.recall : nil }
+            let n = try await store.install(from: try source(d, "src2", version: "0.2.0"), source: .catalog)
+            #expect(n.recalled == nil && n.enabled && n.version == "0.2.0")
+            #expect(await store.loaded().map(\.0.id) == ["notas"])
+        }
+    }
+
+    @Test func sameTreeReinstallRefused() async throws {
+        try await withTemp { d in
+            let store = PluginStore(root: d.appendingPathComponent("root"))
+            let p = try await store.install(from: try source(d))
+            _ = try await store.applyRecalls { $0 == p.sha256 ? Self.recall : nil }
+            let r = await message { _ = try await store.install(from: try source(d, "src2")) }
+            #expect(r?.code == .conflict && r?.message.contains("versão recolhida: vaza arquivos") == true)
+            #expect(await store.list()[0].recalled == Self.recall)
+        }
+    }
+
+    @Test func oldInstalledJsonLoads() async throws {
+        try await withTemp { d in
+            let root = d.appendingPathComponent("root")
+            _ = try await PluginStore(root: root).install(from: try source(d))
+            let f = root.appendingPathComponent("plugins/installed.json")
+            var rows = try JSONSerialization.jsonObject(with: Data(contentsOf: f)) as! [[String: Any]]
+            rows[0]["source"] = nil; rows[0]["recalled"] = nil
+            try JSONSerialization.data(withJSONObject: rows).write(to: f)
+            let e = await PluginStore(root: root).list()
+            #expect(e.count == 1 && e[0].source == nil && e[0].recalled == nil && e[0].error == nil)
+        }
+    }
+
+    @Test func sourceIsSaved() async throws {
+        try await withTemp { d in
+            let root = d.appendingPathComponent("root")
+            _ = try await PluginStore(root: root).install(from: try source(d), source: .catalog)
+            #expect(await PluginStore(root: root).list()[0].source == .catalog)
+        }
+    }
+}

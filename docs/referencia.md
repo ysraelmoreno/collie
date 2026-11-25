@@ -311,6 +311,8 @@ em `<raiz>/plugins/<id>/<versão>/` e é conferida por hash a cada início do se
 `collie panel open <id>`, rebanhos) sem rede nem acesso ao projeto, e os comandos `collie <id> <cmd>` chegam aos agentes
 ligados a um painel dele pela guia. Exemplo: `Examples/plugins/notas`. Referência: [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
 
+Plug-ins do catálogo assinado: `collie plugin catalog [--refresh]` lista e `collie plugin install-catalog <id> --version <v>` instala ou atualiza (só o usuário); o daemon confere assinatura, sha256 e hash da árvore, e uma versão recolhida no catálogo fica desligada. Ver "Catálogo" em [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
+
 Um plug-in também pode ter `helper` e `hooks` (`edit`, `stop`) para receber os eventos dos agentes Claude e orientar ou bloquear; a instalação mostra antes o que ele pode fazer. Ver "Ganchos de agente" em [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
 
 ## Design systems
@@ -671,6 +673,32 @@ um Pastor forte reparte, um sub-Pastor coordena a sua parte com workers baratos.
 - **Orientação:** o sub-Pastor recebe uma linha com o nome do Pastor de cima: responde a ele com `collie reply` /
   `lot post`, nunca com `ask` bloqueante. Quem não é Pastor e tenta `summon` lê como pedir a marca (a quem o convocou ou ao
   usuário, no app).
+
+### Fields (`summon --field`)
+
+```
+collie summon <nome> --field [--prompt …]   # worktree própria cortada do HEAD do cercado; o agente trabalha nela
+collie summon <nome> --no-field             # sem field mesmo com fields.default: true
+collie field list                           # name, agent, branch, base, commits, state dos fields do cercado
+collie field land <nome>                    # integrador do cercado: merge no branch do cercado e gate de novo
+collie field drop <nome> [--keep-branch]    # dispensa o agente e tira a worktree; sem --keep-branch: patch e apaga o branch
+```
+
+- **Onde:** `<repo>/.collie/paddocks/field-<nome>`, branch `collie/field/<nome>` (o nome do agente: `a-z`, `0-9`, `-`),
+  feito e removido pelo git do próprio daemon. Sandbox estrito como uma faixa do laço: grava a própria árvore, os objetos
+  e só o próprio `collie/field/<nome>`; o cercado, as faixas e os outros fields ficam fechados. O primeiro build é frio.
+- **Recusas:** sem sandbox, para shell, com `--paddock`, `--cwd` ou `--shepherd`, fora de um cercado git, com um laço em
+  faixas (`work run --parallel > 1`) rodando no cercado, ou com `fields.max` fields vivos (a mensagem dá o número).
+- **Padrão do projeto:** `"fields": {"default": true, "max": 4}` no `collie-work.json` **commitado** no HEAD do cercado
+  (a árvore não conta); `max` de 1 a 8, padrão 4. O padrão só vale onde `--field` seria aceito.
+- **`land`/`drop`:** só o Pastor que convocou o agente (CLI; o app fica para depois). `land` espera o cercado ficar
+  limpo e livre até 10 min; depois responde `waiting` com o motivo e o field fica `ready`. Conflito ou gate quebrado:
+  desfeito, `<raiz>/fields/<nome>-<n>.patch` (0600), estado `conflict`.
+- **Dispensa** (`dismiss`, Encerrar ramo, a cascata): grava o não commitado (rastreado e não rastreado, sem ignorados) em
+  `<raiz>/fields/<nome>-wip.patch`, tira a worktree (depois de um land em curso) e **mantém o branch**; o Pastor recebe
+  a linha com o branch e o patch. `field drop <nome>` depois apaga o branch, guardando `<nome>-<n>.patch`.
+- **Orientação:** o agente recebe `- Field "<nome>" (branch collie/field/<nome>): commite aqui; o Pastor integra.`;
+  o Pastor aprende `summon --field` e `field list|land|drop` só se couber no limite.
 
 ### `ask` com portão (`--check`)
 

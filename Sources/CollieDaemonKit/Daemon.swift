@@ -260,9 +260,9 @@ public final class Daemon: Sendable {
         chmod(root.path, 0o700)      // even if it pre-existed with a looser mode
         try server.start()           // refuses if another daemon owns the socket; only then touch admin.token
         if config.updateLoop {       // the app updater's periodic check (spec 2026-11-17 §3); collied only, never tests
-            let updates = router.updates
-            // the download is Sparkle's now (spec 2026-11-25): this loop only keeps the "new version" badge
-            Task.detached { await updates.loop(download: { false }) }
+            let updates = router.updates, catalog = router.pluginCatalog
+            // the download is Sparkle's now (spec 2026-11-25): this loop only keeps the "new version" badge, and the plug-in catalog's daily refresh
+            Task.detached { await updates.loop(download: { false }, tick: { await catalog.dailyRefresh() }) }
         }
         // denials: before any terminal can launch (`log stream` takes 1-2 s to attach; SandboxWatcher)
         if let src = config.denialSource ?? (config.watchDenials ? SandboxWatcher.logStream : nil) {
@@ -283,6 +283,7 @@ public final class Daemon: Sendable {
         sweep(root) { n in [".backup-", ".import-"].contains { n.hasPrefix($0) && UUID(uuidString: String(n.dropFirst($0.count))) != nil } }
         await router.jobsGoneWithoutProcess()   // a previous daemon's terminals all died with it
         sweep(hooksDir) { $0.hasSuffix(".claude.json") || $0.hasSuffix(".mcp.json") }
+        await router.pluginCatalog.applyStored()   // the last accepted catalog's recalls, before loading (no network)
         await router.publishPlugins(atStart: true)   // external plug-ins' commands, before any client can authenticate
         try await auth.persist()
         await hub.start()

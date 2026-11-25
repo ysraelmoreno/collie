@@ -13,6 +13,17 @@ public struct ProjectWorkConfig: Sendable, Equatable {
     public var areas: [String: String]
     /// U1: the `factory` key, read strictly by `FactoryProfile`; nil when the file has none.
     public var factory: FactoryProfile?
+    /// F1: the `fields` key (a summoned agent in its own worktree); nil when the file has none.
+    public var fields: FieldsConfig?
+
+    public struct FieldsConfig: Sendable, Equatable {
+        /// `summon` without a flag uses a field.
+        public var `default`: Bool
+        /// Live fields per paddock.
+        public var max: Int
+        public static let maxRange = 1...8
+        public init(default: Bool = false, max: Int = 4) { self.default = `default`; self.max = max }
+    }
 
     public init(gate: String? = nil, precheck: String? = nil, smoke: String? = nil, full: String? = nil, areas: [String: String] = [:]) {
         self.gate = gate; self.precheck = precheck; self.smoke = smoke; self.full = full; self.areas = areas
@@ -34,6 +45,8 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         case noAreas
         /// U1: the `factory` key is there and wrong.
         indirect case invalidFactory(FactoryProfile.ProfileError)
+        /// F1: `fields.max` out of `FieldsConfig.maxRange`.
+        case fieldsMax(Int)
 
         /// One line, in words. Names and keys come from the file: the renderer cleans them.
         public var message: String {
@@ -53,6 +66,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 "área '\(n)' não existe em collie-work.json; " + (all.isEmpty ? "o arquivo não define nenhuma área" : "existem: \(all.joined(separator: ", "))")
             case .noAreas: "nenhuma área pedida"
             case .invalidFactory(let e): e.message
+            case .fieldsMax(let n): "'fields.max' em collie-work.json é \(n); use de \(FieldsConfig.maxRange.lowerBound) a \(FieldsConfig.maxRange.upperBound)"
             }
         }
     }
@@ -96,10 +110,26 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 case .failure(let e): throw ConfigError.invalidFactory(e)
                 }
             }
+            if let v = o["fields"] {
+                guard let f = v as? [String: Any] else { throw ConfigError.wrongType(key: "fields", expected: "objeto") }
+                var fc = FieldsConfig()
+                if let d = f["default"] {
+                    guard let n = d as? NSNumber, isBool(n) else { throw ConfigError.wrongType(key: "fields.default", expected: "true ou false") }
+                    fc.default = n.boolValue
+                }
+                if let m = f["max"] {
+                    guard let n = m as? NSNumber, !isBool(n), n.doubleValue == n.doubleValue.rounded(), abs(n.doubleValue) < 1e9
+                    else { throw ConfigError.wrongType(key: "fields.max", expected: "número inteiro") }
+                    guard FieldsConfig.maxRange.contains(n.intValue) else { throw ConfigError.fieldsMax(n.intValue) }
+                    fc.max = n.intValue
+                }
+                c.fields = fc
+                warnings += f.keys.filter { $0 != "default" && $0 != "max" }.sorted().map { "chave desconhecida ignorada: fields.\($0)" }
+            }
         } catch let e as ConfigError { return .failure(e) }
         catch { return .failure(.notJSON) }
-        let known = Set(commandKeys + ["version", "areas", "factory"])
-        warnings = o.keys.filter { !known.contains($0) }.sorted().map { "chave desconhecida ignorada: \($0)" }
+        let known = Set(commandKeys + ["version", "areas", "factory", "fields"])
+        warnings = o.keys.filter { !known.contains($0) }.sorted().map { "chave desconhecida ignorada: \($0)" } + warnings
         return .success((c, warnings))
     }
 

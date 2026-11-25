@@ -3,6 +3,18 @@ import Foundation
 @testable import CollieCore
 
 @Suite struct WorkspaceTests {
+    /// F4: a record from before fields has none; one with a field keeps it through a save.
+    @Test func oldRecordWithoutField() throws {
+        let json = #"{"id":"\#(UUID())","name":"bob","preset":"claude","cwd":"/tmp","isShepherd":false}"#
+        var t = try JSONDecoder().decode(TerminalRecord.self, from: Data(json.utf8))
+        #expect(t.field == nil)
+        t.field = FieldRef(name: "bob", branch: "collie/field/bob", base: "abc1234", path: "/r/.collie/paddocks/field-bob", state: .ready)
+        let back = try JSONDecoder().decode(TerminalRecord.self, from: try JSONEncoder().encode(t))
+        #expect(back.field == t.field && back.field?.state == .ready)
+        // a state this daemon does not know: the record still decodes, without its field
+        let odd = String(decoding: try JSONEncoder().encode(t), as: UTF8.self).replacingOccurrences(of: "\"ready\"", with: "\"later\"")
+        #expect(try JSONDecoder().decode(TerminalRecord.self, from: Data(odd.utf8)).field == nil)
+    }
     @Test func decodesWithoutDesignFirst() throws {
         let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[]}"#
         let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))

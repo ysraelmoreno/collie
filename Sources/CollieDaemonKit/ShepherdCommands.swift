@@ -21,6 +21,7 @@ extension CommandRouter {
         }
         switch r.command {
         case "summon": return try await summon(r, by: me)
+        case "field.list", "field.land", "field.drop": return try await fieldCommand(r, by: me)
         case "dismiss":
             let t = try peer("target")
             // a sub-Shepherd only by the one that summoned it; its own summoned go first (the app's Shepherd never)
@@ -141,6 +142,10 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists; \(hint)")
         }
         _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
+        // F4: `--field` (or the paddock's `fields.default`): checked before anything is made; never for the loop's own
+        let fieldPick = lane == nil && scratch == nil ? try await fieldWanted(r, name: name, by: me, preset: preset, asShepherd: asShepherd) : nil
+        let id = UUID()
+        var fieldLane: Lane?
         var paddockId = me.paddockId, cwd = me.cwd
         var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it
         if let f = str(r, "paddock") {
@@ -163,6 +168,18 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "lane \(cwd) is not its own project root")
             }
         }
+        if let fieldPick {
+            // F4: the daemon cuts it from the paddock's HEAD (its own git), then vets it as a lane: same strict profile
+            let fl = try await LaneWorktree.createField(repoRoot: URL(fileURLWithPath: fieldPick.paddock.repoRoot), base: fieldPick.base,
+                                                        name: name, owner: id, host: fieldGit(fieldPick.paddock))
+            fieldLane = fl
+            do {
+                cwd = try Self.vetLane(fl.path, paddock: fieldPick.paddock).path
+                guard ProjectRoot.resolve(cwd: cwd, paddock: nil, home: sandboxHomeDir).path == cwd else {
+                    throw ProtocolError(code: .unavailable, message: "field \(cwd) is not its own project root")
+                }
+            } catch { await unfield(id, fl, paddock: fieldPick.paddock); throw error }
+        }
         if let scratch {
             // the daemon made the folder itself: no card, as for a lane
             guard lane == nil, str(r, "paddock") == nil, str(r, "cwd") == nil else {
@@ -172,7 +189,7 @@ extension CommandRouter {
         }
         // DX backlog 15, strict mode: outside the project only into a folder the user released to this Shepherd; else a card
         var anywhere = startedOpen(me)
-        if lane == nil, scratch == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
+        if lane == nil, scratch == nil, fieldLane == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
             let released = SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)
                 .contains { $0.access == .write && ProjectRoot.contains(cwd, root: URL(fileURLWithPath: $0.path)) }
             guard released else {
@@ -184,10 +201,11 @@ extension CommandRouter {
             }
             anywhere = true
         }
-        let root = lane != nil || scratch != nil ? URL(fileURLWithPath: cwd)
+        let root = lane != nil || scratch != nil || fieldLane != nil ? URL(fileURLWithPath: cwd)
             : try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: anywhere)
-        var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
+        var rec = TerminalRecord(id: id, name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
+        if let fl = fieldLane { rec.field = FieldRef(name: name, branch: fl.branch, base: fl.base, path: cwd) }
         rec.model = model
         rec.isShepherd = asShepherd   // before the launch: COLLIE_SHEPHERD and the Shepherd orientation come with the first session
         rec.summonedBy = me.id
@@ -204,6 +222,8 @@ extension CommandRouter {
             // F2 Y2a: a reviewer that fails after its launch (`persist`, its paddock gone) goes BEFORE it is unmarked:
             // else, alive and unmarked, it is "another agent working" until the daemon starts again
             if scratch != nil { try? await remove(rec) }
+            await unfield(rec.id, fieldLane, paddock: fieldPick?.paddock)   // F4: nothing worked in it yet
+            if fieldLane != nil { try? await remove(rec) }
             throw error
         }
         do {
@@ -211,7 +231,8 @@ extension CommandRouter {
             try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch
             // F2 W1: a reviewer joins no lot (no lot_board of the judged agent's group, reviewerNoMcp)
             if scratch == nil, let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
-        } catch { try? await remove(rec); throw error }
+        } catch { await unfield(rec.id, fieldLane, paddock: fieldPick?.paddock); try? await remove(rec); throw error }
+        if let fl = fieldLane { result["field"] = .object(["name": .string(name), "branch": .string(fl.branch), "path": .string(cwd)]) }
         if let p = str(r, "prompt"), !p.isEmpty {
             // the summon exists either way: report, don't fail (a retry would hit "already exists")
             do { try await asks.inject(to: rec.id, prompt: p) } catch {

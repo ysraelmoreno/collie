@@ -454,6 +454,17 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         _ = try await adminCall("plugin.install", ["path": .string(folder.path), "expectId": .string(id), "expectVersion": .string(version),
                                                    "replace": .bool(replace)], timeout: 125)
     }
+    /// `plugin.catalog`: the signed catalog the daemon accepted (`refresh`: download it again first).
+    public func pluginCatalog(refresh: Bool) async throws(ProtocolError) -> PluginCatalogView {
+        let r = try await adminCall("plugin.catalog", ["refresh": .bool(refresh)], timeout: 65)
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        do { return try dec.decode(PluginCatalogView.self, from: JSONEncoder().encode(r)) }
+        catch { throw ProtocolError(code: .internal, message: "plugin.catalog: resposta inesperada") }
+    }
+    /// `plugin.install-catalog`: install or update `id` to the catalog's `version` (the daemon checks everything again).
+    public func installFromCatalog(id: String, version: String) async throws(ProtocolError) {
+        _ = try await adminCall("plugin.install-catalog", ["id": .string(id), "version": .string(version)], timeout: 305)
+    }
     public func uninstallPlugin(_ id: String) async throws(ProtocolError) { _ = try await adminCall("plugin.uninstall", ["id": .string(id)]) }
     public func setPluginEnabled(_ id: String, _ on: Bool) async throws(ProtocolError) {
         _ = try await adminCall(on ? "plugin.enable" : "plugin.disable", ["id": .string(id)], timeout: 65)
@@ -563,10 +574,58 @@ public struct PluginRow: Decodable, Sendable, Equatable, Identifiable {
     /// Agent events the plug-in's helper takes, and what that lets it do (`PluginManifest.permissionLines`).
     public var hooks: [String]?
     public var permissions: [String]?
+    /// nil = from a folder; a recalled version stays off (`plugin.enable` refuses it) until updated or removed.
+    public var source: InstalledPlugin.Source?
+    public var recalled: PluginCatalog.Recall?
     public init(id: String, name: String, version: String, author: String? = nil, license: String? = nil, enabled: Bool = true,
-                error: String? = nil, commands: [String]? = nil, installedAt: Date? = nil, hooks: [String]? = nil, permissions: [String]? = nil) {
+                error: String? = nil, commands: [String]? = nil, installedAt: Date? = nil, hooks: [String]? = nil, permissions: [String]? = nil,
+                source: InstalledPlugin.Source? = nil, recalled: PluginCatalog.Recall? = nil) {
         self.id = id; self.name = name; self.version = version; self.author = author; self.license = license
         self.enabled = enabled; self.error = error; self.commands = commands; self.installedAt = installedAt
-        self.hooks = hooks; self.permissions = permissions
+        self.hooks = hooks; self.permissions = permissions; self.source = source; self.recalled = recalled
+    }
+}
+
+/// `plugin.catalog`'s reply: `state` ok / stale (over 30 days) / unavailable (not loaded; `reason` says why).
+public struct PluginCatalogView: Decodable, Sendable, Equatable {
+    public var state: String
+    public var reason: String?
+    public var generatedAt: Date?
+    public var items: [Item]
+    public struct Item: Decodable, Sendable, Equatable, Identifiable {
+        public var id, name, publisher, publisherName, summary: String
+        public var kind: PluginCatalog.Kind
+        /// nil: no version this Collie can install.
+        public var latest: Latest?
+        public var installed: Installed?
+        public var update: Bool
+        public var recalled: Reason?
+        public init(id: String, name: String, publisher: String = "collie", publisherName: String = "Collie", summary: String = "",
+                    kind: PluginCatalog.Kind = .agent, latest: Latest? = nil, installed: Installed? = nil, update: Bool = false, recalled: Reason? = nil) {
+            self.id = id; self.name = name; self.publisher = publisher; self.publisherName = publisherName; self.summary = summary
+            self.kind = kind; self.latest = latest; self.installed = installed; self.update = update; self.recalled = recalled
+        }
+    }
+    public struct Latest: Decodable, Sendable, Equatable {
+        public var version: String
+        public var size: Int
+        public var permissions: [String: JSONValue]
+        public var hooks: [String]
+        public var helperTeamId: String?
+        public init(version: String, size: Int = 0, permissions: [String: JSONValue] = [:], hooks: [String] = [], helperTeamId: String? = nil) {
+            self.version = version; self.size = size; self.permissions = permissions; self.hooks = hooks; self.helperTeamId = helperTeamId
+        }
+        public var permissionLines: [String] { PluginManifest.permissionLines(hooks: hooks, permissions: permissions) }
+    }
+    public struct Installed: Decodable, Sendable, Equatable {
+        public var version, source: String
+        public init(version: String, source: String = "catalog") { self.version = version; self.source = source }
+    }
+    public struct Reason: Decodable, Sendable, Equatable {
+        public var reason: String
+        public init(reason: String) { self.reason = reason }
+    }
+    public init(state: String = "ok", reason: String? = nil, generatedAt: Date? = nil, items: [Item]) {
+        self.state = state; self.reason = reason; self.generatedAt = generatedAt; self.items = items
     }
 }

@@ -112,6 +112,20 @@ import CollieTerminal
         #expect(AskInbox.message(e).contains("collie ask result \(id)"))
     }
 
+    /// F5: a field's land in the report (and its JSON); none without one, and an old entry decodes.
+    @Test func fieldNoteInReport() throws {
+        var c = AskCheckReport(status: .passed, tries: 1, tail: "ok")
+        guard case .object(let bare) = c.json else { Issue.record("no object"); return }
+        #expect(bare["field"] == nil)
+        c.field = FieldNote(land: .queued)
+        guard case .object(let o) = c.json, case .object(let f)? = o["field"] else { Issue.record("no field in \(c.json)"); return }
+        #expect(f["land"] == .string("queued") && f["reason"] == .null)
+        c.field = FieldNote(land: .skipped, reason: "já integrando")
+        #expect(try JSONDecoder().decode(AskCheckReport.self, from: JSONEncoder().encode(c)) == c)
+        let old = #"{"status":"passed","tries":1,"tail":"ok"}"#
+        #expect(try JSONDecoder().decode(AskCheckReport.self, from: Data(old.utf8)).field == nil)
+    }
+
     @Test func askParamsParse() throws {
         let n = try ArgvParser.parse(["ask", "B", "do", "it", "--check", "make test", "--spec", "s.md", "--tries", "2", "--check-timeout", "30"])
         #expect(n.args["check"] == .string("make test") && n.args["spec"] == .string("s.md") && n.args["tries"] == .number(2) && n.args["check-timeout"] == .number(30), "\(n.args)")

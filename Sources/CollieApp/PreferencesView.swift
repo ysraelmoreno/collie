@@ -170,7 +170,7 @@ struct PreferencesView: View {
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
         case .lacos: VStack(alignment: .leading, spacing: 22) { loopTrustSection; loopModelSection }
         case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CuratorPreferences(client: client); CursorMemoryPreferences(client: client) }
-        case .plugins: PluginsPreferences(client: client)
+        case .plugins: PluginsPreferences(client: client, openDesign: { page = .desenho })
         case .celular: CelularPreferences(client: client)
         case .android: AndroidPreferences(client: client)
         }

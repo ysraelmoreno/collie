@@ -42,6 +42,20 @@ actor CommandRouter {
     var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
     /// F2 R4: the loops' reviewer terminals, alive: never counted as someone working in the paddock (`loopOthersWorking`).
     var loopReviewers: Set<UUID> = []
+    /// F3: one integrator per paddock (the loop's lanes and the fields share its FIFO queue), and the fields landing.
+    let integrators = PaddockIntegrators()
+    /// F3: `field land` requests in flight, per Shepherd: a wait like an `ask` (`fieldShepherdOnlyWaits`).
+    var fieldLandHolds: [UUID: Int] = [:]
+    /// F5: `ask --check`s in flight per field agent (its turn's end makes it `ready` only with none).
+    var fieldChecks: [UUID: Int] = [:]
+    /// F5: the last field notices sent to Shepherds. ponytail: 20 lines, read by the tests only for now.
+    var fieldNoticeLog: [String] = []
+    /// The HEAD a passing `ask --check` judged, per field agent: the land merges that sha, never a later tip.
+    var fieldJudged: [UUID: String] = [:]
+    /// The most a field's wip patch holds (`git diff` output); past it the worktree stays.
+    var fieldWipCap = 64 << 20
+    /// Tests only: called at a field step ("drop", "rebase.reset") with the step's lock held.
+    var fieldProbe: (@Sendable (String) async -> Void)?
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
@@ -71,6 +85,8 @@ actor CommandRouter {
     nonisolated let artifacts: ArtifactStore
     /// External plug-ins the user installed (`<root>/plugins`).
     nonisolated let plugins: PluginStore
+    /// The signed plug-in catalog: listing, installing from it, recalls (`<root>/plugins/catalog.json`).
+    nonisolated let pluginCatalog: PluginCatalogService
     /// What each terminal's agent is doing (`<root>/work`).
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
@@ -262,7 +278,10 @@ actor CommandRouter {
             enabled: { CollieSettings.load(updateRoot).updates?.auto ?? true })
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
-        self.plugins = PluginStore(root: config.paths.root)
+        let plugins = PluginStore(root: config.paths.root); self.plugins = plugins
+        self.pluginCatalog = PluginCatalogService(root: config.paths.root, store: plugins,
+            collie: config.version.flatMap { $0.first?.isNumber == true ? $0 : nil } ?? "9999",
+            onRecall: { _ in await me.router?.publishPlugins() })
         let workDir = config.paths.root.appendingPathComponent("work")
         let remoteEvents = RemoteEventBus(); self.remoteEvents = remoteEvents
         self.work = WorkStore(dir: workDir, namer: { w in await me.router?.archiveNames(w) ?? (nil, nil) }) { id in
@@ -495,7 +514,13 @@ actor CommandRouter {
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout, gate: gate)) }
                 let busy = await targetBusy(t.id)
                 let r: AskResult
-                if let gate { r = try await asks.askGated(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: askCheckRunner(for: t)) }
+                if let gate {
+                    fieldCheckBegin(t.id)
+                    defer { fieldCheckEnd(t.id) }
+                    var g = try await asks.askGated(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: askCheckRunner(for: t))
+                    g.check = await fieldAfterCheck(t.id, g.check)   // F5: a passing check lands the field, after the ask
+                    r = g
+                }
                 else { r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout) }
                 if let c = r.check, c.status == .failed {
                     throw ProtocolError(code: .conflict, message: "\(c.failure). Fim da saída:\n\(c.tail)")
@@ -535,6 +560,7 @@ actor CommandRouter {
                     let asker = await asks.turnCompleted(terminal: tid, message: str(req, "message"))
                     turnEnds[tid, default: 0] += 1
                     noticeTurnEnded(tid, message: str(req, "message"), askedBy: asker)
+                    Task { await fieldTurnEnded(tid) }   // F5: ready, or the rebase it owed
                 }
                 guard capture else {
                     Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
@@ -587,8 +613,15 @@ actor CommandRouter {
             let delivered: @Sendable () -> Void = { Task { await inbox.delivered(id: id) } }
             do throws(ProtocolError) {
                 if let gate, let run {
-                    r = .success(try await asks.askGated(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: run,
-                                                         detached: true, askId: id, onDelivered: delivered))
+                    await self.fieldCheckBegin(target)
+                    let res: Result<AskResult, ProtocolError>
+                    do throws(ProtocolError) { res = .success(try await asks.askGated(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: run,
+                                                                detached: true, askId: id, onDelivered: delivered)) }
+                    catch { res = .failure(error) }
+                    await self.fieldCheckEnd(target)
+                    var g = try res.get()
+                    g.check = await self.fieldAfterCheck(target, g.check)
+                    r = .success(g)
                 } else {
                     r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id, onDelivered: delivered))
                 }
@@ -615,9 +648,11 @@ actor CommandRouter {
             }
             return nil
         }
-        return AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
-                       checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
-                       greenOk: flag(req, "green-ok"))
+        var g = AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
+                        checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
+                        greenOk: flag(req, "green-ok"))
+        if let f = t.field { let dir = URL(fileURLWithPath: f.path), id = t.id; g.dirty = { await self.fieldJudge(id, dir) } }   // F5, answer 4
+        return g
     }
 
     /// C1: the judge: the loop's own `runCheck`, under the target's sandbox profile and `checkEnv` (no COLLIE_*). A sandboxed
@@ -981,6 +1016,9 @@ actor CommandRouter {
 
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
+        // F4 (answer 8): a field's agent leaves its field: the uncommitted as a patch, the worktree after any land, the
+        // branch kept. Read from the record on file (a failed summon clears it first: `unfield`)
+        let field = ws.terminals.first { $0.id == t.id }?.field
         await cursorTerminalEnded(t.id)   // before the record goes: the capture needs it
         await discard(t.id)
         await inbox.drop(terminal: t.id)
@@ -997,6 +1035,10 @@ actor CommandRouter {
         await hub.emit(.removed(t.id))
         await closeRemoved(terminal: t.id, cwd: t.cwd)
         await closeHeadless(of: t.id)
+        if let field, let p = ws.paddocks.first(where: { $0.id == t.paddockId }) {
+            let out = await retireField(field, paddock: p)
+            if field.state != .landed || out.kept { Task { await self.fieldTell(t.summonedBy, out.line) } }
+        }
     }
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.

@@ -4,7 +4,9 @@ Plano: `README.md`. Depende de F1, F2, F3. Spec: "Comandos", "Registro", "Dispen
 
 ## Arquivos
 
-- Modificar: `Sources/CollieCore/Workspace.swift` (`TerminalRecord.field: FieldRef?`)
+- `FieldRef` e `TerminalRecord.field` já vêm do F3 (`Sources/CollieCore/Workspace.swift`).
+- Modificar: `Sources/CollieDaemonKit/Sandbox/SandboxProfile.swift`: o agente num field
+  grava objetos e só o próprio `collie/field/<nome>`, como a faixa com `collie/lane/` (nota do F2, b35b10a3)
 - Modificar: `Sources/CollieDaemonKit/ShepherdCommands.swift` (`summon --field/--no-field`; `dismiss`)
 - Criar: `Sources/CollieDaemonKit/FieldCommands.swift` (`field.list`, `field.land`, `field.drop`)
 - Modificar: `Sources/CollieProtocol/Commands.swift`, `Sources/CollieDaemonKit/CollieOrientation.swift`,

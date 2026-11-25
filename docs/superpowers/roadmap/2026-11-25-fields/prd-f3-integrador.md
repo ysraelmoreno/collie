@@ -8,6 +8,8 @@ Plano: `README.md`. Depende do F2 (`Lane.isField`). Spec: "Respostas à revisão
 - Criar: `Sources/CollieDaemonKit/Work/PaddockIntegrators.swift` (registro cercado → integrador; land de field)
 - Modificar: `Sources/CollieDaemonKit/Work/WorkLoopLanes.swift:47` (usar o registro)
 - Modificar: `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`--parallel > 1` recusa com fields vivos)
+- Modificar: `Sources/CollieCore/Workspace.swift` (`FieldRef` e `TerminalRecord.field`, como no F4 "Interfaces";
+  movido para cá porque a recusa do `--parallel` precisa dele)
 - Teste: `Tests/CollieDaemonKitTests/FieldLandTests.swift`, `Tests/CollieDaemonKitTests/LaneIntegratorRaceTests.swift`
 
 ## Interfaces (produz)

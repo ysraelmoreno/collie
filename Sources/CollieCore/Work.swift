@@ -258,6 +258,10 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// (`reviewGlobalConfigHash`) and its `env`/`autoConnectIde` (`reviewGlobalConfigRisky`). Every attempt of the run is
     /// compared with these, never with a base taken after an agent ran. nil: not taken (no review, or a loop from before).
     public var reviewConfigBase: String?, reviewConfigBaseRisky: String?
+    /// R1: what `node_modules/.bin`, `.venv/bin` and `venv/bin` held (name, size, date; never the content) before the
+    /// work's first attempt, or since the last task passed. Ignored by git, a failed attempt's rewrite there survives the
+    /// reset: every later attempt is compared with this, never with a base taken after it. nil: not taken yet.
+    public var bins: [String]?
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
@@ -500,6 +504,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         origins = (try? c.decodeIfPresent([String: String].self, forKey: .origins)) ?? nil
         destructive = (try? c.decodeIfPresent(Int.self, forKey: .destructive)) ?? nil
         autoLand = (try? c.decodeIfPresent(AutoLand.self, forKey: .autoLand)) ?? nil   // A4: tolerant too
+        bins = (try? c.decodeIfPresent([String].self, forKey: .bins)) ?? nil   // R1: tolerant too
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

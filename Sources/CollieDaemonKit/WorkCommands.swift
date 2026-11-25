@@ -304,7 +304,8 @@ extension CommandRouter {
                 throw invalid("--needs: \(why)")
             }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
+            let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope,
+                            greenOk: flag(r, "green-ok") ? true : nil)
             try await work.update(w.id) { $0.tasks.append(task) }
             guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
             o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "

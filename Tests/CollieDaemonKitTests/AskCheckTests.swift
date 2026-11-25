@@ -116,4 +116,66 @@ import CollieTerminal
         let n = try ArgvParser.parse(["ask", "B", "do", "it", "--check", "make test", "--spec", "s.md", "--tries", "2", "--check-timeout", "30"])
         #expect(n.args["check"] == .string("make test") && n.args["spec"] == .string("s.md") && n.args["tries"] == .number(2) && n.args["check-timeout"] == .number(30), "\(n.args)")
     }
+
+    // MARK: C2: a check that already passes before the attempt measures nothing
+
+    /// Green on the target's folder before anything is sent: refused, with the reason; the check ran once.
+    @Test func greenCheckBeforeTheAttemptIsRefused() async throws {
+        let calls = Calls()
+        let run: AskCheckRun = { _, _, _ in _ = calls.next(); return self.green }
+        do {
+            try await gate("true", tries: 3).refuseIfGreen(run: run)
+            Issue.record("a check that passes before the task was accepted")
+        } catch {
+            #expect(error.code == .invalidArgs && error.message.contains("o check já passa antes da tarefa: não mede o que ela muda") && error.message.contains("--green-ok"), "\(error)")
+        }
+        #expect(calls.count == 1)
+    }
+
+    /// Red (or a check that cannot even run) before the attempt: it goes on.
+    @Test func redCheckBeforeTheAttemptGoesOn() async throws {
+        let missing: AskCheckRun = { _, _, _ in self.red("no such file") }
+        try await gate("false", tries: 3).refuseIfGreen(run: missing)
+        let slow: AskCheckRun = { _, _, _ throws(ProtocolError) in throw ProtocolError(code: .timeout, message: "slow") }
+        try await gate("false", tries: 3).refuseIfGreen(run: slow)
+    }
+
+    /// `--green-ok`: the check is not even run first (a refactoring's check stays green).
+    @Test func greenOkSkipsTheInitialRun() async throws {
+        let calls = Calls()
+        var g = gate("true", tries: 3); g.greenOk = true
+        let run: AskCheckRun = { _, _, _ in _ = calls.next(); return self.green }
+        try await g.refuseIfGreen(run: run)
+        #expect(calls.count == 0)
+    }
+
+    @Test func greenOkFlagParses() throws {
+        let n = try ArgvParser.parse(["ask", "B", "do", "it", "--check", "true", "--green-ok"])
+        #expect(n.args["green-ok"] == .bool(true), "\(n.args)")
+    }
+
+    private func ask(_ d: Daemon, _ p: Paths, from: (id: String, token: String), _ args: [String: JSONValue], drop: String? = nil) async throws -> Response {
+        var a: [String: JSONValue] = ["target": .string("B"), "prompt": .string("crie o slugify"), "check": .string("true")]
+        for (k, v) in args { a[k] = v }
+        if let drop { a[drop] = nil }
+        return try await send(p, Request(id: "a", terminalId: from.id, token: from.token, command: "ask", args: a))
+    }
+
+    /// Through the daemon: `ask --check true` is refused and the target is never typed to; with `--green-ok` it goes out.
+    @Test func daemonRefusesAGreenCheckAndSendsWithGreenOk() async throws {
+        try await withDaemon { d, p in
+            let a = try await spawn(d, p, "A", preset: "shell"), b = try await spawn(d, p, "B", preset: "shell")
+            let ta = (id: a.id, token: try await tokenOf(d, a.id, echo: true))
+            _ = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("A"), "b": .string("B")]))
+            let refused = try await ask(d, p, from: ta, ["no-wait": .bool(true)])
+            #expect(refused.error?.code == .invalidArgs && refused.error?.message.contains("já passa antes da tarefa") == true, "\(refused)")
+            #expect(await !d.scrollbackText(UUID(uuidString: b.id)!).contains("crie o slugify"), "the target was typed to")
+            let ok = try await ask(d, p, from: ta, ["no-wait": .bool(true), "green-ok": .bool(true)])
+            #expect(ok.ok, "\(ok)")
+            #expect(await waitFor(20) { await d.scrollbackText(UUID(uuidString: b.id)!).contains("crie o slugify") })
+            // without --check, --green-ok means nothing
+            let bare = try await ask(d, p, from: ta, ["green-ok": .bool(true)], drop: "check")
+            #expect(bare.error?.code == .invalidArgs, "\(bare)")
+        }
+    }
 }

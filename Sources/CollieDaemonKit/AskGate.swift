@@ -20,6 +20,8 @@ struct AskGate: Sendable {
     var tries: Int
     var checkTimeout: Duration
     var dir: URL
+    /// C2: `--green-ok`: the check may already pass before the attempt (it is not refused for that).
+    var greenOk = false
 }
 
 typealias AskCheckRun = @Sendable (_ command: String, _ dir: URL, _ timeout: Duration) async throws(ProtocolError) -> ProcessResult
@@ -41,6 +43,25 @@ extension AskGate {
             if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue, let d = try? Data(contentsOf: url) { found[w] = d }
         }
         return found
+    }
+}
+
+/// C2: a check that passes before the task measures nothing; the loop's `work run` and the ask's gate refuse it alike.
+enum GreenCheck {
+    static let reason = "o check já passa antes da tarefa: não mede o que ela muda"
+    static let hint = "escreva um check que falhe antes (um assert sobre o comportamento pedido), ou marque --green-ok se ele deve continuar verde (refatoração)"
+    /// `--green-ok` says so at the card and in the refusal's own words.
+    static let flag = "--green-ok"
+}
+
+extension AskGate {
+    /// C2: unless `--green-ok`, the check runs once on the target's folder as it is before the prompt goes out; exit 0
+    /// refuses the ask (nothing is sent). Any other end (red, timeout, a check that cannot run) goes on.
+    func refuseIfGreen(run: AskCheckRun) async throws(ProtocolError) {
+        guard !greenOk else { return }
+        // ponytail: a check that errors or times out counts as red (it measures something it cannot pass yet)
+        guard let res = try? await run(command, dir, checkTimeout), res.status == 0 else { return }
+        throw ProtocolError(code: .invalidArgs, message: "\(GreenCheck.reason): \(GreenCheck.hint). Check: \(command)")
     }
 }
 

@@ -44,6 +44,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
     public var needs: [String]?; public var scope: [String]?
+    /// C2: `--green-ok`: the check may already pass before the task (a refactoring): `work run` does not refuse it for that. nil: it may not.
+    public var greenOk: Bool?
     /// M5.4: the token counts of every attempt of the loop on this task, summed (nil: none read). Counts only.
     public var tokens: TokenCount?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
@@ -57,7 +59,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public mutating func forgetResume() { resumeFrom = nil; resumeBranch = nil; resumeAt = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
-                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil) {
+                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil, greenOk: Bool? = nil) {
+        self.greenOk = greenOk
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
         self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
         self.evidenceGlob = evidenceGlob; self.needs = needs; self.scope = scope
@@ -79,6 +82,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
         resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
         needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
         scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
+        greenOk = (try? c.decodeIfPresent(Bool.self, forKey: .greenOk)) ?? nil
         tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
     }
 }

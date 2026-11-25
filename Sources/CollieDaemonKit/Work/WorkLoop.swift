@@ -128,6 +128,8 @@ actor WorkLoop {
     static func precheckPrompt(_ tail: String) -> String { precheckPromptHead + "\n" + tail }
     /// M10.2: the pre-check's own limit (the budget's rest bounds it too) and its tail's size.
     static let precheckTimeout = 180, precheckLines = 40, precheckChars = 3000
+    /// A task's check limit (the loop's own, `init`'s default); `work run`'s start-state check (C2) uses the same.
+    static let defaultCheckTimeout: Duration = .seconds(1800)
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
@@ -146,7 +148,7 @@ actor WorkLoop {
     /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
     let notices: LoopNotices
 
-    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
+    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
          lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices()) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait

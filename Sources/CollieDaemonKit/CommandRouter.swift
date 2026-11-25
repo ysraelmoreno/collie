@@ -481,6 +481,7 @@ actor CommandRouter {
                 let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 let gate = try askGate(req, target: t)
+                if let gate { try await gate.refuseIfGreen(run: askCheckRunner(for: t)) }   // C2: before anything is sent
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout, gate: gate)) }
                 let busy = await targetBusy(t.id)
                 let r: AskResult
@@ -599,13 +600,14 @@ actor CommandRouter {
     /// C1: `ask --check`'s gate: nil without `--check`. The check runs in the target's own folder.
     private func askGate(_ req: Request, target t: TerminalRecord) throws(ProtocolError) -> AskGate? {
         guard let command = str(req, "check"), !command.isEmpty else {
-            guard str(req, "spec") == nil, req.args["tries"] == nil, req.args["check-timeout"] == nil else {
-                throw ProtocolError(code: .invalidArgs, message: "--spec, --tries and --check-timeout need --check")
+            guard str(req, "spec") == nil, req.args["tries"] == nil, req.args["check-timeout"] == nil, !flag(req, "green-ok") else {
+                throw ProtocolError(code: .invalidArgs, message: "--spec, --tries, --check-timeout and --green-ok need --check")
             }
             return nil
         }
         return AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
-                       checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd))
+                       checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
+                       greenOk: flag(req, "green-ok"))
     }
 
     /// C1: the judge: the loop's own `runCheck`, under the target's sandbox profile and `checkEnv` (no COLLIE_*). A sandboxed

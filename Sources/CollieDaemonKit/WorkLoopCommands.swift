@@ -103,6 +103,8 @@ extension CommandRouter {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
+        // C2: a check that already passes at the cercado's HEAD measures nothing: refused before anything reaches the card
+        if let why = await alreadyGreen(open, work: w.id, paddock: paddock, starter: t.id, dir: dir) { throw invalid(why) }
         let id = w.id, starter = t.id, title = w.title
         // a paddock the owner trusts for loops (read now, after the awaits): no card. Everything above held all the same
         // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
@@ -130,6 +132,27 @@ extension CommandRouter {
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], fileWarning)
+    }
+
+    /// C2: the open tasks (not `--green-ok`) whose check exits 0 at the paddock's HEAD as it is now (the tree is clean: `work run`
+    /// refused a dirty one), run as the loop runs it (its sandbox, its env, its timeout). nil: none; else the refusal naming them.
+    /// A check that fails, times out or cannot run counts as red: it goes on.
+    private func alreadyGreen(_ tasks: [WorkTask], work id: UUID, paddock: Paddock, starter: UUID, dir: URL) async -> String? {
+        let todo = tasks.filter { $0.greenOk != true }
+        guard !todo.isEmpty else { return nil }
+        // the loop's own profile (made again by `startLoop`); removed when done, so a refusal leaves nothing behind
+        if config.sandboxHome != nil { _ = try? prepareLoopSandbox(id, paddock: paddock) }
+        defer { if config.sandboxHome != nil { SandboxLaunch.remove(id, root: config.paths.root) } }
+        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
+                                  sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
+        var green: [WorkTask] = []
+        for task in todo {
+            // ponytail: serial, the loop's own check timeout; a slow suite of checks delays `work run`, add parallelism if it bites
+            if let res = try? await host.check(task.check ?? "false", in: dir, timeout: WorkLoop.defaultCheckTimeout), res.status == 0 { green.append(task) }
+        }
+        guard !green.isEmpty else { return nil }
+        return "\(GreenCheck.reason): " + green.map { "\"\(RerailText.clean($0.title))\" [\($0.id)] check «\(RerailText.clean($0.check ?? "", max: 200))»" }.joined(separator: ", ")
+            + ". \(GreenCheck.hint.prefix(1).uppercased() + GreenCheck.hint.dropFirst()) (collie work task add … \(GreenCheck.flag))"
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults, read only when a flag is left out. Never fails:
@@ -269,7 +292,7 @@ extension CommandRouter {
         func list(_ label: String, _ xs: [String]?) -> String {
             xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
         }
-        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))"
+        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (t.greenOk == true ? " \(GreenCheck.flag)" : "")
                 + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
                 + (i < tasks.count - 1 ? ";" : ".")
         }

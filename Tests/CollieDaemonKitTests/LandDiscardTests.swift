@@ -247,6 +247,77 @@ import CollieProtocol
         #expect(w.notes.contains { $0.text.contains("NÃO descartados") } && !w.notes.contains { $0.text.contains("[reopen]") }, "\(w.notes.map(\.text))")
     }
 
+    /// C6 (S9b -> S10): a `work stop` while the land's CI runs is no land: the commit of the attempt is discarded as a
+    /// failed land's (the patch kept, the task reopened), the base is untouched, and the next land of another work
+    /// does not carry it.
+    @Test(.timeLimit(.minutes(1))) func aStopDuringTheLandsCiDiscardsTheCommit() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let k = try await Self.realPaddock(d, repo, "stopci")
+            let dir = URL(fileURLWithPath: k.path)
+            let (store, host, loop, cleanup) = try await Self.engine(d, k)
+            defer { cleanup() }
+            let start = try await Self.git(dir, "rev-parse", "HEAD"), base = try await Self.git(repo, "rev-parse", "main")
+            let w1 = try await Self.work(store, k, 1)
+            try await store.update(w1) { $0.loop?.autoLand?.ci = "ci-held" }
+            await host.set("w1-task-t1-t1", LoopScript(act: { try await commit("cube.swift", "let cube = 1\n", in: $0) }))
+            // the CI never ends by itself: only the stop's cancel ends it
+            let (entered, inside) = AsyncStream<Void>.makeStream()
+            await host.setCheckStub { c, _ in
+                guard c == "ci-held" else { return nil }
+                inside.yield()
+                await heldUntilCancelled()
+                return ProcessResult(status: 143, stdout: "", stderr: "", truncated: false)
+            }
+            let run = Task { await loop.run(work: w1, dir: dir) }
+            for await _ in entered { break }
+            await loop.stop(work: w1)
+            #expect(await run.value == .stopped)
+            let x = try #require(try await store.get(w1))
+            #expect(x.loop?.stopReason?.code == .requested, "\(String(describing: x.loop?.stopReason))")
+            #expect(try await Self.git(dir, "rev-parse", "HEAD") == start)
+            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("cube.swift").path))
+            let patch = try #require(Self.patches(host, w1).first)
+            #expect(try String(contentsOf: patch, encoding: .utf8).contains("+let cube = 1"))
+            #expect(x.notes.contains { $0.text.contains("descartei do cercado") && $0.text.contains("git am '") }, "\(x.notes.map(\.text))")
+            #expect(x.tasks.first { $0.id == "t1" }?.state == .open)
+            #expect(try await Self.git(repo, "rev-parse", "main") == base)
+            try await store.update(w1) { $0.closedAt = Date() }
+            await host.setCheckStub { _, _ in nil }
+
+            let w2 = try await Self.work(store, k, 2)
+            await host.set("w2-task-t2-t1", LoopScript(act: { try await commit("half.swift", "let half = 2\n", in: $0) }))
+            _ = await loop.run(work: w2, dir: dir)
+            #expect(try await store.get(w2)?.loop?.stopReason?.code == .landed)
+            let files = try await Self.git(repo, "log", "--name-only", "--format=", "main")
+            #expect(files.contains("half.swift") && !files.contains("cube.swift"), "\(files)")
+        }
+    }
+
+    /// C6: a `work stop` during an agent's attempt is not the land's: the done task's commit stays, nothing discarded.
+    @Test func aStopDuringAnAttemptDiscardsNothing() async throws {
+        try await withDaemon { d, _ in
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let k = try await Self.realPaddock(d, repo, "stopatt")
+            let dir = URL(fileURLWithPath: k.path)
+            let (store, host, loop, cleanup) = try await Self.engine(d, k)
+            defer { cleanup() }
+            let start = try await Self.git(dir, "rev-parse", "HEAD")
+            let w = try await Self.work(store, k, 1)
+            await host.set("w1-task-t1-t1", LoopScript(act: {
+                try await commit("t1.swift", "let t = 1\n", in: $0)
+                await loop.stop(work: w)
+            }))
+            #expect(await loop.run(work: w, dir: dir) == .stopped)
+            let x = try #require(try await store.get(w))
+            #expect(x.loop?.stopReason?.code == .requested && x.loop?.stopReason?.detail == nil, "\(String(describing: x.loop?.stopReason))")
+            #expect(try await Self.git(dir, "rev-parse", "HEAD") != start)
+            #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("t1.swift").path))
+            #expect(x.tasks.first { $0.id == "t1" }?.state == .done && Self.patches(host, w).isEmpty)
+            #expect(!x.notes.contains { $0.text.contains("descartei do cercado") })
+        }
+    }
+
     @Test func theStartCarriesOverOnlyFromALoopThatDidNotLand() {
         var l = WorkLoopState(); l.autoLand = .init(gate: "true"); l.autoLand?.startHead = "abc"
         l.stopReason = .init(.landBaseMoved)
@@ -255,6 +326,12 @@ import CollieProtocol
         #expect(CommandRouter.loopStartHead(after: l) == nil)
         #expect(CommandRouter.loopStartHead(after: nil) == nil)
     }
+}
+
+/// C6: a fake command that never ends by itself: it returns only once its task is cancelled (no clock, no sleep).
+func heldUntilCancelled() async {
+    let (never, end) = AsyncStream<Void>.makeStream()
+    await withTaskCancellationHandler { for await _ in never {} } onCancel: { end.finish() }
 }
 
 private extension CommandRouter {

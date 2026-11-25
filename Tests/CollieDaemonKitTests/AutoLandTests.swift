@@ -434,10 +434,49 @@ import CollieProtocol
         #expect(await r.host.ownerNotices.last?.contains("teto diário") == true)
     }
 
-    @Test func theDailyCapReachedLandsNothing() async throws {
+    /// C6 (S7): the cap already spent refuses at the run's start: no attempt, no agent, no review, nothing landed.
+    @Test func theDailyCapReachedStartsNoAttempt() async throws {
         let r = try await Self.rig(perDay: 1); defer { r.cleanup() }
         try await Self.pastLands(r, hoursAgo: [2])
-        try await Self.expectStopped(r, .landDailyCap)
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landDailyCap && w.loop?.stopReason?.detail == "1 de 1 em 24 h", "\(String(describing: w.loop?.stopReason))")
+        #expect(w.loop?.used == 0 && w.tasks[0].state == .open)
+        #expect(!(w.loop?.events ?? []).contains { $0.kind == .attemptStarted }, "\(w.loop?.events?.map(\.kind) ?? [])")
+        #expect(w.notes.contains { $0.text.contains("teto diário atingido (1 de 1 em 24 h)") })
+        #expect(await r.host.lands.isEmpty)
+        #expect(await r.host.ownerNotices.last?.contains("teto diário") == true)
+    }
+
+    /// C6: the land's gate and CI are in the journal, in order, between the attempt and `landed`.
+    @Test func theLandsGateAndCiAreJournaled() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        let events = try await r.get().loop?.events ?? []
+        let land: [LoopEvent.Kind] = [.landGateStarted, .landGateFinished, .landCiStarted, .landCiFinished, .landed]
+        #expect(events.map(\.kind).filter(land.contains) == land, "\(events.map(\.kind))")
+        let ci = try #require(events.first { $0.kind == .landCiFinished })
+        #expect(ci.detail?.hasPrefix("exit 0 em ") == true, "\(String(describing: ci.detail))")
+    }
+
+    /// C6: `work stop` cancels the land's CI at once (it never ends by itself here), and journals its end.
+    @Test(.timeLimit(.minutes(1))) func aWorkStopCancelsTheLandsCi() async throws {
+        let r = try await Self.rig(ci: "ci-held"); defer { r.cleanup() }
+        let (entered, inside) = AsyncStream<Void>.makeStream()
+        await r.host.setCheckStub { c, _ in
+            guard c == "ci-held" else { return nil }
+            inside.yield()
+            await heldUntilCancelled()
+            return ProcessResult(status: 143, stdout: "", stderr: "", truncated: false)
+        }
+        let run = Task { await r.run() }
+        for await _ in entered { break }
+        await r.loop.stop(work: r.work)
+        #expect(await run.value == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .requested && await r.host.lands.isEmpty, "\(String(describing: w.loop?.stopReason))")
+        let kinds = (w.loop?.events ?? []).map(\.kind)
+        #expect(kinds.contains(.landCiStarted) && kinds.contains(.landCiFinished), "\(kinds)")
     }
 
     @Test func aRegressedDoctorStopsTheChain() async throws {

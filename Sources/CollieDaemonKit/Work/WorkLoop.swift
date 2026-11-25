@@ -249,6 +249,8 @@ actor WorkLoop {
     static let defaultPreCheckTimeout: Duration = .seconds(120)
     let preCheckTimeout: Duration
     var preChecks: [UUID: Task<[WorkTask], Never>] = [:]
+    /// C6: the land's gate or CI running now, by work: `work stop` (and `--now`) cancels it at once, as the pre-check's.
+    var landRuns: [UUID: Task<Result<ProcessResult, ProtocolError>, Never>] = [:]
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
@@ -268,6 +270,7 @@ actor WorkLoop {
         stopping.insert(id)
         lanes[id]?.signal.yield(.poke)   // M3.5: a parallel run waits on its lanes: it is told now
         preChecks[id]?.cancel()   // C5c: the pre-check ends at once (its checks are killed)
+        landRuns[id]?.cancel()    // C6: so does the land's gate or CI
         if first, (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
         if now { forcing.insert(id); return }
         guard first else { return }
@@ -312,7 +315,9 @@ actor WorkLoop {
         }
         // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
         // C5c: the first phase, a check that already passes ends the loop before any attempt
-        let green = first?.loop?.greenPreCheck == true ? await greenPreCheck(id, dir) : nil
+        // C6: the daily cap already spent refuses before any attempt (no agent, no review spent on a land that cannot be)
+        var green = landing ? await dailyCapReached(id, first?.loop?.autoLand) : nil
+        if green == nil, first?.loop?.greenPreCheck == true { green = await greenPreCheck(id, dir) }
         if let green { stop = green }
         let parallel = green != nil ? 0 : (try? await store.get(id))?.loop?.parallel ?? 1
         if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
@@ -339,7 +344,10 @@ actor WorkLoop {
         if end == .finished, !stopping.contains(id), let al = (try? await store.get(id))?.loop?.autoLand { (end, stop) = await autoLand(work: id, al, dir: dir) }
         // C5c: a land that did not integrate leaves no commit of this work on the paddock (`landed`: the next work starts here)
         var discarded: String?
-        if let code = stop?.code, Self.discards.contains(code) { discarded = await discardLand(id, dir) }
+        // C6: a `work stop` (or a cancel) in the land's phase is no land either; one in an attempt's is not (`landPhase`)
+        if let s = stop, Self.discards.contains(s.code) || (Self.halts.contains(s.code) && s.detail == Self.landPhase) {
+            discarded = await discardLand(id, dir)
+        }
         // A5: landed: the chain's next approved work, or why it ends here (a `work stop` meanwhile: `requested`)
         if stop?.code == .landed, let al = (try? await store.get(id))?.loop?.autoLand, let s = await afterLand(id, al) {
             stop = s; end = s.finishes ? .finished : .stopped
@@ -1443,13 +1451,35 @@ extension WorkLoop {
 
     /// The first condition that fails, or the land's own `landed` (nil: never; a land always says how it went).
     private func landConditions(_ id: UUID, _ w: Work, _ al: WorkLoopState.AutoLand, _ dir: URL) async -> WorkLoopState.Stop? {
-        func run(_ command: String, _ timeout: Duration) async -> String? {
-            do {
-                let r = try await host.check(command, in: dir, timeout: timeout)
-                if r.status == 0 { return nil }
+        // C6: journaled (started / finished, with exit and duration) and cancelled by `work stop` at once
+        func run(_ command: String, _ timeout: Duration, _ kinds: (LoopEvent.Kind, LoopEvent.Kind)) async -> String? {
+            let t0 = host.now(), started = entry(kinds.0)
+            try? await store.update(id) { $0.record(started) }
+            let host = self.host
+            let job = Task { await BoundedProcess.$killOnCancel.withValue(true) { () async -> Result<ProcessResult, ProtocolError> in
+                do throws(ProtocolError) { return .success(try await host.check(command, in: dir, timeout: timeout)) } catch { return .failure(error) }
+            } }
+            landRuns[id] = job
+            if stopping.contains(id) { job.cancel() }
+            let result = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
+            landRuns[id] = nil
+            let secs = "em \(Int(host.now().timeIntervalSince(t0).rounded())) s"
+            let why: String?, short: String
+            switch result {
+            case .success(let r) where r.status == 0: why = nil; short = "exit 0 \(secs)"
+            case .success(let r):
                 let tail = (r.stdout + r.stderr).split(separator: "\n").suffix(20).joined(separator: "\n")
-                return "exit \(r.status)" + (tail.isEmpty ? "" : ":\n" + tail)
-            } catch { return error.code == .timeout ? "timeout" : "não rodou: \(error.message)" }
+                why = "exit \(r.status)" + (tail.isEmpty ? "" : ":\n" + tail); short = "exit \(r.status) \(secs)"
+            case .failure(let e) where e.code == .timeout: why = "timeout"; short = "timeout \(secs)"
+            case .failure(let e): why = "não rodou: \(e.message)"; short = "não rodou"
+            }
+            let finished = entry(kinds.1, detail: short)
+            try? await store.update(id) { $0.record(finished) }
+            return why
+        }
+        // C6: a `work stop` or a cancel during the land wins over what the cancelled command said (`landPhase`: discarded)
+        func halted() -> WorkLoopState.Stop? {
+            stopping.contains(id) ? .init(.requested, detail: Self.landPhase) : Task.isCancelled ? .init(.cancelled, detail: Self.landPhase) : nil
         }
         func failed(_ code: WorkLoopState.Stop.Code, _ what: String, _ why: String) async -> WorkLoopState.Stop {
             await note(id, LotBoards.scrub(String("[loop] auto-land: \(what) (\(why)); nada integrado".prefix(Self.noteChars))))
@@ -1457,8 +1487,7 @@ extension WorkLoop {
         }
         guard await host.factoryPaddock() else { return .init(.landNotFactory) }
         // A5: the paddock's daily cap, before any land (the first of a run too)
-        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
-        if today >= perDay { return await failed(.landDailyCap, "teto diário atingido", "\(today) de \(perDay) em 24 h") }
+        if let cap = await dailyCapReached(id, al) { return cap }
         guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
         // C3b: the base must be the one the last attempt began on (a host with no base, the tests' fakes: none to check)
         let base: String?
@@ -1474,7 +1503,9 @@ extension WorkLoop {
         default: return await failed(.landGateRed, "portão não rodou", "não consegui comparar o que julga o land com a base")
         }
         await phase(id, .gate)
-        if let why = await run(al.gate, checkTimeout) { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
+        let gate = await run(al.gate, checkTimeout, (.landGateStarted, .landGateFinished))
+        if let h = halted() { return h }
+        if let why = gate { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
         // parecer mudo/inválido or a task with no review in its last attempt is no approval
         if let t = w.tasks.first(where: { $0.state == .done && $0.reviewClean != true }) {
             return await failed(.landReviewVeto, "revisão sem aprovação limpa", RerailText.clean(t.title, max: 80) + ": " + (t.review ?? "sem revisão"))
@@ -1486,7 +1517,9 @@ extension WorkLoop {
             return await failed(.landAcceptRed, "aceite em runtime sem passar", RerailText.clean(t.title, max: 80) + ": " + (t.acceptResult ?? "não rodou"))
         }
         await phase(id, .check)
-        if let why = await run(al.ci, .seconds(al.timeout)) { return await failed(.landCiRed, "CI local vermelho", why) }
+        let ci = await run(al.ci, .seconds(al.timeout), (.landCiStarted, .landCiFinished))
+        if let h = halted() { return h }
+        if let why = ci { return await failed(.landCiRed, "CI local vermelho", why) }
         await phase(id, nil)
         guard let status = await out(["status", "--porcelain"], dir) else { return await failed(.gitFailed, "git falhou", "status") }
         if !status.isEmpty { return await failed(.landDirty, "árvore do cercado suja", String(status.prefix(300))) }
@@ -1496,8 +1529,7 @@ extension WorkLoop {
         if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
         // the gate and the CI may take long (up to the CI's timeout): a `work stop`, a cancel, the work closed or the
         // starter gone meanwhile wins, and nothing lands
-        if stopping.contains(id) { return .init(.requested) }
-        if Task.isCancelled { return .init(.cancelled) }
+        if let h = halted() { return h }
         guard let now = try? await store.get(id), now.closedAt == nil, now.loop?.state == .running else { return .init(.workGone) }
         guard await host.starterAlive() else { return .init(.starterGone) }
         do {
@@ -1607,6 +1639,22 @@ extension WorkLoop {
         do { now = try await host.baseHead() } catch { return "a base não pôde ser lida: \(error.message)" }
         guard let now else { return "a base não pôde ser lida" }
         return now == judged ? nil : "a base está em \(now.prefix(12)), a tentativa começou em \(judged.prefix(12))"
+    }
+
+    /// C6: the stop's detail of a `work stop` or a cancel in the land's phase (after every task ended): the run's end
+    /// discards the work's commits as a failed land does. One in an attempt has none, and keeps them.
+    static let landPhase = "land"
+    static let halts: Set<WorkLoopState.Stop.Code> = [.requested, .cancelled]
+
+    /// The paddock's daily cap spent (`al.perDay` lands in 24 h): the stop, with its note; nil: room left (or no auto-land).
+    /// The land checks it, and C6 the run's start too, before any attempt.
+    func dailyCapReached(_ id: UUID, _ al: WorkLoopState.AutoLand?) async -> WorkLoopState.Stop? {
+        guard let al else { return nil }
+        let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
+        guard today >= perDay else { return nil }
+        let why = "\(today) de \(perDay) em 24 h"
+        await note(id, LotBoards.scrub(String("[loop] auto-land: teto diário atingido (\(why)); nada integrado".prefix(Self.noteChars))))
+        return .init(.landDailyCap, detail: Self.eventDetail(why))
     }
 
     /// The paddock's lands in the last 24 h (by the host's clock), from the daemon's durable record (`LoopHost.autoLands`).

@@ -41,7 +41,7 @@ extension CommandRouter {
             }
             let factory = flag(r, "factory")
             if factory {   // A2: the owner's alone, and only over a profile the doctor passes
-                guard caller == nil else { throw Self.factoryOwnerOnly }
+                guard caller == nil else { throw Self.factoryCreateOwnerOnly }
                 // ponytail: checked on the source (the folder, or the repo's working tree) before the worktree exists;
                 // a profile changed but not committed can differ from the new branch's. `paddock factory on` reads the paddock itself
                 let source: URL; if let folder { source = folder } else { source = try await PaddockManager.repoRoot(of: repo) }
@@ -161,6 +161,8 @@ extension CommandRouter {
         return SignedAppCheck.realPath(pasture) == SignedAppCheck.realPath(root)
     }
 
+    /// C6 (S8): `paddock create --factory` by an agent: what it asked is to create, not to switch on or off.
+    static let factoryCreateOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono pode criar como fábrica (o app ou a CLI do dono), nunca um agente")
     static let factoryOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente")
     static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
 

@@ -308,4 +308,15 @@ private func paddockList(_ r: Response) -> [[String: JSONValue]] {
             #expect(try await call(p, open, "paddock.create", ["name": "gone", "folder": "/nonexistent-collie"]).error?.code == .invalidArgs)
         }
     }
+
+    /// C6 (S8): an agent asking `paddock create --factory` is told it may not create as a factory (not "switch on or off").
+    @Test func anAgentsFactoryCreateIsRefusedWithTheCreateText() async throws {
+        let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", cwd: repo, shepherd: true)
+            let e = try await call(p, m, "paddock.create", ["name": "fab", "factory": "true"]).error
+            #expect(e?.code == .unauthorized && e?.message.contains("criar como fábrica") == true && e?.message.contains("liga ou desliga") == false,
+                    "\(String(describing: e))")
+        }
+    }
 }

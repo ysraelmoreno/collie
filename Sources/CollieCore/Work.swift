@@ -193,6 +193,9 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         /// C5c: the loop's first phase, the open tasks' checks run once at the paddock's HEAD (`checkAlreadyGreen`)
         /// started / finished (detail: how many passed).
         case preCheckStarted, preCheckFinished
+        /// C6, `--auto-land`: the land's gate and its local CI started / finished (detail: `exit n em s s`, `timeout em s s`
+        /// or `não rodou`).
+        case landGateStarted, landGateFinished, landCiStarted, landCiFinished
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

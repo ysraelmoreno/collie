@@ -6,11 +6,12 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
-## [0.2.0] — draft (not released)
+## [0.2.0] — 2026-11-25
 
-> **Draft.** The factory below is a **preview**: every piece is implemented and covered by tests with fake hosts, but the
-> end-to-end validation in a real repository (A7, `docs/superpowers/specs/autoland/a7-validacao-e2e.md`) has **not run
-> yet**. Do not rely on `--auto-land` for unattended work before it does. Nothing here pushes, opens a PR or tags.
+> The factory below is a **preview**. The auto-land was validated end to end in a throwaway repository
+> (`docs/superpowers/roadmap/2026-11-24-autoland/a7-evidencia/`, scenarios S1 to S10): green landing, red gate, red
+> acceptance, queue of two works, daily cap, refusals, a moved base, a stop during the land. Nothing here pushes,
+> opens a PR or tags: a land is a local `--no-ff` merge into the base.
 
 ### Added
 - **Factory for users (preview):** the `factory-init` Shepherd skill (a stack detector and Swift, Node and Python models in `docs/fabrica/modelos/`) builds a project's factory profile; `collie factory doctor` scores its layers (static, judge, verification, review, prose, guardrails) from 0 to 3, read only, and exits 1 below `--min`.
@@ -29,11 +30,19 @@ Names in quotes are labels of the app, which is in Portuguese.
 - `work run` applies the profile's review and guardrails instead of only describing them; a loop review also runs in open mode.
 - Review text, notes and notices of a run are scrubbed before they reach the owner; the reviewers' folder is trusted in `~/.claude.json` before the review base is taken.
 
-### Not validated yet
-- The auto-land has never landed a real repository end to end (A7); the unit tests use fake hosts and fake clocks.
-- Runtime acceptance scripts for `collie device`, a browser or an app service are examples, not a framework.
+### Fixed (found by the end-to-end validation)
+- `work run` no longer blocks on the "check already passes" pre-check: it runs inside the loop (4 at a time, 120 s each, a timeout counts as red) and `work stop` interrupts it; a cancelled `work run` never leaves the paddock reserved.
+- An auto-land that stops without integrating (base moved, red gate, review veto, red CI, daily cap, a `work stop` during the land...) discards the attempt's commits from the paddock into a patch (`git am` to recover) and reopens the tasks they belonged to, so they never ride into another work's land.
+- `work stop` during the land kills the CI of the land at once and the journal records the land's gate and CI; `--now` forces a stop; a shell agent in a paddock loop is refused.
+- A spent daily cap is refused at `work run`, before any agent or review is paid for.
+- The plan linter and `work plan apply` close the bypasses found in review (always-green checks, symlinked `tasks`, unreadable cards).
+
+### Known limits
+- A reviewer is a probabilistic veto: it can approve a justified bug (S3). The gate, the CI and the acceptance command are the hard checks.
+- A `work stop` in the window between the last attempt and the land leaves the task done with its commit in the paddock (not discarded).
 - `factory.guardrails.destructive` is a warning only; it blocks nothing.
 - Parallel lanes (`--parallel` over 1) keep a known gap: a commit made after the integration is not re-reviewed.
+- Runtime acceptance scripts for `collie device`, a browser or an app service are examples, not a framework.
 
 ## [0.1.9] — 2026-11-21
 

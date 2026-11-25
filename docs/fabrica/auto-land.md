@@ -7,8 +7,9 @@ fixo de condições passa. Tudo falha fechado: qualquer dúvida para o laço com
 (`WorkLoopCommands.swift`, `landPaddock`: qualquer outro modo é recusado). O que sai do seu computador continua sendo
 decisão sua: depois do land, você revisa e dá o push.
 
-Estado: preview. As partes abaixo estão implementadas e testadas com hosts falsos; a validação ponta a ponta num
-repositório real é a A7 (`docs/superpowers/specs/autoland/a7-validacao-e2e.md`) e ainda não rodou.
+Estado: preview. As partes abaixo estão implementadas, testadas com hosts falsos e validadas ponta a ponta num repositório
+descartável (A7, cenários S1 a S10; evidência em `docs/superpowers/roadmap/2026-11-24-autoland/a7-evidencia/`). Segue
+preview: a revisão é um veto probabilístico e um `work stop` na janela entre a última tentativa e o land não descarta o commit.
 
 ## Como ligar
 

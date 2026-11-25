@@ -4,7 +4,7 @@ Duas pontas do mesmo fluxo: a **entrada** (do PRD em texto até tarefas aprovada
 conta para o land). O motor do laço não conhece Jira, Linear nem GitHub: o PRD chega em markdown e a origem é texto
 opaco. Nada aqui faz push (veja `docs/fabrica/auto-land.md`).
 
-Estado: preview, testado com hosts falsos; a A7 (ponta a ponta) ainda não rodou. Detalhes de cada ponta:
+Estado: preview, testado com hosts falsos; o aceite foi validado ponta a ponta na A7 (S5a vermelho, S5b verde). Detalhes de cada ponta:
 `docs/fabrica/plano.md` e `docs/fabrica/aceite.md`.
 
 ## Entrada: PRD, plano, aprovação, `work run`

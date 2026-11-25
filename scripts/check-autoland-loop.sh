@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Checks of the auto-land tasks (docs/superpowers/specs/autoland/*.md): scripts/check-autoland-loop.sh a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d
+# Checks of the auto-land tasks (docs/superpowers/specs/autoland/*.md): scripts/check-autoland-loop.sh a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
-case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d}" in
+case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6}" in
   a1) t --filter FactoryRunProfileTests --filter ProjectWorkConfigTests --filter FactoryProfileTests --filter WorkCommandTests --filter WorkLoopTests ;;
   a2) t --filter PaddockFactoryTests --filter PaddockModelTests --filter FactoryDoctorTests --filter CommandsTests ;;
   b1) t --filter FactoryRunProfileTests --filter PaddockFactoryTests --filter WorkCommandTests --filter CommandsTests --filter WorkLoopTests --filter FactoryDoctorTests ;;
@@ -24,6 +24,7 @@ case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|
   c4a) t --filter PlanLintTests --filter PlanApplyTests --filter PrdStoreTests --filter AcceptTests --filter AutoLandTests --filter WorkLoopTests --filter AttemptMachineTests ;;
   c5a) t --filter StopGraceTests --filter WorkLoopTests --filter AttemptMachineTests --filter AutoLandTests --filter WorkCommandTests --filter WorkLoopCommandTests ;;
   c5b) t --filter PlanLintTests --filter PlanApplyTests --filter PrdStoreTests --filter WorkCommandTests ;;
+  c6) t --filter PreCheckTests --filter LandDiscardTests --filter AutoLandTests --filter WorkLoopTests --filter WorkLoopCommandTests --filter PaddockCommandTests ;;
   c5d) t --filter PreCheckTests --filter LandDiscardTests --filter StopGraceTests ;;
   c5c) t --filter PreCheckTests --filter LandDiscardTests --filter AutoLandTests --filter WorkLoopTests --filter WorkLoopCommandTests --filter WorkCommandTests ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;

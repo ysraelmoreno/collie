@@ -1034,10 +1034,9 @@ actor WorkLoop {
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
             g.addTask {
                 do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
-                catch where error.code == .timeout {
-                    // P2: never reached the agent / its reply timed out after it did
-                    return AskCoordinator.promptNotDelivered(error) ? .promptNotDelivered(error.message, load: Self.loadAverage()) : .turnTimedOut(error.message)
-                }
+                // P2/P3: never reached the agent (a timeout before it, or an Enter that never took) / its reply timed out after it did
+                catch where AskCoordinator.promptNotDelivered(error) { return .promptNotDelivered(error.message, load: Self.loadAverage()) }
+                catch where error.code == .timeout { return .turnTimedOut(error.message) }
                 catch { return .turnFailed(error.message) }
             }
             g.addTask {

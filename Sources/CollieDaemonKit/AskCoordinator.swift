@@ -685,9 +685,14 @@ public actor AskCoordinator {
     }
 
     /// P2: a `.timeout` whose prompt never reached the agent (`timedOut`'s "prompt not delivered", a stalled PTY write),
-    /// not a reply that timed out after it did ("No reply from …").
+    /// not a reply that timed out after it did ("No reply from …"). P3: also the `.unavailable` "did not submit the
+    /// prompt" (the Enter never took); any other `.unavailable` (a terminal gone) is not.
     nonisolated static func promptNotDelivered(_ e: ProtocolError) -> Bool {
-        e.code == .timeout && (e.message.contains("prompt not delivered") || e.message.contains("not accepting input"))
+        switch e.code {
+        case .timeout: e.message.contains("prompt not delivered") || e.message.contains("not accepting input")
+        case .unavailable: e.message.contains("did not submit the prompt")
+        default: false
+        }
     }
 
     private func timedOut(_ id: UUID, after timeout: Duration) {

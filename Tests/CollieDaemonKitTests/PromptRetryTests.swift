@@ -10,6 +10,8 @@ private typealias M = AttemptMachine
 private let agent = UUID()
 private let lost = "'w-task-a-t1' is still busy with an earlier turn; prompt not delivered"
 private func notDelivered(_ m: String = lost) -> ProtocolError { ProtocolError(code: .timeout, message: m) }
+private let unsubmitted = ProtocolError(code: .unavailable,
+    message: "'w-task-a-t1' did not submit the prompt; it may still be in its input. Check it with `collie check`")
 
 /// Feeds `events` from `start`; the last answer.
 private func feed(_ start: M.State, _ events: [M.Event]) -> (M.State, [M.Effect]) {
@@ -35,6 +37,14 @@ extension AttemptMachineTests {
 
     @Test func notRunningIsNotPromptNotDelivered() {
         #expect(!AskCoordinator.promptNotDelivered(ProtocolError(code: .notRunning, message: "prompt not delivered")))
+    }
+
+    /// P3: the Enter that never took is a prompt not delivered; any other `.unavailable` (a terminal gone) is not.
+    @Test func unsubmittedPromptIsPromptNotDelivered() {
+        #expect(AskCoordinator.promptNotDelivered(unsubmitted))
+        #expect(!AskCoordinator.promptNotDelivered(ProtocolError(code: .unavailable, message: "terminal 'x' is gone")))
+        #expect(!AskCoordinator.promptNotDelivered(ProtocolError(code: .timeout, message: "did not submit the prompt")))
+        #expect(WorkLoop.ReviewMuteCause.of(unsubmitted, turn: 1) == .promptNotDelivered)
     }
 
     @Test func initialPromptNotDeliveredRedoesTheAttemptUncounted() {
@@ -96,6 +106,18 @@ extension WorkLoopTests {
         #expect(events.contains { $0.kind == .promptRetry && $0.detail == "1/2" })
         #expect(events.contains { $0.kind == .turnEnded && $0.detail?.contains("prompt not delivered") == true })
         #expect(w.notes.contains { $0.text.contains("prompt não entregue") && $0.text.contains("refeita 1/2") })
+    }
+
+    /// P3: "did not submit the prompt" takes the same free retry, and the same per-task cap.
+    @Test func anUnsubmittedPromptIsRedoneUncountedAndCapped() async throws {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "test -f done.txt")]); defer { r.cleanup() }
+        await r.host.queueAskErrors("w-task-a-t1", [unsubmitted, unsubmitted, unsubmitted])
+        await r.host.set("w-task-a-t2", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2 && w.tasks[0].promptRetries == 2)
+        #expect(await r.host.summoned == ["w-task-a-t1", "w-task-a-t1", "w-task-a-t1", "w-task-a-t2"])
+        #expect(w.notes.contains { $0.text.contains("sobrecarregada") })
     }
 
     /// The cap is the task's: two retries in attempt 1, then attempt 2's prompt not delivered counts as a normal attempt.

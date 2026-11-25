@@ -130,3 +130,18 @@ private struct Rig {
         guard case .conflict = await rig.land(lane) else { Issue.record("a lane landed as a field"); return }
     }
 }
+
+extension FieldLandTests {
+    /// Fix 3: `tip` merges that sha, never the branch's later commits.
+    @Test func landsTheGivenTipOnly() async throws {
+        let rig = try await Rig()
+        let f = try await rig.field("t", "a.txt", "judged\n")
+        let judged = try await git(f.path, "rev-parse", "HEAD")
+        try await commit("b.txt", "after the check\n", in: f.path)
+        let out = await FieldLand.land(f, dir: rig.repo, integrators: rig.integrators, integrator: rig.integ, host: rig.host, gate: nil,
+                                       gateTimeout: .seconds(60), patches: rig.patches, wait: .seconds(5), poll: .milliseconds(20), tip: judged)
+        #expect(out == .landed(sha: try await rig.head()))
+        #expect(FileManager.default.fileExists(atPath: rig.repo.appendingPathComponent("a.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: rig.repo.appendingPathComponent("b.txt").path), "an unjudged commit went in")
+    }
+}

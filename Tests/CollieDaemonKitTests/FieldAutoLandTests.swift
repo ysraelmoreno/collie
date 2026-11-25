@@ -232,3 +232,59 @@ private func typed(_ sb: ScrollbackBuffer, _ needle: String) async -> Bool {
     }
     return false
 }
+
+private extension CommandRouter {
+    func autoTestsSetProbe(_ p: (@Sendable (String) async -> Void)?) { fieldProbe = p }
+}
+
+/// Review of F5 (fix 3, 4, 5): the land takes what the check judged; the rebase moves only the field's branch and never
+/// discards a change.
+extension FieldAutoLandTests {
+    /// Fix 3: a commit after the check passed is not the judged one: no land.
+    @Test func laterCommitIsNotLanded() async throws {
+        try await withRig { r in
+            try r.commit("a.txt", "judged\n", in: r.dir)
+            #expect(!(await r.d.router.fieldJudge(r.bob.id, r.dir)), "clean: judged")
+            try r.commit("b.txt", "never judged\n", in: r.dir)
+            let c = await r.d.router.fieldAfterCheck(r.bob.id, passed)
+            #expect(c?.field?.land == .skipped && c?.field?.reason?.contains("ponta") == true, "\(String(describing: c))")
+            try? await Task.sleep(for: .milliseconds(300))
+            #expect(!exists(r.f.paddock.appendingPathComponent("b.txt")) && !exists(r.f.paddock.appendingPathComponent("a.txt")))
+        }
+    }
+
+    /// Fix 4: a field whose HEAD the agent pointed at another branch is never rebased: that branch stays put.
+    @Test func rebaseRefusesForeignHead() async throws {
+        try await withRig { r in
+            try r.commit("paddock.txt", "from the paddock\n", in: r.f.paddock)
+            let main = try await r.head(r.f.repo)
+            try FakeHome.git(["symbolic-ref", "HEAD", "refs/heads/main"], in: r.dir)   // the agent writes its HEAD
+            await r.d.router.rebaseField(r.bob.id, checkBusy: false)
+            #expect(try await r.head(r.f.repo) == main, "main moved")
+            #expect(await r.field()?.state == .behind)
+        }
+    }
+
+    /// Fix 5: an edit made while the rebase ran (after its first look) is kept; the field stays `behind`.
+    @Test func editDuringRebaseIsKept() async throws {
+        try await withRig { r in
+            try r.commit("bob.txt", "from bob\n", in: r.dir)
+            try r.commit("paddock.txt", "from the paddock\n", in: r.f.paddock)
+            let tip = try await r.head(r.dir), dir = r.dir
+            await r.d.router.autoTestsSetProbe { stage in
+                if stage == "rebase.reset" { try? "the agent's edit\n".write(to: dir.appendingPathComponent("README"), atomically: true, encoding: .utf8) }
+            }
+            await r.d.router.rebaseField(r.bob.id, checkBusy: false)
+            #expect(try String(contentsOf: r.dir.appendingPathComponent("README"), encoding: .utf8) == "the agent's edit\n")
+            #expect(try await r.head(r.dir) == tip, "the branch did not move")
+            #expect(await r.field()?.state == .behind)
+            // the next turn's end, the edit committed: rebased, the commit kept
+            try FakeHome.git(["commit", "-qam", "edit"], in: r.dir)
+            await r.d.router.autoTestsSetProbe(nil)
+            await r.d.router.rebaseField(r.bob.id, checkBusy: false)
+            #expect(await r.field()?.state == .working)
+            #expect(exists(r.dir.appendingPathComponent("paddock.txt")) && exists(r.dir.appendingPathComponent("bob.txt")))
+            #expect(try String(contentsOf: r.dir.appendingPathComponent("README"), encoding: .utf8) == "the agent's edit\n")
+        }
+    }
+}

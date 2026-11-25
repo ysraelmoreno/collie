@@ -46,6 +46,12 @@ actor CommandRouter {
     var fieldChecks: [UUID: Int] = [:]
     /// F5: the last field notices sent to Shepherds. ponytail: 20 lines, read by the tests only for now.
     var fieldNoticeLog: [String] = []
+    /// The HEAD a passing `ask --check` judged, per field agent: the land merges that sha, never a later tip.
+    var fieldJudged: [UUID: String] = [:]
+    /// The most a field's wip patch holds (`git diff` output); past it the worktree stays.
+    var fieldWipCap = 64 << 20
+    /// Tests only: called at a field step ("drop", "rebase.reset") with the step's lock held.
+    var fieldProbe: (@Sendable (String) async -> Void)?
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
@@ -639,7 +645,7 @@ actor CommandRouter {
         var g = AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
                         checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
                         greenOk: flag(req, "green-ok"))
-        if let f = t.field { let dir = URL(fileURLWithPath: f.path); g.dirty = { await Self.fieldDirty(dir) } }   // F5, answer 4
+        if let f = t.field { let dir = URL(fileURLWithPath: f.path), id = t.id; g.dirty = { await self.fieldJudge(id, dir) } }   // F5, answer 4
         return g
     }
 
@@ -1024,11 +1030,8 @@ actor CommandRouter {
         await closeRemoved(terminal: t.id, cwd: t.cwd)
         await closeHeadless(of: t.id)
         if let field, let p = ws.paddocks.first(where: { $0.id == t.paddockId }) {
-            let line = await retireField(field, paddock: p)
-            if field.state != .landed, let s = t.summonedBy.flatMap({ id in ws.terminals.first { $0.id == id } }), Self.isAgent(s) {
-                let asks = asks
-                Task { try? await asks.inject(to: s.id, prompt: line, hold: .seconds(1800), afterQuiet: true) }
-            }
+            let out = await retireField(field, paddock: p)
+            if field.state != .landed || out.kept { Task { await self.fieldTell(t.summonedBy, out.line) } }
         }
     }
 

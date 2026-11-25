@@ -188,6 +188,29 @@ enum LaneWorktree {
         return Lane(repoRoot: repoRoot, path: path, branch: branch, base: "")
     }
 
+    /// F5 (answer 9): `tip`'s commits not in `head` rebased onto it in a detached scratch worktree under `scratch`
+    /// (the daemon's own git), so no worktree anyone works in is ever mid-rebase. The new tip's sha, or nil (a conflict,
+    /// or git could not): nothing moved. The scratch worktree goes either way.
+    static func rebased(_ tip: String, onto head: String, repoRoot: URL, scratch: URL, host: some LoopHost) async -> String? {
+        guard validBase(tip), validBase(head),
+              (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil
+        else { return nil }
+        let tmp = scratch.appendingPathComponent(".rebase-\(UUID().uuidString.prefix(8).lowercased())")
+        guard (try? await serial(repoRoot, { () async throws(ProtocolError) in try await git(["worktree", "add", "-q", "--detach", tmp.path, tip], in: repoRoot, host) })) != nil else {
+            try? FileManager.default.removeItem(at: tmp)
+            return nil
+        }
+        var out: String?
+        if (try? await host.laneGit(["rebase", "-q", "--no-autostash", head], in: tmp))?.status == 0 {
+            out = try? await git(["rev-parse", "HEAD"], in: tmp, host)
+        } else { _ = try? await host.laneGit(["rebase", "--abort"], in: tmp) }
+        _ = try? await serial(repoRoot) { () async throws(ProtocolError) in
+            try await git(["worktree", "remove", "--force", tmp.path], in: repoRoot, host)
+            try await git(["worktree", "prune"], in: repoRoot, host)
+        }
+        return out
+    }
+
     private static func validBase(_ base: String) -> Bool { base.range(of: "^[0-9a-f]{7,64}$", options: .regularExpression) != nil }
 
     /// The birth both shapes share, lock held: refuse a bad base, an existing path or branch, then `worktree add -b`

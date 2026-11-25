@@ -296,3 +296,97 @@ private func withRig(sandbox: Bool = true, _ body: (Rig) async throws -> Void) a
         }
     }
 }
+
+private extension CommandRouter {
+    func fieldTestsSetWipCap(_ n: Int) { fieldWipCap = n }
+    func fieldTestsSetProbe(_ p: (@Sendable (String) async -> Void)?) { fieldProbe = p }
+    func fieldTestsNotices() -> [String] { fieldNoticeLog }
+}
+
+private actor Seen<T: Sendable> {
+    var value: T?
+    func set(_ v: T) { value = v }
+}
+
+/// Review of F3-F5 (fix 1, 2, 6): what a drop or a dismissal never loses, and the drop's lock.
+extension FieldCommandsTests {
+    /// Fix 1: the paddocks folder is the repository's: a Shepherd of another paddock never drops by name the field
+    /// of a live agent; with no agent on record, the drop by name saves the uncommitted first.
+    @Test func dropByNameSparesLiveFieldsAndSavesWip() async throws {
+        try await withRig(sandbox: false) { r in
+            _ = try await r.cut("bob")
+            let q = r.f.repo.appendingPathComponent(".collie/paddocks/q")
+            try FakeHome.git(["worktree", "add", "-q", "-b", "collie/q", q.path], in: r.f.repo)
+            let other = Paddock(id: UUID(), name: "q", repoRoot: r.f.repo.path, path: q.path, branch: "collie/q", baseBranch: "main")
+            await r.d.router.fieldTestsAdd(other)
+            let path = SignedAppCheck.realPath(q)
+            let t = TerminalRecord(id: UUID(), name: "T", preset: .shell, command: nil, cwd: path, isShepherd: true, paddockId: other.id, projectRoot: path)
+            await r.d.router.fieldTestsInsert(t)
+            try "wip\n".write(to: r.field("bob").appendingPathComponent("README"), atomically: true, encoding: .utf8)
+            let out = await r.call(t, "field.drop", ["name": .string("bob")])
+            #expect(out.error?.code == .notShepherd, "\(out)")
+            #expect(try String(contentsOf: r.field("bob").appendingPathComponent("README"), encoding: .utf8) == "wip\n", "the live field untouched")
+            #expect(try await r.hasBranch("collie/field/bob"))
+
+            // its agent off the record (gone): the drop by name keeps the uncommitted in the wip patch
+            let rec = try #require(await r.rec("bob"))
+            await r.d.router.fieldTestsSetField(rec.id, nil)
+            let dropped = await r.call(r.s, "field.drop", ["name": .string("bob"), "keep-branch": .bool(true)])
+            guard case .object(let o)? = dropped.result, case .string(let wip)? = o["wip"] else { Issue.record("\(dropped)"); return }
+            #expect(try String(contentsOf: URL(fileURLWithPath: wip), encoding: .utf8).contains("+wip"))
+            #expect(!exists(r.field("bob")))
+        }
+    }
+
+    /// Fix 2: a wip patch cut short (here, a 16-byte cap) keeps the worktree and tells the Shepherd why.
+    @Test func wipThatFailsKeepsWorktree() async throws {
+        try await withRig(sandbox: false) { r in
+            _ = try await r.cut("bob")
+            let dir = r.field("bob")
+            try String(repeating: "changed\n", count: 20).write(to: dir.appendingPathComponent("README"), atomically: true, encoding: .utf8)
+            await r.d.router.fieldTestsSetWipCap(16)
+            let out = await r.call(r.s, "dismiss", ["target": .string("bob")])
+            #expect(out.ok, "\(out)")
+            #expect(exists(dir.appendingPathComponent("README")), "the worktree stays")
+            #expect(try String(contentsOf: dir.appendingPathComponent("README"), encoding: .utf8).hasPrefix("changed"))
+            #expect(await waitFor(10) { await r.d.router.fieldTestsNotices().contains { $0.contains("worktree mantida") && $0.contains("limite") } })
+            // the drop by name refuses too, with the reason
+            let drop = await r.call(r.s, "field.drop", ["name": .string("bob")])
+            #expect(drop.error?.message.contains("worktree mantida") == true && exists(dir), "\(drop)")
+        }
+    }
+
+    /// Fix 2: an untracked file too big for the patch is named, never skipped.
+    @Test func bigUntrackedFileFailsWip() async throws {
+        try await withRig(sandbox: false) { r in
+            _ = try await r.cut("bob")
+            let dir = r.field("bob")
+            try String(repeating: "x", count: 4096).write(to: dir.appendingPathComponent("big.txt"), atomically: true, encoding: .utf8)
+            let lane = Lane(repoRoot: r.f.repo, path: dir, branch: "collie/field/bob", base: "")
+            let wip = await CommandRouter.wipPatch(lane, name: "bob", host: await r.d.router.fieldGit(r.paddock),
+                                                   into: r.f.collie.appendingPathComponent("fields"), cap: 1024)
+            guard case .failed(let why) = wip else { Issue.record("\(wip)"); return }
+            #expect(why.contains("big.txt"), "\(why)")
+        }
+    }
+
+    /// Fix 6: the drop holds the field's land lock from its start: a land asked meanwhile finds it taken.
+    @Test func dropHoldsTheLandLock() async throws {
+        try await withRig(sandbox: false) { r in
+            _ = try await r.cut("bob")
+            try r.commit("bob.txt", "from bob\n", in: r.field("bob"))
+            let lane = Lane(repoRoot: r.f.repo, path: r.field("bob"), branch: "collie/field/bob", base: try await r.head(r.f.paddock))
+            let integrators = await r.d.router.integrators, host = await r.d.router.fieldGit(r.paddock), dir = r.f.paddock
+            let patches = r.f.collie.appendingPathComponent("fields"), seen = Seen<FieldLand.Outcome>()
+            await r.d.router.fieldTestsSetProbe { stage in
+                guard stage == "drop" else { return }
+                await seen.set(await FieldLand.land(lane, dir: dir, integrators: integrators, integrator: LaneIntegrator(host: host, dir: dir),
+                                                    host: host, gate: nil, gateTimeout: .seconds(30), patches: patches, wait: .milliseconds(50)))
+            }
+            let out = await r.call(r.s, "field.drop", ["name": .string("bob")])
+            #expect(out.ok, "\(out)")
+            #expect(await seen.value == .waiting(reason: FieldLand.alreadyLanding))
+            #expect(!exists(r.f.paddock.appendingPathComponent("bob.txt")), "nothing landed from a branch going away")
+        }
+    }
+}

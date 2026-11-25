@@ -71,11 +71,17 @@ extension CommandRouter {
 
     /// Answer 8: the field `f` of paddock `p` leaves: `<root>/fields/<name>-wip.patch` with what is not committed
     /// (tracked and untracked, never ignored), then the worktree (never `branch -D`). A land in flight ends first: the
-    /// worktree goes after it, in the background. Returns the line for the Shepherd.
-    func retireField(_ f: FieldRef, paddock p: Paddock) async -> String {
+    /// worktree goes after it, in the background (`landHeld`: the caller holds the field's land lock, so now). A wip
+    /// patch that fails or would be cut short keeps the worktree (`kept`): nothing uncommitted is lost unsaid.
+    /// Returns the line for the Shepherd.
+    func retireField(_ f: FieldRef, paddock p: Paddock, landHeld: Bool = false) async -> (line: String, wip: FieldWip, kept: Bool) {
         let lane = Self.fieldLane(f, paddock: p), git = fieldGit(p)
-        let wip = await Self.wipPatch(lane, name: f.name, host: git, into: fieldPatches)
-        let line = "[collie] field \(f.name) dispensado: branch \(f.branch) mantido" + (wip.map { "; não commitado em \($0.path)" } ?? "")
+        let wip = await Self.wipPatch(lane, name: f.name, host: git, into: fieldPatches, cap: fieldWipCap)
+        if case .failed(let why) = wip {
+            return ("[collie] field \(f.name) dispensado, worktree mantida em \(lane.path.path): o patch do não commitado falhou (\(why)); "
+                    + "commite ou salve à mão e rode collie field drop \(f.name).", wip, true)
+        }
+        let line = "[collie] field \(f.name) dispensado: branch \(f.branch) mantido" + (wip.url.map { "; não commitado em \($0.path)" } ?? "")
             + "; collie field drop \(f.name) apaga o branch (guarda um patch)."
         let integrators = integrators
         let remove: @Sendable () async -> Void = {
@@ -83,28 +89,36 @@ extension CommandRouter {
             while await integrators.isLanding(lane.branch) { await WorkLoop.nap(.milliseconds(500)) }
             try? await LaneWorktree.remove(lane, host: git)
         }
-        if await integrators.isLanding(lane.branch) { Task { await remove() } } else { await remove() }
-        return line
+        if landHeld { try? await LaneWorktree.remove(lane, host: git) }
+        else if await integrators.isLanding(lane.branch) { Task { await remove() } } else { await remove() }
+        return (line, wip, false)
     }
 
     /// `<into>/<name>-wip.patch` (0600, replaced): `git diff HEAD` and every untracked file not ignored, as new files.
-    /// Nil: nothing uncommitted, no worktree, or git cannot say.
-    static func wipPatch(_ lane: Lane, name: String, host: some LoopHost, into dir: URL) async -> URL? {
-        guard FileManager.default.fileExists(atPath: lane.path.path),
-              let d = try? await host.laneGit(["diff", "--binary", "HEAD"], in: lane.path), d.status == 0, !d.truncated else { return nil }
-        var out = d.stdout
-        if let u = try? await host.laneGit(["ls-files", "-z", "--others", "--exclude-standard"], in: lane.path), u.status == 0 {
-            for f in u.stdout.split(separator: "\0") {
-                // exit 1: the two differ, as a new file always does
-                if let n = try? await host.laneGit(["diff", "--no-index", "--binary", "--", "/dev/null", String(f)], in: lane.path),
-                   n.status <= 1, !n.truncated { out += n.stdout }
-            }
+    /// `.none`: no worktree, or nothing uncommitted. `.failed`: git could not say, an output passed `cap` (a big
+    /// untracked file is named), or the file could not be written; the caller keeps the worktree.
+    static func wipPatch(_ lane: Lane, name: String, host: some LoopHost, into dir: URL, cap: Int = 64 << 20) async -> FieldWip {
+        guard FileManager.default.fileExists(atPath: lane.path.path) else { return .none }
+        func run(_ args: [String]) async -> ProcessResult? { try? await host.laneGit(args, stdin: nil, timeout: .seconds(120), cap: cap, in: lane.path) }
+        guard let d = await run(["diff", "--binary", "HEAD"]), d.status == 0 else { return .failed("git diff HEAD falhou") }
+        if d.truncated { return .failed("o diff passa do limite de \(cap) bytes") }
+        var out = d.stdout, big: [String] = []
+        guard let u = await run(["ls-files", "-z", "--others", "--exclude-standard"]), u.status == 0, !u.truncated else {
+            return .failed("git ls-files falhou")
         }
-        guard !out.isEmpty else { return nil }
+        for f in u.stdout.split(separator: "\0").map(String.init) {
+            // exit 1: the two differ, as a new file always does
+            guard let n = await run(["diff", "--no-index", "--binary", "--", "/dev/null", f]), n.status <= 1 else { return .failed("git diff de \(f) falhou") }
+            if n.truncated { big.append(f) } else { out += n.stdout }
+        }
+        if !big.isEmpty { return .failed("não rastreados grandes demais para o patch: \(big.prefix(5).joined(separator: ", "))") }
+        guard !out.isEmpty else { return .none }
         let fm = FileManager.default, file = dir.appendingPathComponent("\(name)-wip.patch")
-        guard (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
+        guard (try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else {
+            return .failed("a pasta \(dir.path) não se cria")
+        }
         try? fm.removeItem(at: file)
-        return fm.createFile(atPath: file.path, contents: Data(out.utf8), attributes: [.posixPermissions: 0o600]) ? file : nil
+        return fm.createFile(atPath: file.path, contents: Data(out.utf8), attributes: [.posixPermissions: 0o600]) ? .saved(file) : .failed("\(file.path) não se grava")
     }
 
     /// `field.list|land|drop` for the Shepherd `me`, on the fields of its own paddock.
@@ -149,35 +163,58 @@ extension CommandRouter {
                                 "message": .string("[collie] field \(name) não integrou: \(why); tente de novo: collie field land \(name)")])
             }
         case "field.drop":
-            let lane: Lane
-            if let rec, let f = rec.field {
-                guard await !integrators.isLanding(f.branch) else { throw fieldError("field '\(name)': \(FieldLand.alreadyLanding); drop depois") }
-                lane = Self.fieldLane(f, paddock: p)
-                // the agent goes, then its field (wip patch, worktree); off the record first: no dismissal notice, this
-                // reply says it all
-                if let i = ws.terminals.firstIndex(where: { $0.id == rec.id }) { ws.terminals[i].field = nil }
-                try await remove(rec)
-                _ = await retireField(f, paddock: p)
-            } else {
-                // ponytail: its agent already dismissed, so no summoner on record: any Shepherd of the paddock drops it
-                guard let l = await LaneWorktree.field(named: name, repoRoot: URL(fileURLWithPath: p.repoRoot), host: git) else {
-                    throw ProtocolError(code: .notFound, message: "nenhum field '\(name)' neste cercado")
-                }
-                lane = l
-                try await LaneWorktree.remove(lane, host: git)
-            }
-            var o: [String: JSONValue] = ["branch": .string(lane.branch)]
-            if FileManager.default.fileExists(atPath: fieldPatches.appendingPathComponent("\(name)-wip.patch").path) {
-                o["wip"] = .string(fieldPatches.appendingPathComponent("\(name)-wip.patch").path)
-            }
-            if flag(r, "keep-branch") { o["kept"] = .bool(true); return .object(o) }
-            if let patch = await FieldLand.patch(lane, name: name, dir: git.dir, host: git, into: fieldPatches) { o["patch"] = .string(patch.path) }
-            let d = try await git.laneGit(["branch", "-D", lane.branch], in: lane.repoRoot)
-            guard d.status == 0 else { throw fieldError("git branch -D \(lane.branch): \(d.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
-            o["kept"] = .bool(false)
-            return .object(o)
+            // the field's land lock for the whole drop: no land starts on a branch going away (a check's queued land
+            // finds it taken), and none is running now
+            let branch = rec?.field?.branch ?? LaneWorktree.fieldBranchPrefix + name
+            guard await integrators.beginLanding(branch) else { throw fieldError("field '\(name)': \(FieldLand.alreadyLanding); drop depois") }
+            let res: Result<JSONValue, Error>
+            do { res = .success(try await dropField(name, rec: rec, paddock: p, keepBranch: flag(r, "keep-branch"))) } catch { res = .failure(error) }
+            await integrators.endLanding(branch)
+            return try res.get()
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// `field drop` with the field's land lock held: its agent (if on record) goes, then its worktree after a wip patch
+    /// that worked, then (unless `keepBranch`) its branch after a patch of its commits.
+    private func dropField(_ name: String, rec: TerminalRecord?, paddock p: Paddock, keepBranch: Bool) async throws -> JSONValue {
+        let git = fieldGit(p), lane: Lane, wip: FieldWip
+        if let rec, let f = rec.field {
+            lane = Self.fieldLane(f, paddock: p)
+            // the agent goes, then its field (wip patch, worktree); off the record first: no dismissal notice, this
+            // reply says it all
+            if let i = ws.terminals.firstIndex(where: { $0.id == rec.id }) { ws.terminals[i].field = nil }
+            try await remove(rec)
+            await fieldProbe?("drop")
+            let out = await retireField(f, paddock: p, landHeld: true)
+            if out.kept { throw fieldError(out.line) }
+            wip = out.wip
+        } else {
+            // the paddocks folder is the repository's: a field of a live agent (here or in another paddock) is never
+            // dropped by name. ponytail: no live agent, so no summoner on record: any Shepherd of the paddock drops it
+            let branch = LaneWorktree.fieldBranchPrefix + name
+            if let owner = ws.terminals.first(where: { $0.field?.name == name || $0.field?.branch == branch }) {
+                let where_ = ws.paddocks.first { $0.id == owner.paddockId }?.name ?? "?"
+                throw ProtocolError(code: .notShepherd, message: "field '\(name)' é do agente vivo '\(owner.name)' do cercado '\(where_)': só o Pastor dele o descarta")
+            }
+            guard let l = await LaneWorktree.field(named: name, repoRoot: URL(fileURLWithPath: p.repoRoot), host: git) else {
+                throw ProtocolError(code: .notFound, message: "nenhum field '\(name)' neste cercado")
+            }
+            lane = l
+            wip = await Self.wipPatch(lane, name: name, host: git, into: fieldPatches, cap: fieldWipCap)
+            if case .failed(let why) = wip {
+                throw fieldError("field '\(name)': worktree mantida em \(lane.path.path), o patch do não commitado falhou (\(why)); commite ou salve à mão e tente de novo")
+            }
+            try await LaneWorktree.remove(lane, host: git)
+        }
+        var o: [String: JSONValue] = ["branch": .string(lane.branch)]
+        if let u = wip.url { o["wip"] = .string(u.path) }
+        if keepBranch { o["kept"] = .bool(true); return .object(o) }
+        if let patch = await FieldLand.patch(lane, name: name, dir: git.dir, host: git, into: fieldPatches) { o["patch"] = .string(patch.path) }
+        let d = try await git.laneGit(["branch", "-D", lane.branch], in: lane.repoRoot)
+        guard d.status == 0 else { throw fieldError("git branch -D \(lane.branch): \(d.stderr.trimmingCharacters(in: .whitespacesAndNewlines))") }
+        o["kept"] = .bool(false)
+        return .object(o)
     }
 
     // MARK: F5: back by itself (spec "Volta", answers 4, 5, 9)
@@ -195,16 +232,35 @@ extension CommandRouter {
         return !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Answer 4, the try's verdict: dirty as `fieldDirty`; clean, the HEAD it judged is kept for the land
+    /// (`fieldJudged`): the land merges that sha. A HEAD git cannot read counts as dirty.
+    func fieldJudge(_ terminal: UUID, _ dir: URL) async -> Bool {
+        fieldJudged[terminal] = nil
+        guard !(await Self.fieldDirty(dir)), let h = await Self.rev("HEAD", in: dir) else { return true }
+        fieldJudged[terminal] = h
+        return false
+    }
+
     /// Answer 5: a passing check on a field's agent queues its land and the ask ends now; the result reaches the
-    /// Shepherd as a notice. Any other report goes back as it came.
+    /// Shepherd as a notice. Any other report goes back as it came. The land takes the sha the check judged, and only
+    /// while it is the tip of the field's branch with the field's HEAD on that branch: nothing unjudged lands.
     func fieldAfterCheck(_ terminal: UUID, _ check: AskCheckReport?) async -> AskCheckReport? {
+        let judged = fieldJudged.removeValue(forKey: terminal)
         guard var c = check, c.status == .passed, let rec = ws.terminals.first(where: { $0.id == terminal }), let f = rec.field,
               let p = ws.paddocks.first(where: { $0.id == rec.paddockId }) else { return check }
         if await integrators.isLanding(f.branch) { c.field = FieldNote(land: .skipped, reason: FieldLand.alreadyLanding); return c }
+        let dir = URL(fileURLWithPath: f.path)
+        // ponytail: no sha kept (a report with no field gate behind it, as the tests' own): the field's HEAD now
+        let sha: String? = if let judged { judged } else { await Self.rev("HEAD", in: dir) }
+        let tip = await Self.rev("refs/heads/" + f.branch, in: URL(fileURLWithPath: p.repoRoot))
+        guard let sha, tip == sha, await Self.fieldOnBranch(dir, f.branch) else {
+            c.field = FieldNote(land: .skipped, reason: "o commit julgado não é a ponta de \(f.branch)")
+            return c
+        }
         c.field = FieldNote(land: .queued)
         let lane = Self.fieldLane(f, paddock: p)
         Task {
-            let out = await self.landSettled(lane, terminal: terminal, by: nil)
+            let out = await self.landSettled(lane, terminal: terminal, by: nil, tip: sha)
             let line: String
             switch out {
             case .landed(let sha): line = "[collie] field \(f.name) integrado em \(sha.prefix(8))"
@@ -216,38 +272,64 @@ extension CommandRouter {
         return c
     }
 
-    /// `landField`, then (landed) the field rebased on the paddock's new HEAD (answer 9).
-    func landSettled(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false) async -> FieldLand.Outcome {
-        let out = await landField(lane, terminal: terminal, by: by, asRequest: asRequest)
+    /// `landField`, then (landed) the field rebased on the paddock's new HEAD (answer 9). `tip`: the sha to merge.
+    func landSettled(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false, tip: String? = nil) async -> FieldLand.Outcome {
+        let out = await landField(lane, terminal: terminal, by: by, asRequest: asRequest, tip: tip)
         if case .landed = out { await rebaseField(terminal, checkBusy: true) }
         return out
     }
 
-    /// Answer 9: the field's branch rebased on the paddock's HEAD, only with its agent out of a turn (`checkBusy`: asked
-    /// now; the end of its turn needs not) and its tracked tree clean; else `behind`, tried again at its next turn's
-    /// end. Done: `working` from the new `base`. A rebase that conflicts is undone: `conflict`.
+    /// The commit `what` names in `dir` (the daemon's git), nil when git cannot say.
+    static func rev(_ what: String, in dir: URL) async -> String? {
+        guard let r = try? await RouterLoopHost.loopGit(["rev-parse", "--verify", "-q", what + "^{commit}"], in: dir, profile: nil), r.status == 0 else { return nil }
+        let s = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? nil : s
+    }
+
+    /// The field's HEAD is its own branch: the agent writes its worktree's HEAD, and a HEAD pointed at another branch
+    /// (or detached) is never moved nor merged by the daemon's git.
+    static func fieldOnBranch(_ dir: URL, _ branch: String) async -> Bool {
+        guard let r = try? await RouterLoopHost.loopGit(["symbolic-ref", "-q", "HEAD"], in: dir, profile: nil), r.status == 0 else { return false }
+        return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "refs/heads/" + branch
+    }
+
+    /// Answer 9: the field's branch moved onto the paddock's HEAD, only with its HEAD on its own branch, its agent out
+    /// of a turn (`checkBusy`: asked now; the end of its turn needs not) and its tracked tree clean; else `behind`,
+    /// tried again at its next turn's end. Its commits not in the paddock are rebased in a scratch worktree (the
+    /// field's tree is never mid-rebase); the field then takes the result by `reset --keep`, after the same look
+    /// again: a change made meanwhile is never discarded (git refuses, and the field stays `behind`). Done: `working`
+    /// from the new `base`. A rebase that conflicts touches nothing: `conflict`.
     func rebaseField(_ terminal: UUID, checkBusy: Bool) async {
         guard let rec = ws.terminals.first(where: { $0.id == terminal }), let f = rec.field,
               let p = ws.paddocks.first(where: { $0.id == rec.paddockId }) else { return }
-        let git = fieldGit(p), dir = URL(fileURLWithPath: f.path)
+        let git = fieldGit(p), dir = URL(fileURLWithPath: f.path), repo = URL(fileURLWithPath: p.repoRoot)
         func set(_ st: FieldRef.State, base: String? = nil) async {
             guard let i = ws.terminals.firstIndex(where: { $0.id == terminal }), ws.terminals[i].field?.branch == f.branch else { return }
             ws.terminals[i].field?.state = st
             if let base { ws.terminals[i].field?.base = base }
             try? await persist()
         }
-        let busy = checkBusy ? await targetBusy(terminal) : false
-        let st = try? await git.laneGit(["status", "--porcelain", "--untracked-files=no"], in: dir)
-        guard !busy, st?.status == 0, st?.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true,
-              let h = try? await git.laneGit(["rev-parse", "HEAD"], in: git.dir), h.status == 0 else { await set(.behind); return }
-        let head = h.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        let r = try? await git.laneGit(["rebase", "--no-autostash", head], in: dir)
-        guard r?.status == 0 else {
-            _ = try? await git.laneGit(["rebase", "--abort"], in: dir)
-            await set(.conflict)
-            await fieldNotify(terminal, "[collie] field \(f.name): o rebase em \(head.prefix(8)) conflitou; desfeito, o field fica como estava")
-            return
+        func free() async -> Bool {
+            guard !(checkBusy ? await targetBusy(terminal) : false), await Self.fieldOnBranch(dir, f.branch),
+                  let st = try? await git.laneGit(["status", "--porcelain", "--untracked-files=no"], in: dir), st.status == 0 else { return false }
+            return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        guard await free(), let tip = await Self.rev("refs/heads/" + f.branch, in: repo), let head = await Self.rev("HEAD", in: git.dir) else {
+            await set(.behind); return
+        }
+        var to = head
+        if (try? await git.laneGit(["merge-base", "--is-ancestor", tip, head], in: repo))?.status != 0 {
+            guard let r = await LaneWorktree.rebased(tip, onto: head, repoRoot: repo, scratch: fieldPatches, host: git) else {
+                await set(.conflict)
+                await fieldNotify(terminal, "[collie] field \(f.name): o rebase em \(head.prefix(8)) conflitou; nada mudou no field")
+                return
+            }
+            to = r
+        }
+        await fieldProbe?("rebase.reset")
+        // measured again right before: a new turn, an edit or a commit since waits for the next turn's end
+        guard await free(), await Self.rev("refs/heads/" + f.branch, in: repo) == tip,
+              (try? await git.laneGit(["reset", "-q", "--keep", to], in: dir))?.status == 0 else { await set(.behind); return }
         await set(.working, base: head)
     }
 
@@ -273,9 +355,19 @@ extension CommandRouter {
 
     /// A field notice to the Shepherd that summoned `terminal`'s agent, typed once it is quiet.
     func fieldNotify(_ terminal: UUID, _ line: String) async {
+        await fieldTell(ws.terminals.first(where: { $0.id == terminal })?.summonedBy, line)
+    }
+
+    /// A field notice to the Shepherd `up` (an agent), typed once it is quiet.
+    func fieldTell(_ up: UUID?, _ line: String) async {
         fieldNoticeLog = Array((fieldNoticeLog + [line]).suffix(20))
-        guard let up = ws.terminals.first(where: { $0.id == terminal })?.summonedBy,
-              let s = ws.terminals.first(where: { $0.id == up }), Self.isAgent(s) else { return }
+        guard let up, let s = ws.terminals.first(where: { $0.id == up }), Self.isAgent(s) else { return }
         try? await asks.inject(to: s.id, prompt: line, hold: .seconds(1800), afterQuiet: true)
     }
+}
+
+/// What a field's wip patch came to (`CommandRouter.wipPatch`).
+enum FieldWip: Equatable {
+    case none, saved(URL), failed(String)
+    var url: URL? { if case .saved(let u) = self { u } else { nil } }
 }

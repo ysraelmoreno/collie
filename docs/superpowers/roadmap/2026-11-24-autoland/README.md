@@ -1,6 +1,6 @@
 # Roadmap: auto-land no cercado fábrica (F4 sem aceite)
 
-Data: 2026-11-24 · Estado: proposta aprovada pelo dono (interesse alto). Origem: `docs/superpowers/roadmap/2026-11-22-fabrica/README.md` (seção F4) e a decisão de 2026-11-23 de
+Data: 2026-11-24 · Estado: CONCLUÍDO em 2026-11-25 (A1 a A7, F3, F5 e correções C1 a C6; evidência em `a7-evidencia/`; entra na v0.2.0 como preview). Origem: `docs/superpowers/roadmap/2026-11-22-fabrica/README.md` (seção F4) e a decisão de 2026-11-23 de
 fazer a F4 **sem** o aceite em runtime (F3) no primeiro recorte. Cartão pai no Quadro: `bcc3aa9b` (Cercado fábrica). Rótulo dos cartões: `autoland`.
 
 ## Objetivo

@@ -552,6 +552,49 @@ import CollieProtocol
         #expect(try await r.get().notes.contains { $0.text.contains("base desconhecida") })
     }
 
+    /// C4a: the engine, given a land whose record was not written, stops as `landRegistryFailed` (no chain, the owner
+    /// told by the stop's notice), the merge's commits kept on the work.
+    @Test func aLandNotRecordedStopsTheLoop() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        await r.host.setLandUnrecorded("disco cheio")
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landRegistryFailed, "\(String(describing: w.loop?.stopReason))")
+        #expect(await r.host.lands == [.merge] && w.loop?.autoLand?.after == LoopFakeHost.landedAfter)
+        #expect(w.notes.contains { $0.text.contains("registro do teto diário não foi gravado: disco cheio") })
+        let notices = await r.host.ownerNotices
+        #expect(notices.contains { $0.contains("registro do teto diário") }, "\(notices)")
+    }
+
+    /// C4a: a base known when the attempt began (`autoLand.baseHead`) but unread at the land (the host says none): the
+    /// check of what judges the land cannot run, and the land fails closed as `landGateRed`.
+    @Test func aBaseUnreadAtTheLandFailsClosed() async throws {
+        let r = try await Self.rig(gate: "echo gate"); defer { r.cleanup() }
+        let host = r.host
+        await r.host.setBase(try await Self.head(r.repo))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0); await host.setBase(nil) }))
+        try await Self.expectStopped(r, .landGateRed)
+        #expect(try await r.get().notes.contains { $0.text.contains("não consegui comparar o que julga o land com a base") })
+        #expect(!(await r.host.commands).contains("echo gate"))
+    }
+
+    /// C4a: `work task done` by hand and `work task reopen` drop the loop's verdicts (a clean review, the HEAD it judged,
+    /// a passed acceptance): the auto-land never trusts them afterwards.
+    @Test func doneByHandAndReopenClearTheVerdicts() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        func judged(_ state: TaskState) async throws {
+            try await r.store.update(r.work) {
+                $0.tasks[0].state = state; $0.tasks[0].reviewClean = true; $0.tasks[0].reviewedHead = "abc"; $0.tasks[0].acceptPassed = true
+            }
+        }
+        try await judged(.open)
+        let done = try #require(try await r.store.setTask(r.work, task: "a", state: .done, reason: nil, at: Date()))
+        #expect(done.reviewClean == nil && done.reviewedHead == nil && done.acceptPassed == nil)
+        try await judged(.deferred)
+        let back = try #require(try await r.store.reopenTask(r.work, task: "a", keepTries: false, at: Date()))
+        #expect(back.task.state == .open && back.task.reviewClean == nil && back.task.reviewedHead == nil && back.task.acceptPassed == nil)
+    }
+
     /// C3b: a base unread at the attempt's start (git failing) never writes over the one recorded before: it stays.
     @Test func aBaseUnreadAtTheAttemptKeepsTheLastOne() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }
@@ -800,13 +843,14 @@ private extension CommandRouter {
             k.factory = true
             await d.router.addPaddock(k)
             try await commit("novo.swift", "let n = 1\n", in: URL(fileURLWithPath: k.path))
-            let base = try await Self.head(repo)
+            func main() async throws -> String { try await GitRunner.run(["rev-parse", "main"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let base = try await main()
             await d.router.setLandFailsAfterMerge(true)
             var threw: String?
-            do { _ = try await d.router.loopLand(k.id, mode: .merge, message: "land") } catch { threw = error.message }
+            do { _ = try await d.router.loopLand(k.id, mode: .merge, message: "land") } catch { threw = (error as? ProtocolError)?.message ?? "\(error)" }
             await d.router.setLandFailsAfterMerge(false)
             #expect(threw?.contains("depois do merge") == true, "\(threw ?? "no throw")")
-            #expect(try await Self.head(repo) != base)   // the merge happened
+            #expect(try await main() != base)   // the merge happened
             #expect(await d.router.loopAutoLands(k.id).count == 1)
         }
     }
@@ -826,49 +870,6 @@ private extension CommandRouter {
             #expect(r.before != r.after && r.unrecorded?.contains("gravação do registro falhou") == true, "\(r)")
             #expect(await d.router.loopAutoLands(k.id).count == 1)
         }
-    }
-
-    /// C4a: the engine, given a land whose record was not written, stops as `landRegistryFailed` (no chain, the owner
-    /// told by the stop's notice), the merge's commits kept on the work.
-    @Test func aLandNotRecordedStopsTheLoop() async throws {
-        let r = try await Self.rig(); defer { r.cleanup() }
-        await r.host.setLandUnrecorded("disco cheio")
-        #expect(await r.run() == .stopped)
-        let w = try await r.get()
-        #expect(w.loop?.stopReason?.code == .landRegistryFailed, "\(String(describing: w.loop?.stopReason))")
-        #expect(await r.host.lands == [.merge] && w.loop?.autoLand?.after == LoopFakeHost.landedAfter)
-        #expect(w.notes.contains { $0.text.contains("registro do teto diário não foi gravado: disco cheio") })
-        let notices = await r.host.ownerNotices
-        #expect(notices.contains { $0.contains("registro do teto diário") }, "\(notices)")
-    }
-
-    /// C4a: a base known when the attempt began (`autoLand.baseHead`) but unread at the land (the host says none): the
-    /// check of what judges the land cannot run, and the land fails closed as `landGateRed`.
-    @Test func aBaseUnreadAtTheLandFailsClosed() async throws {
-        let r = try await Self.rig(gate: "echo gate"); defer { r.cleanup() }
-        let host = r.host
-        await r.host.setBase(try await Self.head(r.repo))
-        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0); await host.setBase(nil) }))
-        try await Self.expectStopped(r, .landGateRed)
-        #expect(try await r.get().notes.contains { $0.text.contains("não consegui comparar o que julga o land com a base") })
-        #expect(!(await r.host.commands).contains("echo gate"))
-    }
-
-    /// C4a: `work task done` by hand and `work task reopen` drop the loop's verdicts (a clean review, the HEAD it judged,
-    /// a passed acceptance): the auto-land never trusts them afterwards.
-    @Test func doneByHandAndReopenClearTheVerdicts() async throws {
-        let r = try await Self.rig(); defer { r.cleanup() }
-        func judged(_ state: TaskState) async throws {
-            try await r.store.update(r.work) {
-                $0.tasks[0].state = state; $0.tasks[0].reviewClean = true; $0.tasks[0].reviewedHead = "abc"; $0.tasks[0].acceptPassed = true
-            }
-        }
-        try await judged(.open)
-        let done = try #require(try await r.store.setTask(r.work, task: "a", state: .done, reason: nil, at: Date()))
-        #expect(done.reviewClean == nil && done.reviewedHead == nil && done.acceptPassed == nil)
-        try await judged(.deferred)
-        let back = try #require(try await r.store.reopenTask(r.work, task: "a", keepTries: false, at: Date()))
-        #expect(back.task.state == .open && back.task.reviewClean == nil && back.task.reviewedHead == nil && back.task.acceptPassed == nil)
     }
 
     /// C3b: `loopLand` with real git refuses a paddock with no factory mark and, marked, any mode but merge: the base

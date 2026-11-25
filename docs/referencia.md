@@ -620,11 +620,18 @@ bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda cons
   comando `cursor-agent`) e vira `--model '<m>'` no comando, sem duplicar um `--model` que o comando já tenha. Sob o sandbox
   do Collie o preset (e um `cursor-agent` custom) leva `--trust`, para o Cursor não parar em "Workspace Trust Required"; num
   terminal livre o diálogo continua aparecendo: confiar no repositório ali é decisão do usuário. Não há hook de fim de turno por terminal (o `--plugin-dir`
-  só dispara `sessionStart` na versão 2026.10.22), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
+  não dispara `stop`), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
   chegar, o terminal passa a esperar só hook. Pedidos de permissão (`Run this command?`, `Write to this file?`…) viram
   atenção e são respondidos com `y`/`n`; a tela de login (`Press any key to log in`) também vira atenção, mas o Collie nunca
   digita nela. Sem orientação no início da sessão, sem painel de uso. O cursor-agent também roda os hooks do
   `~/.claude/settings.json` do usuário (um `PreToolUse` de Bash vale para o Shell do Cursor). O Collie não desliga isso.
+  **Hooks do Cursor** (medidos na 2026.11.22, spike §11): `sessionStart` entrega a orientação; `preToolUse` e `postToolUse`
+  (`collie hook cursor-tool`) marcam o terminal como em turno, e o `ask` não fecha por ociosidade enquanto uma ferramenta
+  roda (limite: 10 min). Um `postToolUse` de `Write` vira o evento `edit` dos plug-ins (`agent: "cursor"`); o `guide` volta ao
+  agente como contexto e o `block` também (depois que a ferramenta rodou só cabe contexto). Quando o `ask` fecha por
+  ociosidade, o Collie gera o `stop` dos plug-ins com os arquivos escritos no turno: um `block` vira **um** prompt de
+  continuação por turno; `guide` é ignorado. Não suportado: `afterFileEdit` (o `postToolUse` já traz o caminho), edições que
+  não passem por `Write`, `stop` de turnos que não vieram de um `ask`.
   Detalhes: `docs/superpowers/spikes/2026-10-22-cursor/REPORT.md`.
 
 ### Sub-Pastor (`summon --shepherd`)
@@ -875,7 +882,7 @@ dono aprovou a lista de tarefas e os checks.
   e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
   na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
   arquivo não rastreado criado pelo check ou pelo portão já foi removido.
-- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …] [--escalate agente:modelo,…]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
@@ -883,6 +890,10 @@ dono aprovou a lista de tarefas e os checks.
   Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: … · estado: collie work status`: o aviso digitado no terminal é
   só uma dica e pode não chegar; quem espera um laço usa `collie work wait` e lê o `collie work status`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
+- Escalada (`--escalate cursor:composer-2.5,cursor:gpt-5.6-luna-high,claude:sonnet`): a tentativa `n` de uma tarefa roda a entrada
+  `min(n, k)` (k = tamanho da lista, até 10; agente `claude|cursor`, modelo validado como no `summon --model`); `--tries` segue o teto.
+  Exclui `--preset/--model/--command`. O cartão mostra a lista, o diário marca `[agente:modelo]` em `agentSummoned` e `work status`
+  mostra o modelo da tentativa em curso. A nota de falha anterior vai ao próximo agente como sempre.
 - Pré-check (`--precheck`): um comando rápido (ex.: `swift build --build-tests`) que roda no fim de cada turno com commit,
   antes do check e com o agente ainda aberto (até 180 s, ou o resto do orçamento). Se falhar, o mesmo agente recebe uma vez por
   tentativa as últimas 40 linhas da saída (até 3 KB) e o laço espera o turno de novo; se falhar outra vez, segue para o check.

@@ -200,6 +200,10 @@ import CollieProtocol
         let hooks = try json("hooks/hooks.json")
         let start = ((hooks["hooks"] as! [String: Any])["sessionStart"] as! [[String: Any]])[0]
         #expect(hooks["version"] as? Int == 1 && start["command"] as? String == "'/opt/o rq/collie' hook cursor-session-start")
+        // D1: the tool hooks that feed the plug-in contract (`edit`) and the in-turn mark
+        let events = try #require(hooks["hooks"] as? [String: [[String: Any]]])
+        #expect(Set(events.keys) == ["sessionStart", "preToolUse", "postToolUse"])
+        for e in ["preToolUse", "postToolUse"] { #expect(events[e]?.first?["command"] as? String == "'/opt/o rq/collie' hook cursor-tool", "\(e)") }
         let server = (try json(".mcp.json")["mcpServers"] as! [String: Any])["collie"] as! [String: Any]
         #expect(server["command"] as? String == collie.path && server["args"] as? [String] == ["mcp"])
         let env = try #require(server["env"] as? [String: String])
@@ -218,7 +222,7 @@ import CollieProtocol
             #expect(try String(contentsOf: cmd, encoding: .utf8) == LoopCommand.markdown(arguments: false))
             #expect(try FileManager.default.attributesOfItem(atPath: cmd.path)[.posixPermissions] as? Int == 0o600)
             let hooks = try JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("hooks/hooks.json"))) as! [String: Any]
-            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["sessionStart"])
+            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["postToolUse", "preToolUse", "sessionStart"])
         }
     }
     /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
@@ -227,7 +231,7 @@ import CollieProtocol
         #expect(AgentLaunch.hookSubcommands == ["claude-session-start", "claude-prompt", "cursor-session-start", "claude-tool",
                                                 "claude-subagent-stop", "claude-precompact", "claude-session-end",
                                                 "claude-notification", "claude-statusline", "claude-stop", "codex-notify",
-                                                "generic-stop"])
+                                                "generic-stop", "cursor-tool"])
     }
     @Test func hooksUseFrozenNames() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }

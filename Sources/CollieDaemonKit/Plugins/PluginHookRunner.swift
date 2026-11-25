@@ -78,7 +78,16 @@ struct PluginTurn: Sendable {
     }
     /// The turn's files, once: the turn starts over.
     mutating func take(_ t: UUID) -> [String] { byTerminal.removeValue(forKey: t) ?? [] }
-    mutating func drop(_ t: UUID) { byTerminal[t] = nil }
+    mutating func drop(_ t: UUID) { byTerminal[t] = nil; continuedTurns.remove(t) }
+
+    /// Cursor has no Stop hook: the daemon ends its turns itself (an ask went idle). The turn's files, or none when this end
+    /// is the continuation of a block: one continuation per turn.
+    private var continuedTurns: Set<UUID> = []
+    mutating func cursorEnd(_ t: UUID) -> [String] {
+        let files = take(t)
+        return continuedTurns.remove(t) == nil ? files : []
+    }
+    mutating func continued(_ t: UUID) { continuedTurns.insert(t) }
 
     /// Claude's Stop payload says `stop_hook_active` when it goes on because a Stop hook blocked.
     static func isContinued(_ payload: Data) -> Bool {

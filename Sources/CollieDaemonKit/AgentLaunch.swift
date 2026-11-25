@@ -8,7 +8,7 @@ public enum AgentLaunch {
     /// update: a name is never removed or renamed without a version in between (spec §4; AgentLaunchTests freezes it).
     static let hookSubcommands = ["claude-session-start", "claude-prompt", "cursor-session-start", "claude-tool",
                                   "claude-subagent-stop", "claude-precompact", "claude-session-end", "claude-notification",
-                                  "claude-statusline", "claude-stop", "codex-notify", "generic-stop"]
+                                  "claude-statusline", "claude-stop", "codex-notify", "generic-stop", "cursor-tool"]
     /// ` hook <sub>` for a launch command; `sub` must be in `hookSubcommands`.
     static func hookCommand(_ collie: URL, _ sub: String) -> String {
         assert(hookSubcommands.contains(sub), "hook \(sub) is not in AgentLaunch.hookSubcommands")
@@ -50,14 +50,17 @@ public enum AgentLaunch {
         }
     }
     /// Collie's orientation and MCP server for Cursor, as a plugin in Collie's data (never ~/.cursor or the repo).
-    /// sessionStart is the only plugin hook cursor-agent 2026.10.22 fires (spike REPORT §8); its `additional_context`
+    /// sessionStart (§8) and preToolUse/postToolUse (§11) are what cursor-agent 2026.11.22 fires; sessionStart's `additional_context`
     /// (max 10 000 chars) carries the text Claude gets at SessionStart. `commands/` carries `/collie:loop` (`LoopCommand`). A stdio MCP child gets only HOME/LOGNAME/PATH/
     /// SHELL/TERM/USER from cursor, so the COLLIE_* names are listed as `${env:NAME}` (cursor expands them; no values on disk).
     static func cursorPlugin(_ id: UUID, hooksDir: URL, collie: URL) throws -> URL {
         let dir = cursorPluginDir(id, in: hooksDir)
         try write(["name": "collie", "version": "1.0.0", "description": "Collie orientation and tools"],
                   dir.appendingPathComponent(".cursor-plugin/plugin.json"))
-        try write(["version": 1, "hooks": ["sessionStart": [["command": hookCommand(collie, "cursor-session-start")]]]],
+        // preToolUse/postToolUse (spike REPORT §11): the in-turn mark, and a write becomes the plug-ins' `edit` (D1)
+        let tool = [["command": hookCommand(collie, "cursor-tool")]]
+        try write(["version": 1, "hooks": ["sessionStart": [["command": hookCommand(collie, "cursor-session-start")]],
+                                           "preToolUse": tool, "postToolUse": tool]],
                   dir.appendingPathComponent("hooks/hooks.json"))
         try write(["mcpServers": ["collie": ["command": collie.path, "args": ["mcp"],
                                              "env": Dictionary(uniqueKeysWithValues: mcpEnv.map { ($0, "${env:\($0)}") })]]],

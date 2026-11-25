@@ -355,6 +355,14 @@ public actor AskCoordinator {
         var timer: Task<Void, Never>?
     }
 
+    /// D1: Cursor's `preToolUse` seen, its `postToolUse` not yet (since when): the terminal is mid-turn even with a quiet screen.
+    /// Capped by `heldMax`, so a tool whose post never came (cancelled) does not hold an ask for ever.
+    private var toolSince: [UUID: ContinuousClock.Instant] = [:]
+    func cursorTool(_ t: UUID, running: Bool) { toolSince[t] = running ? .now : nil }
+    /// A Cursor turn ended by idle (its ask just closed): the router asks the plug-ins' `stop` (D1). nil: dropped.
+    nonisolated let cursorTurnEnds: AsyncStream<UUID>
+    private nonisolated let cursorTurnSink: AsyncStream<UUID>.Continuation
+
     /// Injection readiness: a fresh terminal (login shell, agent TUI) can drop typeahead while it initialises.
     /// Ready once it printed something and then stayed quiet `limits.readyQuiet`, or `limits.readyMax` after attach.
     static let readyPoll: Duration = .milliseconds(50)
@@ -390,6 +398,7 @@ public actor AskCoordinator {
         idleQuiet = limits.idleQuiet; heldMax = limits.heldMax; captureHoldMax = limits.captureHold
         submitConfirm = limits.submitConfirm
         (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
+        (cursorTurnEnds, cursorTurnSink) = AsyncStream.makeStream(of: UUID.self, bufferingPolicy: .bufferingNewest(100))
     }
     public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120,
                 submitConfirmSeconds: Double? = nil, screenRenderer: (@Sendable (Data, Int, Int) -> String)? = nil) {
@@ -1059,6 +1068,7 @@ public actor AskCoordinator {
         // waiter's timeout still caps it). ponytail: "latest frame" = last 10 non-empty lines, since scrollback
         // appends every repaint; a taller footer redraw would need a screen grid (spike REPORT §4).
         if t.cursorTUI, Self.cursorIsWorking(t.scrollback) { return true }
+        if t.cursorTUI, let s = toolSince[to], ContinuousClock.now - s < heldMax { return true }   // D1: a tool is running
         if t.cursorTUI, t.awaitingSubmit == id { return true }   // A3: written, not confirmed: its echo is not a finished turn
         let s = t.scrollback.text(since: mark)
         targets[to]?.idleOwed = true   // never consumed if the target really has no hook
@@ -1076,6 +1086,7 @@ public actor AskCoordinator {
             }
         }
         finish(id, .success(result))
+        if t.cursorTUI { cursorTurnSink.yield(to) }
         return false
     }
 }

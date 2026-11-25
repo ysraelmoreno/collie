@@ -191,6 +191,8 @@ actor CommandRouter {
         let events = memory.events
         asks.askEvents.set { events.emit($0) }   // ask delivery/end in the memory event log (memory_task obedience)
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
+        let cursorEnds = asks.cursorTurnEnds
+        Task { for await t in cursorEnds { await me.router?.cursorStop(t) } }   // D1: a Cursor turn ended: the plug-ins' `stop`
         let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath
         self.devices = DeviceService(root: config.paths.root, runDir: config.paths.runDir, pollInterval: config.devicePollInterval,
             scrcpyServer: config.scrcpyServer, grace: config.deviceGrace,

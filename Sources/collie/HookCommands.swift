@@ -48,6 +48,17 @@ enum HookCommands {
                 print(out)
             }
             return
+        case "cursor-tool":
+            // preToolUse / postToolUse: the daemon marks the turn and asks the plug-ins; prints context on a write (fail open)
+            let stdin = FileHandle.standardInput
+            let data = try stdin.read(upToCount: WorkHookParser.maxBytes + 1) ?? Data()
+            guard data.count <= WorkHookParser.maxBytes else {
+                while let more = try stdin.read(upToCount: 1 << 16), !more.isEmpty {}
+                log("cursor-tool: payload over 64 KiB, dropped"); return
+            }
+            if let out = await PluginHookClient.cursorToolOutput(payload: data, env: ProcessInfo.processInfo.environment,
+                                                                 onError: { log("cursor-tool: \($0)") }) { print(out) }
+            return
         case "claude-statusline":
             statusline()
             return

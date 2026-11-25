@@ -87,4 +87,49 @@ import Foundation
         #expect(PluginHooks.claudeStopReason(.init(block: "r")) == "r")
         #expect(PluginHooks.claudeStopReason(.init(guide: "g")) == nil)
     }
+
+    // D1: Cursor's tool hooks (payloads measured with cursor-agent 2026.11.22, spike REPORT §11)
+    static func fixture(_ name: String) throws -> Data {
+        try Data(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/cursor/\(name).json"))
+    }
+
+    @Test func cursorWritePayloadIsAnEditWithARelativePath() throws {
+        let d = try Self.fixture("postToolUse-write")
+        #expect(PluginHooks.cursorToolPhase(d) == .post)
+        #expect(PluginHooks.editedFiles(toolPayload: d, project: URL(fileURLWithPath: "/proj")) == ["Sources/App/hello.txt"])
+    }
+
+    @Test func cursorOtherToolsAreNotEdits() throws {
+        let d = try Self.fixture("preToolUse-read")
+        #expect(PluginHooks.cursorToolPhase(d) == .pre)
+        #expect(PluginHooks.editedFiles(toolPayload: d, project: URL(fileURLWithPath: "/proj")).isEmpty)
+        // afterFileEdit is not registered: the same write would count twice
+        #expect(PluginHooks.cursorToolPhase(try Self.fixture("afterFileEdit")) == nil)
+        #expect(PluginHooks.cursorToolPhase(Data("nope".utf8)) == nil)
+    }
+
+    @Test func cursorToolOutputIsAdditionalContextAndBlockDegradesToGuide() throws {
+        func ctx(_ v: PluginHooks.Verdict) throws -> String? {
+            guard let out = PluginHooks.cursorToolOutput(v) else { return nil }
+            let o = try #require(JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any])
+            #expect(Set(o.keys) == ["additional_context"], "\(o)")   // postToolUse cannot deny: no `permission`
+            return o["additional_context"] as? String
+        }
+        #expect(try ctx(.init(guide: "follow Foo")) == "follow Foo")
+        #expect(try ctx(.init(block: "no raw SQL")) == "no raw SQL")
+        #expect(try ctx(.init(guide: "g", block: "b")) == "b")
+        #expect(PluginHooks.cursorToolOutput(.init()) == nil)
+    }
+
+    @Test func cursorStopBlocksOnceThenTheContinuationEndsQuietly() {
+        var turn = PluginTurn()
+        let t = UUID()
+        turn.add(["A.swift", "B.swift", "A.swift"], to: t)
+        #expect(turn.cursorEnd(t) == ["A.swift", "B.swift"])   // turn 1 ends: the plug-ins are asked
+        turn.continued(t)                                        // ... one blocked: its text went in as a prompt
+        turn.add(["A.swift"], to: t)                             // the continuation edits again
+        #expect(turn.cursorEnd(t).isEmpty)                       // its end never runs them again (one prompt per turn)
+        turn.add(["C.swift"], to: t)
+        #expect(turn.cursorEnd(t) == ["C.swift"])                // the next turn is a new one
+    }
 }

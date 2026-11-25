@@ -107,7 +107,7 @@ private let profile = #"""
 
     /// `work run`, the owner's Permitir, then the loop as recorded and the `work.status` text; the loop stopped after.
     private func runAndRead(_ d: Daemon, _ p: Paths, _ x: Pad, _ args: [String: JSONValue]) async throws -> (Response, WorkLoopState?, String) {
-        let r = try await call(d, p, x.s, "work.run", ["max": .number(3)].merging(args) { $1 })
+        let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)].merging(args) { $1 })
         guard r.ok else { return (r, nil, "") }
         _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
         let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
@@ -167,7 +167,7 @@ private let profile = #"""
             #expect(l.tries == 5 && l.budget == 900, "\(l)")
             #expect(l.origins == ["review": "flag", "budget": "perfil", "tries": "flag"], "\(String(describing: l.origins))")
             #expect(status.contains("revisão: desligada") && !status.contains("origem revisão: flag") && status.contains("origem orçamento: perfil"), "\(status)")
-            let both = try await call(d, p, x.s, "work.run", ["max": .number(3), "review": .bool(true), "no-review": .bool(true)])
+            let both = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "review": .bool(true), "no-review": .bool(true)])
             #expect(both.error?.code == .invalidArgs, "\(both)")
         }
     }
@@ -200,7 +200,7 @@ private let profile = #"""
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "review": { "personas": ["seguranca"] } } }"#, in: x.dir)
-            let r = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)])
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.review.personas") == true
                     && r.error?.message.contains("testes") == true, "\(r)")
             #expect(await !d.router.appCards.contains { $0.app == "work-loop" })
@@ -209,7 +209,7 @@ private let profile = #"""
             let git = try await GitRunner.run(["rm", "-q", "-r", CommandRouter.personasDir], in: x.dir, timeout: .seconds(30))
             #expect(git.status == 0)
             _ = try await GitRunner.run(["commit", "-q", "-m", "no personas"], in: x.dir, timeout: .seconds(30))
-            let none = try await call(d, p, x.s, "work.run", ["max": .number(3)])
+            let none = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3)])
             #expect(none.error?.message.contains("factory.review do collie-work.json liga a revisão, mas não há personas em HEAD") == true, "\(none)")
         }
     }
@@ -244,7 +244,7 @@ private let profile = #"""
             let x = try await pad(d, p)
             try await commit(ProjectWorkConfig.fileName, #"{ "version": 1, "factory": { "version": 1, "guardrails": { "maxTries": 99 } } }"#, in: x.dir)
             // with --gate and --precheck given too: the factory block is still read
-            let r = try await call(d, p, x.s, "work.run", ["max": .number(3), "gate": .string("true"), "precheck": .string("true")])
+            let r = try await call(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "gate": .string("true"), "precheck": .string("true")])
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("factory.guardrails.maxTries") == true, "\(r)")
             #expect(r.error?.message.contains("\n") == false)
             #expect(await !d.router.appCards.contains { $0.app == "work-loop" })

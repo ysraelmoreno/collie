@@ -161,9 +161,10 @@ import CollieProtocol
             $0.tasks.append(WorkTask(id: "b", title: "Task b", state: .abandoned, check: "true"))
             $0.loop?.tasks = ["a", "b"]
         }
-        #expect(await r.run() == .finished)
+        #expect(await r.run() == .stopped)   // C5a: a stop of its own, nothing integrated
         let w = try await r.get()
-        #expect(w.tasks[0].state == .done && w.loop?.autoLand?.after == nil && w.loop?.stopReason == nil)
+        #expect(w.tasks[0].state == .done && w.loop?.autoLand?.after == nil && w.loop?.stopReason?.code == .landTasksNotDone)
+        #expect(w.loop?.stopReason?.detail == "Task b", "\(String(describing: w.loop?.stopReason))")
         #expect(await r.host.lands.isEmpty)
         #expect(w.notes.contains { $0.text.contains("1 tarefa(s) não terminaram feitas") }, "\(w.notes.map(\.text))")
     }
@@ -1063,7 +1064,7 @@ private extension CommandRouter {
             #expect(try await call(p, x.s, "work.start", ["title": .string("Fila")]).ok)
             #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
             let w = try #require(try await d.router.work.list(includeClosed: false).first { $0.title == "Fila" })
-            func run() async throws -> Response { try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]) }
+            func run() async throws -> Response { try await call(p, x.s, "work.run", ["command": .string("cat"), "max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]) }
             let chain = WorkLoop.Chain(next: w.id, max: 2, perDay: nil, chained: 1, budget: nil, after: "A")
             let before = Date()
             let queued = try await run()
@@ -1096,7 +1097,7 @@ private extension CommandRouter {
             #expect(try await call(p, x.s, "work.start", ["title": .string("Card")]).ok)
             #expect(try await call(p, x.s, "work.task.add", ["title": .string("A"), "check": .string("true"), "green-ok": .bool(true)]).ok)
             let w = try #require(try await d.router.work.active(terminal: UUID(uuidString: x.s.id)!))
-            #expect(try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]).ok)
+            #expect(try await call(p, x.s, "work.run", ["command": .string("cat"), "max": .number(1), "auto-land": .bool(true), "queue": .bool(true)]).ok)
             _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
             let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
             #expect(try await d.router.work.get(w.id)?.loop?.autoLand?.approvedAt == nil)
@@ -1128,7 +1129,7 @@ private extension CommandRouter {
                     $0.loop = l
                 }
                 try await commit("t\(i).swift", "let t = \(i)\n", in: x.dir)
-                let run = try await call(p, x.s, "work.run", ["max": .number(1), "auto-land": .bool(true)])
+                let run = try await call(p, x.s, "work.run", ["command": .string("cat"), "max": .number(1), "auto-land": .bool(true)])
                 #expect(run.ok, "\(run)")
                 _ = await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } }
                 let card = try #require(await d.router.appCards.first { $0.app == "work-loop" }, "no approval card")
@@ -1164,7 +1165,7 @@ private extension CommandRouter {
             try FileManager.default.createDirectory(at: dir.appendingPathComponent(CommandRouter.personasDir), withIntermediateDirectories: true)
             try await commit(CommandRouter.personasDir + "correcao.md", "x\n", in: dir)
             func run(_ extra: [String: JSONValue] = [:]) async throws -> Response {
-                try await call(p, s, "work.run", ["max": .number(3), "auto-land": .bool(true), "review": .bool(true)].merging(extra) { $1 })
+                try await call(p, s, "work.run", ["command": .string("cat"), "max": .number(3), "auto-land": .bool(true), "review": .bool(true)].merging(extra) { $1 })
             }
             // the paddock has no factory mark
             let notFactory = try await run()

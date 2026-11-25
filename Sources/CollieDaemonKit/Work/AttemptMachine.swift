@@ -35,6 +35,9 @@ enum AttemptMachine {
         case precheckDone(status: Int32?, tail: String)
         /// The daemon stops / the work closed / the Shepherd that started the loop is gone: no verdict.
         case cancelled, workClosed, starterGone
+        /// C5a: `work stop --now` (or a plain stop past its grace): the attempt is dropped whatever its phase, judged by
+        /// nothing. `others`: a terminal of the paddock still working (its name): then nothing is discarded either.
+        case stopForced(others: String?)
         /// nil: the attempt failed before its check (summon or ask), nothing was measured.
         case measured(Measured?)
         /// `status` nil: timed out. `broken`: it could not even start (the whole reason).
@@ -158,6 +161,11 @@ enum AttemptMachine {
         case (_, .cancelled): return leave(&s, [.uncount, .stopLoop(.init(.cancelled))])
         case (_, .workClosed): return leave(&s, [.reopen(job: "work closed"), .stopLoop(.init(.workGone))])
         case (_, .starterGone): return leave(&s, [.reopen(job: "starter gone"), .stopLoop(.init(.starterGone))])
+        // C5a: the agent goes, its patch is discarded (never an adoption's, nor under another terminal at work), the task
+        // reopens and the loop stops as asked
+        case (_, .stopForced(let others)):
+            let patch: [Effect] = s.adopted ? [] : others.map { [.note(stopForcedKeptNote($0))] } ?? [.discard, .journal(.discarded, "\(s.task)-\(s.n).patch")]
+            return leave(&s, patch + [.reopen(job: "stop forçado"), .stopLoop(.init(.requested))])
 
         case (.summoning, .started):
             return (s, [.journal(.attemptStarted, nil), .summon])
@@ -336,6 +344,11 @@ enum AttemptMachine {
         default:
             return stray(s, e)   // not this phase's event: it never should have come
         }
+    }
+
+    /// C5a: a forced stop found another terminal working: the tree is not reset under it.
+    static func stopForcedKeptNote(_ who: String) -> String {
+        "[loop] stop forçado: '\(who)' trabalha no cercado; a tentativa não foi descartada, worktree intocada"
     }
 
     /// P2: free retries (a prompt not delivered) per task; the next one counts as a normal attempt.

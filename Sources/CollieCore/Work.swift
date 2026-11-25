@@ -295,6 +295,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// C4a: the merge was made but the paddock's land record (`Paddock.autoLands`, what the daily cap counts)
                 /// could not be written: the loop stops rather than land on uncounted; the owner is told.
                 case landRegistryFailed
+                /// C5a: `--auto-land` and a task of the run not done (deferred by a red gate or acceptance, or still open):
+                /// nothing integrated (detail: the tasks' titles). Not a finish.
+                case landTasksNotDone
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -328,6 +331,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
             case .landBaseMoved: "auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova"
             case .landRegistryFailed: "auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono"
+            case .landTasksNotDone: "auto-land: tarefa(s) não feitas (\(detail ?? "alguma tarefa")); nada integrado"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"
             }

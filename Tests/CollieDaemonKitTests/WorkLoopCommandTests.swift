@@ -118,6 +118,8 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     private func run(_ d: Daemon, _ p: Paths, _ t: Term, _ args: [String: JSONValue] = [:], approve: Bool = true) async throws -> Response {
         var a = args
         if a["max"] == nil { a["max"] = .number(3) }
+        // C5a: a shell Shepherd's own agent never ends a turn: refused; `cat` (no end of turn either) is a named program
+        if a["command"] == nil && a["preset"] == nil { a["command"] = .string("cat") }
         let r = try await work(d, p, t, "work.run", a)
         if r.ok && approve { #expect(try await answerCard(d, p, allow: true) != nil, "no approval card") }
         return r
@@ -355,6 +357,21 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// C5a: a shell Shepherd with no --preset (nor --command) would run its attempts in a zsh that never ends a turn:
+    /// refused, no card; --preset claude on the same Shepherd passes (to its card).
+    @Test func aShellShepherdsLoopNeedsAnAgentWithAnEndOfTurn() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            let shell = try await work(d, p, x.s, "work.run", ["max": .number(3)])
+            #expect(shell.error?.code == .invalidArgs && shell.error?.message == CommandRouter.loopAgentRefusal, "\(shell)")
+            let given = try await work(d, p, x.s, "work.run", ["max": .number(3), "preset": .string("shell")])
+            #expect(given.error?.message == CommandRouter.loopAgentRefusal, "\(given)")
+            #expect(await d.router.appCards.isEmpty)
+            #expect(try await run(d, p, x.s, ["preset": .string("claude")], approve: false).ok)
+        }
+    }
+
     /// Finding 7: --max is required and every limit has a hard ceiling.
     @Test func runNeedsMaxAndHardCaps() async throws {
         try await withDaemon { d, p in
@@ -367,7 +384,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
                 #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
             }
             // M3.5: lanes run only sandboxed, and this daemon sandboxes no terminal
-            let lanes = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            let lanes = try await work(d, p, x.s, "work.run", ["command": .string("cat"), "max": .number(3), "parallel": .number(2)])
             #expect(lanes.error?.code == .invalidArgs && lanes.error?.message.contains("--parallel") == true, "\(lanes)")
             #expect(await d.router.appCards.isEmpty)
         }

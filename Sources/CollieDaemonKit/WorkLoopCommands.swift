@@ -112,6 +112,8 @@ extension CommandRouter {
         let triesFlag = try num(r, "tries", max: Self.loopTriesMax), budgetFlag = try num(r, "budget", max: Self.loopBudgetMax)
         // ponytail: the profile allows a budget up to 86400 s, the engine's ceiling is lower: capped, not refused
         let profileBudget = factory?.budgetSeconds.map { min(Double($0), Self.loopBudgetMax) }
+        // C5a: an agent with no end of turn (a shell, given or the Shepherd's) would hold the paddock until the turn's timeout
+        if escalate == nil, Self.loopAgentRefused(preset: str(r, "preset"), command: str(r, "command"), shepherd: t) { throw invalid(Self.loopAgentRefusal) }
         var loop = WorkLoopState(state: .running, tries: Int(triesFlag ?? factory?.maxTries.map(Double.init) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
@@ -294,6 +296,24 @@ extension CommandRouter {
         guard let preference, let p = preset.map({ Preset(rawValue: $0) }) ?? t.preset else { return nil }
         let probe = TerminalRecord(id: UUID(), name: "loop", preset: p, command: command ?? (preset == nil ? t.command : nil), cwd: "/", isShepherd: false)
         return p == .claude || AgentLaunch.isClaude(probe) ? preference : nil
+    }
+
+    /// C5a: why a loop's agent must end its turns.
+    static let loopAgentRefusal = "o laço precisa de um agente com fim de turno (claude, codex ou cursor); passe --preset claude"
+
+    /// C5a: the attempt's agent, as the summon resolves it (`--preset`, else the Shepherd's, with its command), would be a
+    /// shell or a custom preset with no command: nothing that ends a turn. A command given (or the Shepherd's) is a
+    /// program the owner named: it passes (decision: `--command` is the agent, whatever the preset).
+    static func loopAgentRefused(preset: String?, command: String?, shepherd t: TerminalRecord) -> Bool {
+        let p = preset.map { Preset(rawValue: $0) ?? .custom } ?? t.preset
+        let c = command ?? (preset == nil ? t.command : nil)
+        return (p == .shell || p == .custom) && (c ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// C5a: `loopAgentRefused` for a loop's summon as `starter` (gone: not refused here, the summon refuses).
+    func loopAgentRefused(_ r: Request, as starter: UUID) -> Bool {
+        guard let me = ws.terminals.first(where: { $0.id == starter }) else { return false }
+        return Self.loopAgentRefused(preset: str(r, "preset"), command: str(r, "command"), shepherd: me)
     }
 
     /// `admin.loop-model` (app only): nil reads; "" clears; else a model id (`CollieSettings.isLoopModel`), saved.
@@ -525,7 +545,9 @@ extension CommandRouter {
 
     /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
     /// M9.2 (B5): a closed work of `t`'s whose loop still runs (M6.4: it ends at its next wake) is reached too.
-    func workStop(_ t: TerminalRecord) async throws -> JSONValue {
+    /// C5a: `now`: the attempt in course is dropped at once (`WorkLoop.stop(now:)`); a plain stop already asked may be
+    /// turned into it.
+    func workStop(_ t: TerminalRecord, now: Bool = false) async throws -> JSONValue {
         let active = try await work.active(terminal: t.id)
         if let w = active, let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
@@ -553,11 +575,11 @@ extension CommandRouter {
                 if let l = workLoops[k], (l.engine.host as? RouterLoopHost)?.starter == t.id { id = k; break }
             }
         }
-        guard let id, let l = workLoops[id], !l.stopping else {
+        guard let id, let l = workLoops[id], !l.stopping || now else {
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }
         workLoops[id]?.stopping = true
-        await l.engine.stop(work: id)
+        await l.engine.stop(work: id, now: now)
         return .object(["state": .string("stopped")])
     }
 
@@ -1044,7 +1066,9 @@ struct RouterLoopHost: LoopHost {
     }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, lane: lane?.path)
+        let request = summonRequest(name, loop)
+        if await router.loopAgentRefused(request, as: starter) { throw ProtocolError(code: .invalidArgs, message: CommandRouter.loopAgentRefusal) }
+        let id = try await router.loopSummon(request, as: starter, lane: lane?.path)
         guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")

@@ -514,7 +514,7 @@ extension CommandRouter {
             return try await rerail(t, w, now: now, wait: t.id != caller?.id)
 
         case "work.run": return try await workRun(r, caller: caller, starter: try target())
-        case "work.stop": return try await workStop(try target())
+        case "work.stop": return try await workStop(try target(), now: flag(r, "now"))
 
         case "work.config": return try workConfig(try target())   // M13.1: read only, runs nothing
         case "factory.doctor":   // U3: routed here for the same reach rules; read only, runs nothing

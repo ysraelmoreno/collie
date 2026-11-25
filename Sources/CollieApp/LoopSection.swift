@@ -187,6 +187,7 @@ struct HistoryRow: Equatable, Identifiable {
         case .landNothing?: return "auto-land: nada a integrar"
         case .landBaseMoved?: return "auto-land: base mudou"
         case .landRegistryFailed?: return "auto-land: registro do land não gravado"
+        case .landTasksNotDone?: return "auto-land: tarefas não feitas"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

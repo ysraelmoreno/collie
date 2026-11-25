@@ -221,6 +221,13 @@ actor WorkLoop {
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
     let events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)?
     var stopping: Set<UUID> = []
+    /// C5a: `work stop --now` (or a plain stop past `stopGrace`): the attempt in course is dropped, not judged.
+    var forcing: Set<UUID> = []
+    /// C5a: a plain stop's wait for the attempt's verdict before it turns into `--now` (the tests' short one).
+    static let defaultStopGrace: Duration = .seconds(300)
+    let stopGrace: Duration
+    /// C5a: the plain stop each grace timer belongs to: a timer of an older stop (an earlier run) forces nothing.
+    private var stopTokens: [UUID: UUID] = [:]
     /// M3.5: set on the engine of one lane (`WorkLoopLanes`): the lane's id (its folder's name). `host` is then the
     /// lane's, an attempt that passes waits in `passed` for the integrator, and its journal and phase carry the lane.
     /// nil: the loop's own engine, in the paddock's worktree.
@@ -241,16 +248,37 @@ actor WorkLoop {
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20)) {
+         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20),
+         stopGrace: Duration = WorkLoop.defaultStopGrace) {
+        self.stopGrace = stopGrace
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
         self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
 
-    /// Ends the loop after the current attempt's verdict.
-    func stop(work id: UUID) async {
+    /// Ends the loop after the current attempt's verdict. C5a: no verdict within `stopGrace`: forced (`now`), with a note.
+    /// `now`: the attempt in course is dropped at once (its agent dismissed, its patch discarded, its task open again).
+    /// ponytail: forcing reaches the agent's turn and the waits between (commit, other terminals); a check, gate,
+    /// acceptance or review already running ends by its own timeout first. A parallel run (lanes) stops as a plain stop.
+    func stop(work id: UUID, now: Bool = false) async {
+        let first = !stopping.contains(id)
         stopping.insert(id)
         lanes[id]?.signal.yield(.poke)   // M3.5: a parallel run waits on its lanes: it is told now
-        if (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
+        if first, (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
+        if now { forcing.insert(id); return }
+        guard first else { return }
+        let token = UUID(), grace = stopGrace
+        stopTokens[id] = token
+        Task { [weak self] in
+            await Self.nap(grace)
+            await self?.graceOver(id, token)
+        }
+    }
+
+    /// C5a: the plain stop `token` is still waiting for its verdict: it becomes `--now`.
+    private func graceOver(_ id: UUID, _ token: UUID) async {
+        guard stopTokens[id] == token, stopping.contains(id), !forcing.contains(id) else { return }
+        forcing.insert(id)
+        await note(id, "[loop] stop forçado depois de \(stopGrace.components.seconds) s")
     }
 
     /// Runs `work`'s open tasks until all are done/deferred, `max` is used or `stop` is asked. `work.loop` must be set
@@ -304,7 +332,7 @@ actor WorkLoop {
         // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line (A5: a
         // work the chain goes on from tells nothing: the chain's last work tells once)
         await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil, landing: landing)
-        stopping.remove(id)
+        stopping.remove(id); forcing.remove(id); stopTokens[id] = nil
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
             guard w.loop != nil else { return }
@@ -405,6 +433,11 @@ actor WorkLoop {
                 // M2.2b: the daemon stopped while the check, the gate or the wait for another terminal ran: what they
                 // answered (often the error of a killed check) is no verdict. The machine leaves with `cancelled`
                 if Task.isCancelled, let h = happened, Self.judges(h) { happened = .cancelled }
+            }
+            // C5a: a forced stop drops the attempt at its next event, whatever it was (an agent just summoned goes too)
+            if forcing.contains(w.id), let h = happened, h != .cancelled {
+                if case .summoned(let agent) = h { await host.dismiss(agent) }
+                happened = .stopForced(others: await host.othersWorking())
             }
             guard let happened else { continue }
             let (next, more) = AttemptMachine.reduce(state, happened)
@@ -574,7 +607,7 @@ actor WorkLoop {
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
             // C1 (P2-b): from now, not from the attempt's start: a retried attempt's turn is what the budget has left
             r.deadline = host.now() + Double(turn); r.turnAt = host.now()
-            var ended = await talk(agent, prompt, .seconds(turn))
+            var ended = await talk(agent, prompt, .seconds(turn), work: id)
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
             // C1 (P2-a/c): the screen before the dismiss, and whether the budget holds a retry after its back-off
@@ -593,14 +626,14 @@ actor WorkLoop {
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
             r.turnAt = host.now()
-            return await talk(agent, Self.nudgePrompt, .seconds(rest))
+            return await talk(agent, Self.nudgePrompt, .seconds(rest), work: id)
         case .precheckNudge(let tail):
             // as `nudge`: what is left of the turn, never when the loop or the daemon is stopping
             guard let agent = r.agent, let deadline = r.deadline, !Task.isCancelled, !stopping.contains(id) else { return .waitExpired }
             let rest = Int(deadline.timeIntervalSince(host.now()))
             guard rest >= 1 else { return .waitExpired }
             await record(id, &r)
-            return await talk(agent, Self.precheckPrompt(tail), .seconds(rest))
+            return await talk(agent, Self.precheckPrompt(tail), .seconds(rest), work: id)
         case .promptRetry(let used):
             // P2: the task's count, not the attempt's (it crosses attempts); the note is the summary's line of it
             let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))"
@@ -622,7 +655,7 @@ actor WorkLoop {
             } catch { return .precheckDone(status: nil, tail: "o pré-check não rodou: \(error.message)") }
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
-                await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
+                await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline, work: id)
             }
             // F2 V1: a turn that ended (hook, error) with its agent still working is not over: wait while it works, never
             // past the turn's time (a timeout's is already over) nor while the loop or the daemon is stopping
@@ -938,7 +971,7 @@ actor WorkLoop {
     private func othersStillWorking(_ first: String) async -> String? {
         var who: String? = first
         let end = ContinuousClock.now + othersWait
-        while who != nil, ContinuousClock.now < end, !Task.isCancelled {
+        while who != nil, ContinuousClock.now < end, !Task.isCancelled, forcing.isEmpty {
             await Self.nap(Swift.min(poll, .seconds(5)))
             who = await host.othersWorking()
         }
@@ -1036,9 +1069,9 @@ actor WorkLoop {
     }
 
     /// An `.idle` end with no new commit yet: wait until there is one and the agent is out of its turn, or `deadline`.
-    private func waitForCommit(_ agent: UUID, before: String, branch: String, dir: URL, until deadline: Date) async {
+    private func waitForCommit(_ agent: UUID, before: String, branch: String, dir: URL, until deadline: Date, work id: UUID) async {
         if await committed(before: before, branch: branch, dir) { return }
-        while host.now() < deadline, !Task.isCancelled {
+        while host.now() < deadline, !Task.isCancelled, !forcing.contains(id) {
             if !(await host.working(agent)), await committed(before: before, branch: branch, dir) { return }
             await Self.nap(poll)
         }
@@ -1049,9 +1082,18 @@ actor WorkLoop {
 
     /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
     /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.
-    private func talk(_ agent: UUID, _ prompt: String, _ timeout: Duration) async -> AttemptMachine.Event {
+    /// C5a: a forced stop of `id` ends the turn too (the attempt's interpreter turns it into `stopForced`).
+    private func talk(_ agent: UUID, _ prompt: String, _ timeout: Duration, work id: UUID) async -> AttemptMachine.Event {
         let host = host, poll = poll
+        if forcing.contains(id) { return .turnFailed("stop forçado") }
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
+            g.addTask { [weak self] in
+                while !Task.isCancelled {
+                    await Self.nap(Swift.min(poll, .seconds(1)))
+                    if await self?.forcing.contains(id) ?? true { return .turnFailed("stop forçado") }
+                }
+                return nil
+            }
             g.addTask {
                 do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
                 // P2/P3: never reached the agent (a timeout before it, or an Enter that never took) / its reply timed out after it did
@@ -1366,12 +1408,12 @@ extension WorkLoop {
 
     func autoLand(work id: UUID, _ al: WorkLoopState.AutoLand, dir: URL) async -> (WorkLoopState.State, WorkLoopState.Stop?) {
         guard let w = try? await store.get(id) else { return (.stopped, .init(.workGone)) }
-        // ponytail: a task deferred (or still open) is no land and no stop: the loop finished as always, the owner is told.
         // C2: only `.done` counts: a task dropped (`abandoned`) is work not done, and lands nothing either
+        // C5a: a stop of its own (`landTasksNotDone`, the tasks named), never a finish: nothing was integrated
         let left = w.tasks.filter { $0.state != .done }
         guard left.isEmpty else {
             await note(id, "[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado")
-            return (.finished, nil)
+            return (.stopped, .init(.landTasksNotDone, detail: Self.eventDetail(left.map(\.title).joined(separator: ", "))))
         }
         let stop = await landConditions(id, w, al, dir)
         await phase(id, nil)

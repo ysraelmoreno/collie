@@ -124,8 +124,11 @@ import CollieProtocol
             #expect(try await Self.git(dir, "rev-parse", "HEAD") == postLand)
             #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("t1.swift").path))
             #expect(x.loop?.autoLand?.startHead == nil, "a discard that went back leaves nothing to carry")
+            // C5d: t2's commit went with the discard, so t2 is open again; t1, landed, stays done
+            #expect(x.tasks.first { $0.id == "t2" }?.state == .open && x.tasks.first { $0.id == "t1" }?.state == .done)
 
             // a start from before the land (stale, carried by a bug): the discard keeps the commits, never undoes the land
+            // (C5d: t2 reopened is not done, so the land stops on that before the base)
             _ = try await Self.work(store, k, 3, same: w)
             try await store.update(w) { $0.loop?.autoLand?.startHead = before }
             await host.set("w1-task-t3-t1", LoopScript(act: {
@@ -134,7 +137,7 @@ import CollieProtocol
             }))
             _ = await loop.run(work: w, dir: dir)
             let y = try #require(try await store.get(w))
-            #expect(y.loop?.stopReason?.code == .landBaseMoved, "\(String(describing: y.loop?.stopReason))")
+            #expect(y.loop?.stopReason?.code == .landTasksNotDone, "\(String(describing: y.loop?.stopReason))")
             #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("t1.swift").path)
                     && FileManager.default.fileExists(atPath: dir.appendingPathComponent("t3.swift").path))
             #expect(y.notes.contains { $0.text.contains("NÃO descartados") && $0.text.contains("já estão na base") }, "\(y.notes.map(\.text))")
@@ -218,7 +221,7 @@ import CollieProtocol
         #expect(w.tasks[1].state == .deferred)
         let patch = try #require(Self.patches(r.host, r.work).first)
         let note = try #require(w.notes.first { $0.text.contains("descartei do cercado") })
-        #expect(note.text.contains("git am " + AgentLaunch.quote(patch.path)), "\(note.text)")
+        #expect(note.text.contains("git am '") && note.text.contains(patch.lastPathComponent + "'"), "\(note.text)")
         #expect(note.text.contains("Reabertas") && note.text.contains("\"Task a\" [a]") && !note.text.contains("\"Task b\""), "\(note.text)")
         #expect(await r.host.ownerNotices.last?.contains("reabertas: \"Task a\"") == true)
 

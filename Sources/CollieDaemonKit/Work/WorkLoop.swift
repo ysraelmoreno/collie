@@ -226,6 +226,8 @@ actor WorkLoop {
     /// C5a: a plain stop's wait for the attempt's verdict before it turns into `--now` (the tests' short one).
     static let defaultStopGrace: Duration = .seconds(300)
     let stopGrace: Duration
+    /// R2: the clock the grace timer sleeps on (the tests' `ManualClock`).
+    let stopClock: any Clock<Duration>
     /// C5a: the plain stop each grace timer belongs to: a timer of an older stop (an earlier run) forces nothing.
     private var stopTokens: [UUID: UUID] = [:]
     /// M3.5: set on the engine of one lane (`WorkLoopLanes`): the lane's id (its folder's name). `host` is then the
@@ -255,8 +257,9 @@ actor WorkLoop {
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
          lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20),
-         stopGrace: Duration = WorkLoop.defaultStopGrace, preCheckTimeout: Duration = WorkLoop.defaultPreCheckTimeout) {
-        self.stopGrace = stopGrace; self.preCheckTimeout = preCheckTimeout
+         stopGrace: Duration = WorkLoop.defaultStopGrace, preCheckTimeout: Duration = WorkLoop.defaultPreCheckTimeout,
+         stopClock: any Clock<Duration> = ContinuousClock()) {
+        self.stopGrace = stopGrace; self.preCheckTimeout = preCheckTimeout; self.stopClock = stopClock
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
         self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
@@ -274,10 +277,10 @@ actor WorkLoop {
         if first, (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
         if now { forcing.insert(id); return }
         guard first else { return }
-        let token = UUID(), grace = stopGrace
+        let token = UUID(), grace = stopGrace, clock = stopClock
         stopTokens[id] = token
         Task { [weak self] in
-            await Self.nap(grace)
+            try? await clock.sleep(for: grace)
             await self?.graceOver(id, token)
         }
     }

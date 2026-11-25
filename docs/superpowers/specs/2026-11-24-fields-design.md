@@ -40,10 +40,16 @@ traz o trabalho de volta pelo mesmo integrador das faixas do laço.
   branch `collie/lane/…`, criada e removida pelo git do daemon (`LaneGitQueue`), fora do `git status` do principal,
   sandbox estrito com a faixa como projeto; a faixa só grava objetos e o próprio branch.
 - **Integrador** (`LaneIntegrator.integrate(_:title:attempt:tries:gate:gateTimeout:)`): merge `--no-ff` no branch do
-  cercado, um por vez, portão na árvore integrada, desfaz e gera patch no conflito.
+  cercado, portão na árvore integrada, desfaz no conflito (`merge --abort`/`reset --hard`). **Não** gera patch (quem gera
+  é a `AttemptMachine` do laço) e "um por vez" vale **por instância** (cada laço cria o seu, `WorkLoopLanes.swift:47`).
+  Só roda com a árvore do cercado limpa e ninguém do cercado num turno (`othersWorking`; o Pastor só fica de fora com
+  `loopStarterOnlyWaits`).
+- **Tudo preso ao formato de faixa:** `LaneIntegrator.integrate` recusa branch fora de `collie/lane/`;
+  `LaneWorktree.create` monta `collie/lane/<work8>-<task>` com marcador `<owner> <work uuid>`; `ownsPath`, `isLane`,
+  `vetLane`/`laneShaped`, `lanePaddock` exigem pasta `lane-`; `orphans`/`sweep` apagam faixa de work desconhecido.
 - **`summon(_:by:lane:)`** (`ShepherdCommands.swift`) já lança um agente numa faixa (só o laço usa).
-- **`collie-work.json`** (`ProjectWorkConfig`): `gate`, `precheck`, `smoke`, `full`, `areas`; lido do commit no HEAD;
-  chave desconhecida vira aviso.
+- **`collie-work.json`** (`ProjectWorkConfig`): `gate`, `precheck`, `smoke`, `full`, `areas`; dois leitores
+  (`WorkConfigFile.read(root:)` da árvore, `read(base:)` de um commit); chave desconhecida vira aviso.
 - **`ask --check`** (C1, `84437a90`) e check vermelho antes (C2, `b8e93554`).
 
 ## Abordagens
@@ -109,6 +115,40 @@ Só o Pastor que convocou o agente faz `land`/`drop` (ou o app). `--field` exige
 
 Um agente em field recebe uma linha a mais (dentro do limite de 1500): "Você está no field <nome> (branch …): commite
 aqui; o Pastor integra." O Pastor aprende `summon --field` e `field land|drop` só se couber.
+
+## Respostas à revisão (decisões minhas, o dono pode vetar)
+
+Revisão de um leitor externo em 2026-11-24. Nenhuma muda o que o dono aprovou; todas fecham como fazer.
+
+1. **Formato próprio, guardas generalizadas.** Field em `<repo>/.collie/paddocks/field-<nome>`, branch
+   `collie/field/<nome>`, marcador `field <terminal uuid>`. As guardas da faixa (`integrate`, `ownsPath`, `vetLane`,
+   `lanePaddock`) passam a aceitar `lane-`/`collie/lane/` **ou** `field-`/`collie/field/`; `orphans`/`sweep` **nunca**
+   tocam em `field-` (um field só sai por `field drop` ou dispensa).
+2. **Um integrador por cercado.** Um registro do daemon (cercado → `LaneIntegrator`) usado pelos fields e pelo laço,
+   para a fila FIFO valer no cercado inteiro.
+3. **Field e `work run --parallel` não convivem** no mesmo cercado: `work run --parallel > 1` recusa com fields vivos, e
+   `summon --field` recusa com laço em faixas rodando. (`work run` sem `--parallel` convive: não usa faixa.)
+4. **O check precisa de árvore commitada.** No `ask --check` para um agente em field, depois do check passar, arquivo
+   rastreado modificado ou não rastreado novo na árvore do field reprova a tentativa com "commite antes de encerrar"
+   (conta como tentativa). Assim só entra o que foi julgado.
+5. **O `ask` não espera o land.** Check passou → o ask termina já, com `field: {land: "queued"}`. O land roda depois na
+   fila do cercado; o resultado chega ao Pastor como aviso (`[collie] field <nome> integrado em <sha>` ou
+   `… não integrou: <motivo>; patch: <caminho>`). O timeout do ask não cobre o portão.
+6. **Land espera o cercado ficar livre.** Na fila: o land roda quando a árvore do cercado está limpa e ninguém do cercado
+   está num turno, **sem contar** o Pastor que só espera (um `ask` em curso ou `work wait`, como
+   `loopStarterOnlyWaits`). Cercado sujo por mais de 10 min: o Pastor recebe um aviso, o field fica `ready`.
+7. **Patch é código novo do field:** `<raiz>/fields/<nome>-<n>.patch` (`git diff base..branch`), 0600.
+8. **Dispensa com sujeira:** antes de remover a worktree, o daemon grava `<raiz>/fields/<nome>-wip.patch` com o não
+   commitado (rastreado e não rastreado, sem ignorados) e **não** roda `branch -D`. O Pastor recebe o branch e o patch.
+9. **Rebase depois de integrar só com o agente parado** e a árvore do field limpa; senão o field fica `behind` (estado
+   novo) com a linha "rebase pendente" e tenta de novo no próximo fim de turno.
+10. **`collie-work.json` dos fields é lido do HEAD do cercado** (`read(base:)`), não da árvore: um agente não liga
+    `fields.default` editando sem commitar.
+11. **Escopo: daemon e CLI.** Nada no app nesta entrega além de o terminal mostrar o nome do field onde hoje mostra o
+    cercado. "Encerrar ramo" do B2 já cobre o agente; o field segue a regra de dispensa (8).
+12. **Spike primeiro para o `warm`.** Ninguém mediu se um `.build` do SwiftPM clonado para outro caminho absoluto compila
+    incremental (o SwiftPM e o module cache do clang guardam caminhos absolutos). O primeiro PRD mede isso; se não
+    servir, `warm` vira "build compartilhado só de leitura" ou sai, e a Medida muda.
 
 ## Decisões minhas (o dono pode vetar)
 

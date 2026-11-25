@@ -84,6 +84,39 @@ import CollieProtocol
         #expect(w.loop?.stopReason?.code == .requested && w.loop?.phase == nil && w.loop?.used == 0, "\(String(describing: w.loop))")
     }
 
+    /// C5d: the loop's Task cancelled by another path than `work stop` cancels the checks; the loop ends without them.
+    @Test(.timeLimit(.minutes(1))) func cancellingTheLoopsTaskCancelsTheChecks() async throws {
+        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Task a", check: "true")])
+        defer { r.cleanup() }
+        let (entered, inside) = AsyncStream<Void>.makeStream(), cancelled = Box(false)
+        await r.host.setCheckStub { _, _ in
+            inside.yield()
+            try? await Task.sleep(for: .seconds(3600))
+            cancelled.value = Task.isCancelled
+            return ProcessResult(status: 143, stdout: "", stderr: "", truncated: false)
+        }
+        let id = r.work
+        let run = Task { await loop.run(work: id, dir: r.repo) }
+        for await _ in entered { break }
+        run.cancel()
+        #expect(await run.value == .stopped)
+        #expect(cancelled.value, "the check was not cancelled")
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .cancelled && w.loop?.used == 0, "\(String(describing: w.loop?.stopReason))")
+    }
+
+    /// C5d: with `--auto-land`, a green check tells the owner once (the run's summary), not twice.
+    @Test func aGreenCheckWithAutoLandNotifiesOnce() async throws {
+        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Trivial", check: "true")])
+        defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.loop?.autoLand = WorkLoopState.AutoLand(gate: "true", ci: "true", timeout: 60) }
+        await r.host.setFactory(true)
+        #expect(await loop.run(work: r.work, dir: r.repo) == .stopped)
+        #expect(try await r.get().loop?.stopReason?.code == .checkAlreadyGreen)
+        let notices = await r.host.ownerNotices
+        #expect(notices.count == 1 && notices[0].contains("Trivial"), "\(notices)")
+    }
+
     @Test func atMostFourChecksRunAtOnce() async throws {
         let tasks = (1...6).map { WorkTask(id: "t\($0)", title: "T\($0)", check: "false") }
         let (r, _) = try await Self.rig(tasks)

@@ -187,6 +187,63 @@ import CollieProtocol
         #expect(Self.patches(r.host, r.work).isEmpty && !w.notes.contains { $0.text.contains("descart") })
     }
 
+    /// C5d: a rig of two tasks with the auto-land on: `a` done with a commit, `b` deferred (its check fails), so the land
+    /// stops with `landTasksNotDone`.
+    private static func twoTasks() async throws -> LoopRig {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true"), WorkTask(id: "b", title: "Task b", check: "false")], tries: 1)
+        let p = r.repo.appendingPathComponent(CommandRouter.personasDir)
+        try FileManager.default.createDirectory(at: p, withIntermediateDirectories: true)
+        try "---\nname: correcao\nmodel: sonnet\npaths: [\"**\"]\n---\nCorpo\n".write(to: p.appendingPathComponent("correcao.md"), atomically: true, encoding: .utf8)
+        try await commit("spec.md", "SPEC\n", in: r.repo)
+        let spec = r.repo.appendingPathComponent("spec.md").path
+        try await r.store.update(r.work) {
+            $0.tasks[0].spec = spec; $0.tasks[1].spec = spec; $0.loop?.review = true
+            $0.loop?.autoLand = WorkLoopState.AutoLand(gate: "true", ci: "true", timeout: 60)
+        }
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0) }))
+        await r.host.setFactory(true)
+        return r
+    }
+
+    /// C5d: the discard drops the commits of a task already `done`: it goes back to `open`, the note names it and quotes
+    /// the patch's path for `git am`, and the next `work run` takes it.
+    @Test func aDiscardReopensTheDoneTaskWhoseCommitsWent() async throws {
+        let r = try await Self.twoTasks(); defer { r.cleanup() }
+        let start = try await Self.git(r.repo, "rev-parse", "HEAD")
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landTasksNotDone, "\(String(describing: w.loop?.stopReason))")
+        #expect(try await Self.git(r.repo, "rev-parse", "HEAD") == start)
+        #expect(w.tasks[0].state == .open && w.tasks[0].evidence == nil && w.tasks[0].reviewClean == nil, "\(w.tasks[0])")
+        #expect(w.tasks[1].state == .deferred)
+        let patch = try #require(Self.patches(r.host, r.work).first)
+        let note = try #require(w.notes.first { $0.text.contains("descartei do cercado") })
+        #expect(note.text.contains("git am " + AgentLaunch.quote(patch.path)), "\(note.text)")
+        #expect(note.text.contains("Reabertas") && note.text.contains("\"Task a\" [a]") && !note.text.contains("\"Task b\""), "\(note.text)")
+        #expect(await r.host.ownerNotices.last?.contains("reabertas: \"Task a\"") == true)
+
+        // the next run (task a only, no land) takes it again
+        try await r.store.update(r.work) { $0.loop = WorkLoopState(tries: 1, timeout: 60, tasks: ["a"]) }
+        #expect(await r.run() == .finished)
+        let y = try await r.get()
+        #expect(y.tasks[0].state == .done && FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("a.swift").path), "\(y.tasks[0])")
+    }
+
+    /// C5d: no discard (a commit of the attempt is in the base already): nothing reopened.
+    @Test func noDiscardReopensNothing() async throws {
+        let r = try await Self.twoTasks(); defer { r.cleanup() }
+        let host = r.host
+        await host.set("w-task-a-t1", LoopScript(act: {
+            try await commit("a.swift", "let a = 1\n", in: $0)
+            await host.setBase(try await Self.git($0, "rev-parse", "HEAD"))
+        }))
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.loop?.stopReason?.code == .landTasksNotDone)
+        #expect(w.tasks[0].state == .done && Self.patches(r.host, r.work).isEmpty)
+        #expect(w.notes.contains { $0.text.contains("NÃO descartados") } && !w.notes.contains { $0.text.contains("[reopen]") }, "\(w.notes.map(\.text))")
+    }
+
     @Test func theStartCarriesOverOnlyFromALoopThatDidNotLand() {
         var l = WorkLoopState(); l.autoLand = .init(gate: "true"); l.autoLand?.startHead = "abc"
         l.stopReason = .init(.landBaseMoved)

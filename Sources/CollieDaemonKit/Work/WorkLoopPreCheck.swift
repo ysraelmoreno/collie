@@ -21,7 +21,8 @@ extension WorkLoop {
         let run = Task { await BoundedProcess.$killOnCancel.withValue(true) { await Self.greens(todo, host: host, dir: dir, timeout: timeout) } }
         preChecks[id] = run
         if stopping.contains(id) { run.cancel() }
-        let green = await run.value
+        // C5d: a cancel of the loop's Task by another path than `work stop` reaches the checks too
+        let green = await withTaskCancellationHandler { await run.value } onCancel: { run.cancel() }
         preChecks[id] = nil
         let done = entry(.preCheckFinished, detail: "\(green.count) de \(todo.count) já passa(m)")
         try? await store.update(id) { $0.loop?.show(nil); $0.record(done) }
@@ -30,7 +31,8 @@ extension WorkLoop {
         guard !green.isEmpty else { return nil }
         let text = Self.greenText(green)
         await note(id, "[loop] " + text)
-        await host.notifyOwner(LotBoards.scrub("Collie: laço \"\(RerailText.clean(w.title, max: 80))\": " + text, secrets: await host.secrets()))
+        // C5d: with `--auto-land` the run's summary (`autoLandSummary`) tells the owner: once
+        if loop.autoLand == nil { await host.notifyOwner(LotBoards.scrub("Collie: laço \"\(RerailText.clean(w.title, max: 80))\": " + text, secrets: await host.secrets())) }
         return .init(.checkAlreadyGreen, detail: Self.eventDetail(green.map(\.title).joined(separator: ", ")))
     }
 
@@ -94,6 +96,7 @@ extension WorkLoop {
             return await keep("há commits entre \(start.prefix(12)) e o HEAD que já estão na base")
         }
         let commits = await out(["log", "--format=%h %s", "\(start)..\(head)"], dir) ?? ""
+        let dropped = (await out(["rev-list", "\(start)..\(head)"], dir) ?? "").split(separator: "\n").map(String.init)
         let files = (await out(["diff", "--name-only", start, head], dir) ?? "").split(separator: "\n").joined(separator: ", ")
         let patch = try? await host.laneGit(["format-patch", "--stdout", "--binary", "\(start)..\(head)"], stdin: nil, timeout: .seconds(120),
                                             cap: Self.discardCap, in: dir)
@@ -106,10 +109,35 @@ extension WorkLoop {
         } catch { return await keep("o patch não foi gravado: \(error.localizedDescription)") }
         guard (try? await host.git(["reset", "-q", "--hard", start], in: dir))?.status == 0 else { return await keep("git reset falhou") }
         try? await store.update(id) { $0.loop?.autoLand?.startHead = nil }   // back on it: nothing left to carry
+        let reopened = await reopenDiscarded(id, dropped)
         let line = "[loop] auto-land: nada integrado, então descartei do cercado os commits da tentativa (\(start.prefix(12))..\(head.prefix(12))): "
             + commits.split(separator: "\n").joined(separator: "; ") + ". Arquivos: \(files). O cercado voltou a \(start.prefix(12)). "
-            + "Patch: \(file.path). Para recuperar, no cercado: git am \(file.path)"
+            + "Patch: \(file.path). Para recuperar, no cercado: git am \(AgentLaunch.quote(file.path))"
+            + (reopened.isEmpty ? "" : ". Reabertas (voltam à fila): " + reopened.joined(separator: ", "))
         await note(id, LotBoards.scrub(String(line.prefix(Self.noteChars))))
         return "Descartei do cercado \(commits.split(separator: "\n").count) commit(s) da tentativa; patch: \(file.path) (git am)"
+            + (reopened.isEmpty ? "" : "; reabertas: " + reopened.joined(separator: ", "))
+    }
+
+    /// C5d: after a discard, a `done` task whose commits went with it goes back to `open` (the next `work run` takes
+    /// it): one whose evidence names a dropped commit, or one of this run with no evidence to tell (no reliable map).
+    /// The titles reopened.
+    func reopenDiscarded(_ id: UUID, _ dropped: [String]) async -> [String] {
+        let at = host.now()
+        var titles: [String] = []
+        try? await store.update(id) { w in
+            for i in w.tasks.indices where w.tasks[i].state == .done {
+                let shas = (w.tasks[i].evidence?.commits ?? []).compactMap { $0.split(separator: " ").first.map(String.init) }
+                let ours = shas.isEmpty ? (w.loop?.tasks?.contains(w.tasks[i].id) ?? true)
+                    : shas.contains { s in dropped.contains { $0.hasPrefix(s) } }
+                guard ours else { continue }
+                w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].tries = nil
+                w.tasks[i].updatedAt = at; w.tasks[i].clearVerdicts()
+                if w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }
+                w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): feita, mas os commits foram descartados do cercado"))
+                titles.append("\"\(RerailText.clean(w.tasks[i].title, max: 80))\" [\(w.tasks[i].id)]")
+            }
+        }
+        return titles
     }
 }

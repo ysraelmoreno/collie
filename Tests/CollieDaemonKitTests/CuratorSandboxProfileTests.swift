@@ -9,7 +9,7 @@ private let claude = CuratorSandboxProfile.render(CuratorSandboxProfile.claude(e
 private let cursorHome = "/Users/u/Library/Application Support/Collie/curator/cursor-home"
 private let cursor = CuratorSandboxProfile.render(CuratorSandboxInput(
     executables: ["/Users/u/.local/bin/cursor-agent", "/usr/bin/env", "/bin/bash"].map { URL(fileURLWithPath: $0) },
-    cwd: cwd, home: home, reads: [cursorHome], writes: [cursorHome], keychain: false))
+    cwd: cwd, home: home, reads: [cursorHome], writes: [cursorHome], keychain: false, resolver: true))
 
 /// Whether an allow (one per line) of an op starting with `op` covers `path`: its subpath, literal or regex filter.
 private func allows(_ profile: String, _ op: String, _ path: String) -> Bool {
@@ -99,15 +99,21 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
         for p in [claude, cursor] { #expect(!p.contains("no-sandbox") && !p.contains("/bin/ps")) }
     }
 
-    /// The only Unix socket is the system resolver's, and only for Claude (measured: its call never answers without it).
+    /// The only Unix socket is the system resolver's, for both CLIs (without it a call never resolves a host: claude never
+    /// answers, cursor fails `getaddrinfo ENOTFOUND api2.cursor.sh`).
     @Test func onlyTheResolversUnixSocket() {
-        #expect(!cursor.contains("unix-socket") && !cursor.contains("AF_UNIX"))
-        let unix = claude.split(separator: "\n").filter { $0.contains("unix-socket") }
-        #expect(unix == ["(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"])
-        #expect(claude.contains("(allow system-socket (socket-domain AF_UNIX))"))
         for p in [claude, cursor] {
+            let unix = p.split(separator: "\n").filter { $0.contains("unix-socket") }
+            #expect(unix == ["(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"])
+            #expect(p.contains("(allow system-socket (socket-domain AF_UNIX))"))
             #expect(p.contains("(allow network-outbound (remote ip))"))   // Claude: any port, as before (cursor: 443 only)
         }
+    }
+
+    /// The real Cursor input opens the resolver (the fixture above only mirrors it).
+    @Test func realCursorInputOpensTheResolver() {
+        let i = CuratorSandboxProfile.cursor(script: URL(fileURLWithPath: "/Users/u/.local/bin/cursor-agent"), cwd: cwd, cursorHome: URL(fileURLWithPath: cursorHome))
+        #expect(i.resolver)
     }
 
     /// What a real run on the owner's Mac showed claude needs to log in and answer (2026-11-19, claude 2.1.329): each
@@ -118,7 +124,7 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
         for s in ["com.apple.bsd.dirhelper", "com.apple.FSEvents", "com.apple.fseventsd"] {
             #expect(claude.contains("(allow mach-lookup (global-name \"\(s)\"))") && !cursor.contains(s))
         }
-        #expect(!reads(cursor, "/private/var/db/mds") && !cursor.contains("(literal \"/var\")") && !cursor.contains("/usr/bin/security"))
+        #expect(!reads(cursor, "/private/var/db/mds") && !cursor.contains("/usr/bin/security"))
     }
 
     /// claude is installed as a link (`~/.local/bin/claude` → `…/versions/<n>`), and the CLI reads the path it was

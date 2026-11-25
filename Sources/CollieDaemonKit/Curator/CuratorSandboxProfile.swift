@@ -108,6 +108,7 @@ enum CuratorSandboxProfile {
             + tools.map { URL(fileURLWithPath: $0) }
         let h = SignedAppCheck.realPath(cursorHome)
         return CuratorSandboxInput(executables: exes, cwd: cwd, home: cursorHome, reads: [h], writes: [h], keychain: false,
+                                   resolver: true,   // measured 2026-11-25: without it every call fails `getaddrinfo ENOTFOUND api2.cursor.sh`
                                    mapExecutable: [version.path], port: CursorCuratorRunner.port)
     }
 

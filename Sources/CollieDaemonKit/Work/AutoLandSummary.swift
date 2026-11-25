@@ -82,6 +82,8 @@ enum AutoLandSummary {
             let left = w.tasks.filter { $0.state != .done }   // C2: a dropped task is not done (it lands nothing)
             if !left.isEmpty { l.append("- tarefas não feitas: " + left.map { c($0.title, 80) }.joined(separator: "; ")) }
         }
+        // F1: the same failure in 2+ attempts, for the owner to decide on (nothing is saved to memory)
+        l += TrapCandidates.section(w)
         return l.joined(separator: "\n") + "\n"
     }
 

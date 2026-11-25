@@ -51,6 +51,25 @@ import CollieProtocol
         #expect(c.arguments == ["-l"])
         #expect(throws: (any Error).self) { try AgentLaunch.launchSpec(for: rec(.custom), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh") }
     }
+    /// F2 W1 (reviewerNoMcp): a reviewer launches with --strict-mcp-config and no server, whatever a fake ~/.claude.json
+    /// holds; a common terminal stays additive with collie.
+    @Test func reviewerLaunchesWithNoMcp() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let home = dir.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data(#"{"mcpServers":{"planted":{"type":"stdio","command":"/tmp/evil"}}}"#.utf8).write(to: home.appendingPathComponent(".claude.json"))
+        let env = ["HOME": home.path]
+        let r = rec(.claude)
+        let s = try AgentLaunch.launchSpec(for: r, env: env, hooksDir: dir, collie: collie, shell: "/bin/zsh", reviewerNoMcp: true)
+        #expect(s.arguments[1].contains(" --strict-mcp-config") && !s.arguments[1].contains("planted"))
+        let o = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.mcpFile(r.id, in: dir))) as! [String: Any]
+        #expect((o["mcpServers"] as? [String: Any])?.isEmpty == true)
+        let c = rec(.claude)
+        let n = try AgentLaunch.launchSpec(for: c, env: env, hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(!n.arguments[1].contains("--strict-mcp-config"))
+        let p = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.mcpFile(c.id, in: dir))) as! [String: Any]
+        #expect(Array(((p["mcpServers"] as? [String: Any]) ?? [:]).keys) == ["collie"])
+    }
     @Test func claudeGetsPluginDir() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let plugin = URL(fileURLWithPath: "/tmp/o rq/sandbox/x/plugin/collie-procedures")

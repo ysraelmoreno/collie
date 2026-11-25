@@ -10,3 +10,24 @@
 # Unverified whether this is the runner image or the profiles: run them unsandboxed on a Mac before removing.
 ^CollieDaemonKitTests\.CuratorRunnerTests/(fakeClaudeRunsSandboxed|inputViaStdin|perCallFile|creditErrorRunIsExhausted|timeoutKills)\(\)  # runner: Seatbelt profile of the curator denies /private/var/select/sh
 ^CollieTerminalTests\.ControllingTerminalTests/cttyAcceptsSandboxLine\(\)  # runner: collie-ctty --sandbox output differs (both runs)
+
+# WKWebView on the runner: the owner took real-WKWebView suites out of the CI. Run 45059804734 (2ee02ba): media/CSS
+# emulation not applied, iframe typing starved; run 45073169794 (637e501): the test process died in BrowserInputTests
+# (shard 2). Each suite below builds a real WKWebView (BrowserPanel, PreviewPanel, DeckExporter, plugin/app panels,
+# the design scheme handler and GPU probe). Run them on a dev Mac with --filter.
+^ColliePluginsTests\.BrowserInputTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.BrowserEmulateTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.BrowserStorageTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.BrowserViewportTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.BrowserScreenshotTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.DeckExporterTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.PreviewPanelTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.DesignPanelTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.WebPluginPanelTests/  # runner: WebKit headless, o processo de teste morre
+^ColliePluginsTests\.AppPanelBlankTests/  # runner: WebKit headless, o processo de teste morre
+
+# The ⤢ fullscreen button of a terminal panel: on the runner its locator returns (0,0) (no real screen), so
+# dragAcrossTheBarNeitherFiresNorReaddsMidDrag, clickWithoutANodeInFrontStillFires and clickKeepsTheTerminalFocused fail
+# (run 45073169794). C6 tried two ways to find it (accessibility, then clicking along the title bar); neither held.
+# Run it on a dev Mac with --filter TerminalFullscreenClickTests.
+^CollieAppTests\.TerminalFullscreenClickTests/  # runner: sem tela, o botão não é localizável (duas correções tentadas)

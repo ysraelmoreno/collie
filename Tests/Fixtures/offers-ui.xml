@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[0,0][720,1600]">
+    <node index="0" text="" resource-id="com.abinbev.android.app.br:id/toolbar" class="androidx.appcompat.widget.Toolbar" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[0,48][720,184]">
+      <node index="0" text="" resource-id="" class="android.widget.ImageButton" content-desc="Navigate up" clickable="true" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[0,48][112,160]" />
+      <node index="1" text="Offers" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[130,80][300,130]" />
+      <node index="2" text="" resource-id="com.abinbev.android.app.br:id/filter_button" class="android.view.ViewGroup" content-desc="" clickable="true" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[440,96][560,176]">
+        <node index="0" text="Filter" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[460,110][540,160]" />
+      </node>
+    </node>
+    <node index="1" text="" resource-id="com.abinbev.android.app.br:id/configuration_fab" class="android.widget.Button" content-desc="" clickable="true" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[592,96][672,176]" />
+    <node index="2" text="" resource-id="com.abinbev.android.app.br:id/tab_layout" class="com.google.android.material.tabs.TabLayout" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[0,184][720,280]">
+      <node index="0" text="" resource-id="" class="com.google.android.material.tabs.TabLayout$TabView" content-desc="" clickable="true" enabled="true" focused="false" scrollable="false" selected="true" checked="false" bounds="[0,184][360,280]">
+        <node index="0" text="Points" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="true" checked="false" bounds="[130,210][230,254]" />
+      </node>
+      <node index="1" text="" resource-id="" class="com.google.android.material.tabs.TabLayout$TabView" content-desc="" clickable="true" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[360,184][720,280]">
+        <node index="0" text="Combos" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[480,210][600,254]" />
+      </node>
+    </node>
+    <node index="3" text="" resource-id="" class="androidx.recyclerview.widget.RecyclerView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="true" selected="false" checked="false" bounds="[0,280][720,1600]">
+      <node index="0" text="Something went wrong" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[160,700][560,760]" />
+      <node index="1" text="Try again" resource-id="com.abinbev.android.app.br:id/retry" class="android.widget.Button" content-desc="" clickable="true" enabled="true" focused="false" scrollable="false" selected="false" checked="false" bounds="[260,800][460,880]" />
+    </node>
+  </node>
+</hierarchy>

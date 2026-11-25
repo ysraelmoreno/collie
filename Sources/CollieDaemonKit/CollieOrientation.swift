@@ -19,8 +19,12 @@ enum CollieOrientation {
     /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
     /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
     /// M4 (2026-11-21 device loop spec): read the tree, act and re-read in one call; the PNG only as a last resort.
-    static let deviceLoop = "collie device ui (the tree; don't parse the PNG), then tap --text|--ref … --then ui; screenshot only if the tree lacks it."
-    static let deviceShort = "collie device ui; tap --text … --then ui."
+    /// S5 (2026-11-22 device screen spec): `device screen` to see, `--then screen`, `wait` instead of sleep. ponytail: no
+    /// `find` until E3 lands (teaching a missing command only earns errors); add `find "X" --scroll` here then.
+    /// H5 (2026-11-22 device helper spec): one sentence so a slow read (uiautomator fallback) is diagnosed, not retried;
+    /// ponytail: normal form only, the short form has no room under the 1500 cap.
+    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it. Reads slow (~2 s)? collie device helper status says why. No tree match: find and tap --text read the screen by OCR (via ocr, no click proof: --then screen)."
+    static let deviceShort = "collie device screen; tap --text … --then screen."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
@@ -31,6 +35,13 @@ enum CollieOrientation {
     }
     private static func names(_ xs: [String], _ k: Int) -> String {
         ([xs.prefix(k).map(quote).joined(separator: ", ")] + (xs.count > k ? ["+\(xs.count - k) more"] : [])).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    /// F2 Z1 (`reviewerHooksBare`): a loop reviewer's whole session text. Fixed, with nothing another agent can write
+    /// (no peers, lot goal, panels nor shared folder): only its own name, quoted as every name is.
+    static func reviewer(_ terminal: String) -> String {
+        "You are \(quote(terminal)), a reviewer in a Collie loop. Judge only from the review prompt and the evidence it names. Your verdict is an opinion (parecer): it can veto with a confirmed finding, never approve a task. "
+            + "You may not edit files, run collie commands nor talk to other terminals; Collie gives you no memory, board or documents."
     }
 
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],

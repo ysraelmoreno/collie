@@ -89,7 +89,8 @@ private func spec(_ exe: String, _ args: [String] = [], env: [String: String] = 
                     n += 1
                     let sb = ScrollbackBuffer(spillURL: nil), exited = DispatchSemaphore(value: 0), box = Box()
                     let marker = "END-\(t)-\(n)."
-                    guard let p = try? PTYProcess(spec: spec("/bin/echo", [marker]), scrollback: sb) else { tally.add("spawn failed"); continue }
+                    let p: PTYProcess
+                    do { p = try PTYProcess(spec: spec("/bin/echo", [marker]), scrollback: sb) } catch { tally.add("spawn failed: \(error)"); continue }
                     p.onExit = { box.set($0); exited.signal() }
                     // bounded: a child stuck in exit must fail the test, not hang the suite
                     if exited.wait(timeout: .now() + 20) == .timedOut { tally.add("hang pid \(p.pid)"); continue }
@@ -108,6 +109,27 @@ private func spec(_ exe: String, _ args: [String] = [], env: [String: String] = 
         #expect(lost.isEmpty, "lost \(lost.count) of \(total): \(lost.prefix(5))")
         // loose: other suites open fds concurrently; a per-spawn leak would be thousands
         #expect(fdsAfter - fdsBefore < 64, "open fds \(fdsBefore) -> \(fdsAfter)")
+    }
+
+    /// A transient pty error (no slot usable) is retried at once; any other spawn error fails at once.
+    @Test func spawnRetriesTransientPTYErrors() throws {
+        var calls = 0
+        let v = try PTYProcess.retryingTransient { () throws -> Int in
+            calls += 1
+            if calls < 3 { throw PTYError.spawnFailed(errno: calls == 1 ? ENXIO : EAGAIN) }
+            return 7
+        }
+        #expect(v == 7 && calls == 3)
+        calls = 0
+        #expect(throws: PTYError.spawnFailed(errno: ENOENT)) {
+            try PTYProcess.retryingTransient { () throws -> Int in calls += 1; throw PTYError.spawnFailed(errno: ENOENT) }
+        }
+        #expect(calls == 1)
+        calls = 0
+        #expect(throws: PTYError.spawnFailed(errno: ENXIO)) {
+            try PTYProcess.retryingTransient(tries: 3) { () throws -> Int in calls += 1; throw PTYError.spawnFailed(errno: ENXIO) }
+        }
+        #expect(calls == 3)
     }
 
     /// The leader exits while a background job still holds the replica: exit is seen via the process source (not

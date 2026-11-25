@@ -147,6 +147,7 @@ enum MCPServer {
         guard let command = Commands.all.first(where: { $0.mcpName == name })?.name else {
             return content("invalidArgs: unknown tool '\(name)'", isError: true)
         }
+        if let why = MCPSchema.refusal(command: command, args: args) { return content("invalidArgs: " + why, isError: true) }
         // Cursor's MCP client drops a call near 60 s: ask goes detached, wait is cut short (CursorMCPPolicy)
         _ = await offersMemoryTask()
         let adapted = CursorMCPPolicy.adapt(agent: lock.withLock { agent }, command: command, args: args)

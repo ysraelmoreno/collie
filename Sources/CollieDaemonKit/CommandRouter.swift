@@ -36,6 +36,8 @@ actor CommandRouter {
     /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
     /// M3d.1: each wait keeps its client's pid and when it began (`activitySeq`), against the terminal's last tool call.
     var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
+    /// F2 R4: the loops' reviewer terminals, alive: never counted as someone working in the paddock (`loopOthersWorking`).
+    var loopReviewers: Set<UUID> = []
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
@@ -193,14 +195,14 @@ actor CommandRouter {
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
         let cursorEnds = asks.cursorTurnEnds
         Task { for await t in cursorEnds { await me.router?.cursorStop(t) } }   // D1: a Cursor turn ended: the plug-ins' `stop`
-        let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath
+        let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath, helperApk = config.helperApk
         self.devices = DeviceService(root: config.paths.root, runDir: config.paths.runDir, pollInterval: config.devicePollInterval,
             scrcpyServer: config.scrcpyServer, grace: config.deviceGrace,
             adb: { adbPath ?? Adb.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             emulator: { emulatorPath ?? Emulator.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) }, emulatorBoot: config.emulatorBoot, emulatorEnv: config.emulatorEnv,
             avdManager: config.avdManager ?? { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             xcrun: config.xcrunPath, axe: { axePath ?? Simulator.locateAXe(env: ProcessInfo.processInfo.environment) },
-            crashReports: config.crashReportsDir, logCap: config.deviceLogCap,
+            crashReports: config.crashReportsDir, logCap: config.deviceLogCap, helperApk: { helperApk }, ocr: config.ocr,
             emit: { p, n, pl in await me.router?.pluginEmitted(panel: p, name: n, payload: pl) })
         self.android = config.androidInstaller ?? AndroidInstaller(root: config.paths.root, env: ProcessInfo.processInfo.environment,
                                                                    home: NSHomeDirectory(), runDir: config.paths.runDir)
@@ -417,7 +419,7 @@ actor CommandRouter {
                 try await adminOnly(req, peer: peer)
                 return Response(id: req.id, ok: true, result: try await chatCommand(req))
             }
-            if req.command.hasPrefix("work."), req.command != "work.hook" {   // admin or terminal; reach rules in workCommand
+            if (req.command.hasPrefix("work.") && req.command != "work.hook") || req.command == "factory.doctor" || req.command.hasPrefix("factory.ratchet.") || req.command.hasPrefix("factory.bait.") {   // admin or terminal; reach rules in workCommand
                 return Response(id: req.id, ok: true, result: try await workCommand(req, peer: peer))
             }
             if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand
@@ -778,9 +780,7 @@ actor CommandRouter {
         case "admin.spawn":
             let name = try need("name")
             try reserve(name); defer { launching.remove(name.lowercased()) }
-            guard let preset = Preset(rawValue: try need("preset")) else {
-                throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-            }
+            let preset = try Preset.parse(try need("preset"))
             var fl: Paddock?
             if let f = str(r, "paddock") { fl = try findPaddock(f) }
             let sandbox: TerminalSandbox   // the only path to a free terminal: the user, in the app
@@ -850,12 +850,7 @@ actor CommandRouter {
             }
             // the user marking a summoned worker as Shepherd makes it a root one (no sub-Shepherd rules, nobody's cascade)
             if t.isShepherd && !old.isShepherd { t.summonedBy = nil }
-            if let ps = str(r, "preset") {
-                guard let preset = Preset(rawValue: ps) else {
-                    throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-                }
-                t.preset = preset
-            }
+            if let ps = str(r, "preset") { t.preset = try Preset.parse(ps) }
             if let c = str(r, "command") { t.command = c.isEmpty ? nil : c }   // ponytail: empty clears
             if let c = str(r, "cwd") {
                 guard t.paddockId == nil else {
@@ -1002,8 +997,9 @@ actor CommandRouter {
     func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
         if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
-        // L2: on the record (survives a daemon restart). M3.3: a lane's agent is strict whatever the workspace's mode
-        rec.startMode = rec.sandbox == .sandboxed ? (lanePaddock(of: rec) != nil ? .strict : sandboxMode) : nil
+        // L2: on the record (survives a daemon restart). M3.3: a lane's agent is strict whatever the workspace's mode. F2 A5: so is a
+        // reviewer (`loopReviewers`, marked before the launch): never weaker than the agent it judges
+        rec.startMode = rec.sandbox == .sandboxed ? (lanePaddock(of: rec) != nil || loopReviewers.contains(rec.id) ? .strict : sandboxMode) : nil
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -1131,13 +1127,19 @@ actor CommandRouter {
             e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.gitBranch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
+        // F2 Z3b: a loop reviewer loads no auto-memory (Claude Code's own switch, read in its 2.1.x build): a process the
+        // judged agent left alive could have planted a `MEMORY.md` under `~/.claude/projects/`, writable in strict
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1" }
+        // F2 V2: nor connects to an IDE (`autoConnectIde` of `~/.claude.json`, writable in strict): Claude Code checks
+        // `CLAUDE_CODE_AUTO_CONNECT_IDE === false` first (read in the installed 2.1.x build)
+        if loopReviewers.contains(rec.id) { e["CLAUDE_CODE_AUTO_CONNECT_IDE"] = "false" }
         if sandboxed(rec), let home = config.sandboxHome {
             e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
         }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
                                           resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil,
-                                          pluginDirs: pluginDirs)
+                                          pluginDirs: pluginDirs, reviewerNoMcp: reviewerHooksBare(rec))
     }
 
     /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable

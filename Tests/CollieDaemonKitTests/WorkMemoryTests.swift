@@ -21,18 +21,23 @@ private func work(_ d: Daemon, _ p: Paths, _ cmd: String, _ t: Term, _ args: [St
                                       args: args.merging(["terminal": t.name]) { a, _ in a }.mapValues { .string($0) }), timeoutSeconds: 60)
     #expect(r.ok, "\(cmd): \(r)")
 }
+/// Bounded (D4): an actor read inside a `waitFor` condition that never returns hung shard 1 for 900 s.
 private func records(_ d: Daemon, _ repo: URL) async throws -> [MemoryRecord] {
-    let r = await d.router.memory.repo(for: repo.path)
-    return try await r.run { $0.store.all().records }.filter { $0.origin == "Collie (resumo)" }
+    try await bounded(15, "the Memory records of \(repo.path)") {
+        let r = await d.router.memory.repo(for: repo.path)
+        return try await r.run { $0.store.all().records }.filter { $0.origin == "Collie (resumo)" }
+    }
 }
 private func saved(_ d: Daemon, _ repo: URL, count: Int = 1) async throws -> [MemoryRecord] {
     _ = await waitFor(10) { ((try? await records(d, repo))?.count ?? 0) >= count }
     return try await records(d, repo)
 }
 /// The daemon's decisions so far, once there are `n` of them.
+/// Bounded like `records`: a wedged router is `["timeout"]`, a clear mismatch, not a hang.
 private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
-    _ = await waitFor(10) { await d.router.summaryDecisions.count >= n }
-    return await d.router.summaryDecisions
+    func read() async -> [String]? { try? await bounded(15, "router.summaryDecisions") { await d.router.summaryDecisions } }
+    _ = await waitFor(10) { (await read()?.count ?? 0) >= n }
+    return await read() ?? ["timeout: router did not answer in 15 s"]
 }
 
 @Suite(.serialized) struct WorkMemoryTests {
@@ -157,11 +162,23 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
             let t = try await term(d, p, "T", cwd: repo)
             try await work(d, p, "work.start", t, ["title": "Pasture"])
             try await work(d, p, "work.task.add", t, ["title": "Do it"])
-            #expect(try await admin(d, p, "admin.kill", ["target": .string("T")]).ok)
+            let kill = try await admin(d, p, "admin.kill", ["target": .string("T")])
+            #expect(kill.ok, "admin.kill of terminal T (work Pasture): \(kill)")
             let recs = try await saved(d, repo)
-            #expect(recs.count == 1 && recs.first?.title == "Resumo: Pasture" && recs.first?.scope == .project)
-            #expect(await decisions(d) == ["saved"])
+            #expect(recs.count == 1 && recs.first?.title == "Resumo: Pasture" && recs.first?.scope == .project,
+                    "after killing terminal T: expected 1 summary 'Resumo: Pasture' in \(repo.path), got \(recs.map(\.title))")
+            let why = await decisions(d)
+            #expect(why == ["saved"], "summary decision for the work of the removed terminal T")
         }
+    }
+
+    /// D4: the helper the reads above go through gives up on an op that ignores cancellation (a blocked thread).
+    @Test func boundedGivesUpOnStuckOp() async throws {
+        let start = ContinuousClock.now
+        await #expect(throws: ProtocolError.self) {
+            try await bounded(0.2, "stuck op") { usleep(2_000_000) }   // ignores cancellation
+        }
+        #expect(ContinuousClock.now - start < .seconds(1.5))
     }
 
     @Test func memoryBodyHasNoEscapes() async throws {

@@ -70,6 +70,33 @@ public final class PTYProcess: @unchecked Sendable {
     /// `queue`: tests pass a suspended one to hold the sources' registration until the child is already exiting.
     init(spec: LaunchSpec, scrollback: ScrollbackBuffer, writeStall: Duration, queue: DispatchQueue) throws {
         self.scrollback = scrollback; self.writeStall = writeStall; self.queue = queue
+        let (p, fd, sfd) = try Self.retryingTransient { try Self.spawn(spec) }
+        pid = p; master = fd; replica = sfd
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+
+        let rs = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        rs.setEventHandler { [weak self] in self?.drain() }
+        readSource = rs
+        let ps = DispatchSource.makeProcessSource(identifier: p, eventMask: .exit, queue: queue)
+        // strong self: keeps the process alive until reaped; reap() breaks the cycle
+        ps.setEventHandler { self.reap() }
+        procSource = ps
+        rs.resume(); ps.resume()
+    }
+
+    /// ENXIO/EAGAIN from the pty layer: no pty slot usable at that instant (CI run 45059804734 lost 1 of 3,200 spawns
+    /// in immediateExitNeverLosesOutput and an AskTests terminal with errno 6 while other shards churned ptys). Each
+    /// try allocates a fresh pty, so it is retried at once; any other error fails at once.
+    // ponytail: immediate retries, no pause (the kernel signals nothing when a slot frees); add a backoff if a soak shows 8 is not enough
+    static func retryingTransient<T>(tries: Int = 8, _ body: () throws -> T) throws -> T {
+        for _ in 1..<tries {
+            do { return try body() } catch PTYError.spawnFailed(let e) where e == ENXIO || e == EAGAIN {}
+        }
+        return try body()
+    }
+
+    /// Opens a pty and spawns the child on its replica: (pid, master, replica the parent keeps or -1).
+    private static func spawn(_ spec: LaunchSpec) throws -> (pid_t, Int32, Int32) {
         // posix_spawn instead of forkpty: no fork in a multithreaded process (libc atfork handlers
         // such as libnotify's crashed under concurrent spawns), no Swift code between fork and exec.
         let fd = posix_openpt(O_RDWR | O_NOCTTY)
@@ -116,17 +143,7 @@ public final class PTYProcess: @unchecked Sendable {
         var p: pid_t = 0
         let rc = posix_spawn(&p, spec.executable, &acts, &attr, argv, envp)
         guard rc == 0 else { close(fd); if sfd >= 0 { close(sfd) }; throw PTYError.spawnFailed(errno: rc) }
-        pid = p; master = fd; replica = sfd
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-
-        let rs = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        rs.setEventHandler { [weak self] in self?.drain() }
-        readSource = rs
-        let ps = DispatchSource.makeProcessSource(identifier: p, eventMask: .exit, queue: queue)
-        // strong self: keeps the process alive until reaped; reap() breaks the cycle
-        ps.setEventHandler { self.reap() }
-        procSource = ps
-        rs.resume(); ps.resume()
+        return (p, fd, sfd)
     }
 
     private func drain() {

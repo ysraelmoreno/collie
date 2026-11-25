@@ -116,6 +116,17 @@ import CollieProtocol
         }
     }
 
+    /// A2 (reviewAdvisoryDoc): the reviewer's text says its verdict is an opinion (parecer); no orientation calls it an
+    /// approval, and the normal and short forms still fit the cap (the Shepherd's has no --review line: no room).
+    @Test func reviewIsAnOpinionNotAnApproval() {
+        let r = CollieOrientation.reviewer("Rev")
+        #expect(r.contains("parecer") && r.contains("never approve") && r.count <= 1500, "\(r)")
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        for t in [text(), text(shepherd: true), text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: ps)] {
+            #expect(t.count <= 1500 && !t.contains("aprovado pelo revisor"), "\(t.count)")
+        }
+    }
+
     @Test func orientationIsBounded() {
         let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
         let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: ps)
@@ -394,12 +405,13 @@ import CollieProtocol
         #expect(codex.split(separator: "\n").contains(Substring(plain + " " + CollieOrientation.loopNotify + wait)) && !codex.contains("/collie:loop"), "\(codex)")
     }
 
-    /// M4 (device loop spec): the Device line teaches `device ui` + `tap … --then ui`, and fits the 1500 cap in the
+    /// M4/S5 (device specs): the Device line teaches `device screen` + `tap … --then screen` + `wait`, and fits the 1500 cap in the
     /// normal form (one panel) and the short form (worst case: many long names, Shepherd, Cursor).
     @Test func deviceLineTeachesTreeLoopWithinCap() {
         let one = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [("Pixel", "device")])
         #expect(one.count <= 1500 && one.contains("- Device \"Pixel\": " + CollieOrientation.deviceLoop), "\(one.count)\n\(one)")
-        #expect(one.contains("device ui") && one.contains("--then ui") && !one.contains("(screenshot, tap, logs)"))
+        #expect(one.contains("device screen") && one.contains("--then screen") && one.contains("wait --text") && !one.contains("(screenshot, tap, logs)"))
+        #expect(one.contains("collie device helper status"))   // H5: the slow-read hint
         let ps = (1...20).map { (name: "device-" + String(repeating: "x", count: 60) + "\($0)", pluginId: "device") }
         for agent in ["claude", "cursor"] {
             let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...20).map { "peer\($0)" }, panels: ps, agent: agent)

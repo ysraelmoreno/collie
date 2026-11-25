@@ -19,6 +19,8 @@ extension CommandRouter {
         switch r.command {
         case "access.request":
             guard let me = caller else { throw ProtocolError(code: .invalidArgs, message: "'access.request' is sent from a terminal") }
+            // F4 1: a loop's reviewer has no card to show (`raise` hushes it, V4): say so, never "mostrado ao usuário"
+            if loopReviewers.contains(me.id) { return .object(["shown": .bool(false), "message": .string(Self.reviewerAccessMessage)]) }
             guard sandboxed(me) else { throw ProtocolError(code: .invalidArgs, message: "'\(me.name)' has no sandbox (terminal livre)") }
             let read = flag(r, "read"), write = flag(r, "write")
             guard read != write else { throw ProtocolError(code: .invalidArgs, message: "pass one of --read or --write") }
@@ -149,6 +151,8 @@ extension CommandRouter {
         return .object(["mode": .string(sandboxMode.rawValue)])
     }
 
+    static let reviewerAccessMessage = "revisor do laço: nada é liberado durante a revisão"
+
     var sandboxHomeDir: URL { config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()) }
 
     func saveGrants() throws { try SandboxGrantStore(root: config.paths.root).save(sandboxGrants) }
@@ -158,6 +162,9 @@ extension CommandRouter {
     func raise(_ denial: SandboxDenial) async {
         guard sandboxKnown.contains(denial.terminal) else { return }
         if ws.terminals.first(where: { $0.id == denial.terminal }).map(startedOpen) == true { accessCards.hush(denial); return }   // open mode: Collie's internals, counted only
+        // F2 V4: a loop's reviewer (born strict, A5) has no one watching and reads only its copy of the commit: its denial stays a
+        // denial, never a card (a card's approval restarts the terminal in the middle of the review), as a lane's
+        if loopReviewers.contains(denial.terminal) { accessCards.hush(denial); return }
         let home = sandboxHomeDir, collie = config.paths.root, app = SandboxInput.appBundle(of: config.collieExecutable)
         let closed = ws.terminals.first { $0.id == denial.terminal }.map { closedPaddocks(sandboxProject($0)) } ?? []
         let c = accessCards.add(denial) { d in   // a card to show: what can't be released, and why

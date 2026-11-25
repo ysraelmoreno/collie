@@ -9,18 +9,24 @@ enum WorkConfigFile: Equatable {
     /// `<root>/collie-work.json`: a root path without `..`, a regular file (never through a symlink), at most 16 KB.
     static func read(root: URL) -> WorkConfigFile {
         guard !root.pathComponents.contains("..") else { return .refused("o caminho do projeto contém '..'") }
-        let path = root.appendingPathComponent(ProjectWorkConfig.fileName).path
+        return regular(root.appendingPathComponent(ProjectWorkConfig.fileName).path, name: ProjectWorkConfig.fileName,
+                       max: ProjectWorkConfig.maxBytes) { ProjectWorkConfig.ConfigError.tooLarge($0).message }
+    }
+
+    /// U3: the same rules for any file: a regular file (never through a symlink), at most `max` bytes. `tooLarge` nil:
+    /// a bigger file is cut at `max` instead of refused.
+    static func regular(_ path: String, name: String, max: Int, tooLarge: ((Int) -> String)?) -> WorkConfigFile {
         var st = stat()
-        guard lstat(path, &st) == 0 else { return errno == ENOENT ? .absent : .refused("collie-work.json não pôde ser lido") }
-        if st.st_mode & S_IFMT == S_IFLNK { return .refused("collie-work.json é um link simbólico; só um arquivo regular é lido") }
-        guard st.st_mode & S_IFMT == S_IFREG else { return .refused("collie-work.json não é um arquivo regular") }
+        guard lstat(path, &st) == 0 else { return errno == ENOENT ? .absent : .refused("\(name) não pôde ser lido") }
+        if st.st_mode & S_IFMT == S_IFLNK { return .refused("\(name) é um link simbólico; só um arquivo regular é lido") }
+        guard st.st_mode & S_IFMT == S_IFREG else { return .refused("\(name) não é um arquivo regular") }
         let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)   // swapped for a link after the lstat: ELOOP
-        guard fd >= 0 else { return .refused("collie-work.json não pôde ser aberto sem seguir link simbólico") }
+        guard fd >= 0 else { return .refused("\(name) não pôde ser aberto sem seguir link simbólico") }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return .refused("collie-work.json não é um arquivo regular") }
-        guard st.st_size <= ProjectWorkConfig.maxBytes else { return .refused(ProjectWorkConfig.ConfigError.tooLarge(Int(st.st_size)).message) }
-        let data = (try? h.read(upToCount: ProjectWorkConfig.maxBytes + 1)) ?? Data()
-        guard data.count <= ProjectWorkConfig.maxBytes else { return .refused(ProjectWorkConfig.ConfigError.tooLarge(data.count).message) }
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return .refused("\(name) não é um arquivo regular") }
+        if let tooLarge, st.st_size > max { return .refused(tooLarge(Int(st.st_size))) }
+        let data = (try? h.read(upToCount: max + 1)) ?? Data()
+        guard data.count <= max else { return tooLarge.map { .refused($0(data.count)) } ?? .loaded(data.prefix(max)) }
         return .loaded(data)
     }
 

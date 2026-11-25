@@ -14,6 +14,8 @@ struct LoopScript: Sendable {
     /// `.idle` ends: `working` stays true and nothing is committed until its `n`-th call, which runs `late`.
     var lateAfter: Int?
     var late: @Sendable (URL) async throws -> Void = { _ in }
+    /// F2 V1: seconds the fake clock moves on at each `working` call (a busy agent that runs the turn's time out).
+    var tick: TimeInterval = 0
     /// M2.1: runs when the agent is nudged, in the worktree (`act` runs only for the attempt's prompt).
     var nudged: @Sendable (URL) async throws -> Void = { _ in }
     /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
@@ -58,6 +60,33 @@ actor LoopFakeHost: LoopHost {
     private var starterGone = false
     private var names: [UUID: String] = [:], workingCalls: [UUID: Int] = [:]
 
+    /// F2 Y1: the daemon's root as the reviewers see it: under the package's `.build`, never in the temp dir.
+    nonisolated let root = LoopFakeHost.testRoot()
+    nonisolated var reviewRoot: URL { WorkLoop.reviewRoot(of: root) }
+    /// F2 Z2: what the loop's agent writes under the home (its grants, paddocks): none unless a test opens some.
+    var opened: [String] = []
+    func setOpened(_ o: [String]) { opened = o }
+    /// F2 A4: the loop's agents run in open mode (no `plantedConfig` mute). F2 V2: only while the terminal lives, as the
+    /// router's (by id): read after the dismiss, it is false. `openAsked`: the names asked, in order.
+    var agentsAreOpen = false, openAsked: [String] = []
+    func setAgentsOpen(_ o: Bool) { agentsAreOpen = o }
+    func startedOpen(_ agent: UUID) async -> Bool {
+        let n = names[agent] ?? "?"
+        openAsked.append(n)
+        return agentsAreOpen && !dismissed.contains(n)
+    }
+    /// F2 V2: a fake home for `.claude.json` only (`plantedConfig` keeps the user's).
+    var home: URL?
+    func setHome(_ h: URL) { home = h }
+    func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), opened) }
+    func globalConfigHome() async -> URL { home ?? URL(fileURLWithPath: NSHomeDirectory()) }
+    /// F2 V3: only a fake home is ever written.
+    func trustReviewers() async -> String? { home.flatMap { WorkLoop.trustReviewRoot(home: $0, reviewRoot: reviewRoot) } }
+    /// A fresh folder name under the package's `.build` (not made): outside the temp dir.
+    static func testRoot() -> URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/collie-test-\(UUID().uuidString.prefix(8).lowercased())")
+    }
     init(dir: URL) {
         self.dir = dir
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
@@ -73,7 +102,83 @@ actor LoopFakeHost: LoopHost {
     func setOwner(_ o: String) { owner = o }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = UUID(); names[id] = name; summoned.append(name); summonedAs.append((loop.preset ?? "-") + ":" + (loop.model ?? "-")); return id
+        let id = UUID(); names[id] = name; summoned.append(name); summonedAs.append((loop.preset ?? "-") + ":" + (loop.model ?? "-")); agentIds.append(id); return id
+    }
+    /// F2 R4 (WorkLoopReviewTests): reviewers. `reviewAnswers[<reviewer's name> or <persona>]`: the text it answers (absent: approves;
+    /// `.some(nil)`: mute, its ask throws). A reviewer not yet dismissed is a terminal of the paddock in a turn: the fake's
+    /// `othersWorking` names it (as the router would without `loopReviewers`), and `othersSawReviewer` says it did.
+    var agentIds: [UUID] = [], reviewerIds: [UUID] = [], reviewers: [String] = [], liveReviewers: [UUID] = []
+    var reviewerPrompts: [String: String] = [:], reviewerModels: [String: String] = [:]
+    var reviewAnswers: [String: String?] = [:], othersSawReviewer = false
+    func setReviewAnswer(_ persona: String, _ text: String?) { reviewAnswers[persona] = .some(text) }
+    /// F2 X1: each reviewer's folder (by name) and what was in it when it was born.
+    var reviewerCwds: [String: URL] = [:], reviewerSaw: [String: [String]] = [:]
+    /// F2 W2: path → text of each reviewer's `reviewSnapshot` as it read it.
+    var snapshotFiles: [String: [String: String]] = [:]
+    /// F2 X1: `reviewerActs[<reviewer's name> or <persona>]` runs in the worktree during its ask (a reviewer that
+    /// touches the tree); `reviewerAsked` hits once per reviewer asked.
+    var reviewerActs: [String: @Sendable (URL) async throws -> Void] = [:]
+    nonisolated let reviewerAsked = Arrivals()
+    func setReviewerAct(_ who: String, _ act: @escaping @Sendable (URL) async throws -> Void) { reviewerActs[who] = act }
+    /// F2 X5: reviewers (by name or persona) whose turn runs past its time: their ask throws `timeout`, as the router's does.
+    var reviewTimeouts: Set<String> = []
+    func setReviewTimeout(_ who: String) { reviewTimeouts.insert(who) }
+    /// P1: answers (by name or persona) taken one per ask, before `reviewAnswers` (a retried review gets the next one).
+    var reviewAnswerQueue: [String: [String?]] = [:]
+    func queueReviewAnswers(_ who: String, _ texts: [String?]) { reviewAnswerQueue[who] = texts }
+    /// P1: reviewers (by name) whose summon the router refuses.
+    var reviewSummonRefusals: Set<String> = []
+    func refuseReviewSummon(_ name: String) { reviewSummonRefusals.insert(name) }
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        if reviewSummonRefusals.contains(name) { throw ProtocolError(code: .unavailable, message: "sem vaga\u{1b}[31m") }
+        let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
+        events.append("reviewer \(name)")
+        reviewerModels[name] = loop.model ?? "-"
+        reviewerCwds[name] = cwd
+        reviewerSaw[name] = (try? FileManager.default.contentsOfDirectory(atPath: cwd.path)) ?? ["<no folder>"]
+        return id
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        let name = names[terminal] ?? "?"
+        reviewerPrompts[name] = prompt
+        // the persona is the prompt's own first line: "Você é o revisor '<persona>'."
+        let persona = prompt.split(separator: "'").dropFirst().first.map(String.init) ?? "?"
+        await reviewerAsked.hit()
+        if let act = reviewerActs[name] ?? reviewerActs[persona] {
+            do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
+        }
+        // F2 W2: what the reviewer's copy of the judged commit holds when it reads it (after its act)
+        if let cwd = reviewerCwds[name] {
+            let snap = cwd.appendingPathComponent(WorkLoop.reviewSnapshotDir).path
+            var files: [String: String] = [:]
+            if let walk = FileManager.default.enumerator(atPath: snap) {
+                while let rel = walk.nextObject() as? String {
+                    files[rel] = (try? String(contentsOfFile: snap + "/" + rel, encoding: .utf8)) ?? "<dir>"
+                }
+            }
+            snapshotFiles[name] = files
+        }
+        if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
+        // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's
+        let nonce = Self.nonce(in: prompt)
+        let queued = reviewAnswerQueue[name] != nil ? name : persona
+        if var q = reviewAnswerQueue[queued], !q.isEmpty {
+            let next = q.removeFirst(); reviewAnswerQueue[queued] = q
+            guard let next else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+            return next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? next : prompt + "\n" + next.replacingOccurrences(of: "<NONCE>", with: nonce)
+        }
+        guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else {
+            return prompt + "\n" + ReviewPrompt.endMarker(nonce) + "\n" + #"{"persona":"\#(persona)","nonce":"\#(nonce)","verdict":"approve","findings":[]}"#
+        }
+        guard let answer else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+        if answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return answer }   // a blank screen: mute
+        return prompt + "\n" + answer.replacingOccurrences(of: "<NONCE>", with: nonce)
+    }
+    /// The nonce a review prompt carries: the 32 hex digits after its end marker's head.
+    static func nonce(in prompt: String) -> String {
+        let head = "=== FIM DO PEDIDO DE REVISÃO "
+        guard let r = prompt.range(of: head, options: .backwards) else { return "" }
+        return String(prompt[r.upperBound...].prefix(32))
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
@@ -90,6 +195,8 @@ actor LoopFakeHost: LoopHost {
             do { try await s.prechecked(dir) } catch { Issue.record("prechecked \(name): \(error)") }
             return s.source
         }
+        // P2: an ask that never reached the agent (one per ask, before the script; the name is the same after a retry)
+        if var q = askErrors[name], !q.isEmpty { let e = q.removeFirst(); askErrors[name] = q; notDelivered.append(name); throw e }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -101,13 +208,26 @@ actor LoopFakeHost: LoopHost {
         return s.source
     }
     var nudges: [(name: String, prompt: String, timeout: Duration)] = []
+    /// P2: errors the attempt's ask throws (by name, one per ask) before its script runs, and who got one.
+    var askErrors: [String: [ProtocolError]] = [:], notDelivered: [String] = []
+    func queueAskErrors(_ name: String, _ e: [ProtocolError]) { askErrors[name] = e }
+    /// P2: each agent's screen (by name), as `screen` reads it.
+    var screens: [String: [String]] = [:]
+    func setScreen(_ name: String, _ lines: [String]) { screens[name] = lines }
+    func screen(_ terminal: UUID) async -> [String]? { screens[names[terminal] ?? ""] }
     var precheckNudges: [(name: String, prompt: String)] = []
     /// M2.0: the agents (by name) whose prompt had its Enter sent again.
     var resubmits: Set<String> = []
     func setResubmitted(_ n: String) { resubmits.insert(n) }
     func resubmitted(_ terminal: UUID) async -> Bool { resubmits.contains(names[terminal] ?? "") }
+    /// F2 V1: every `working` call, and a probe run at each one (a test stops the loop here).
+    var workingCount = 0
+    var workingProbe: (@Sendable () async -> Void)?
+    func setWorkingProbe(_ p: @escaping @Sendable () async -> Void) { workingProbe = p }
     func working(_ terminal: UUID) async -> Bool {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
+        workingCount += 1; advance(s.tick)
+        await workingProbe?()
         guard let after = s.lateAfter else { return false }
         let n = (workingCalls[terminal] ?? 0) + 1; workingCalls[terminal] = n
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
@@ -125,11 +245,27 @@ actor LoopFakeHost: LoopHost {
         if !dismissed.contains(n) { tokensRead.append(n) }
         return tokenCounts[n]
     }
-    func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
+    func dismiss(_ terminal: UUID) async {
+        dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")")
+        liveReviewers.removeAll { $0 == terminal }
+    }
+    /// F2 Z3b: the process group each agent (by name) left behind; `dismissReaping` kills it for real (`reapGroup`).
+    var agentGroups: [String: pid_t] = [:]
+    func setAgentGroup(_ n: String, _ g: pid_t) { agentGroups[n] = g }
+    func dismissReaping(_ terminal: UUID) async {
+        await dismiss(terminal)
+        let n = names[terminal] ?? "?"
+        if let g = agentGroups[n] { WorkLoop.reapGroup(g) }
+        events.append("reap \(n)")
+    }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?
     func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
-    func othersWorking() async -> String? { await othersProbe?(); return busyOther }
+    func othersWorking() async -> String? {
+        await othersProbe?()
+        if let r = liveReviewers.first { othersSawReviewer = true; return busyOther ?? names[r] }
+        return busyOther
+    }
     /// M3b.2: the starter in a turn (only `anyoneWorking` counts it).
     var busyStarter: String?
     func setStarterBusy(_ n: String?) { busyStarter = n }
@@ -153,6 +289,13 @@ actor LoopFakeHost: LoopHost {
         let r = try await GitRunner.run(args, in: dir)
         await gitProbe?(args)
         if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
+        return r
+    }
+    /// T1 f2fix8: `cat-file --batch` with its stdin, counted in `gits` like any other.
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        gits.append(args)
+        let r = try await GitRunner.run(args, in: dir, timeout: timeout, cap: cap, stdin: stdin)
+        await gitProbe?(args)
         return r
     }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
@@ -203,13 +346,14 @@ struct LoopRig {
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
+        try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
-                        notices: LoopNotices(window: noticeWindow))
+                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
-    func cleanup() { for u in [repo, storeDir, host.patches] { try? FileManager.default.removeItem(at: u) } }
+    func cleanup() { for u in [repo, storeDir, host.patches, host.root] { try? FileManager.default.removeItem(at: u) } }
 }
 
 private typealias Script = LoopScript
@@ -936,5 +1080,59 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(WorkLoop.verdict(checkStatus: 0, committed: true, dirty: false) == nil)
         #expect(WorkLoop.verdict(checkStatus: nil, committed: false, dirty: true) == "check timed out; no new commit; tracked files left dirty")
         #expect(WorkLoop.verdict(checkStatus: 2, committed: true, dirty: false) == "check failed (exit 2)")
+    }
+
+    // MARK: F2 V1: a hook end with the agent still working is waited for
+
+    /// (a) and (d): the agent works for some polls after the hook and commits: the attempt passes, no nudge, and the
+    /// journal says how long the turn was and that the agent was busy.
+    @Test func aHookEndWaitsWhileTheAgentWorks() async throws {
+        let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 4, late: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.notes.map(\.text))")
+        #expect(await r.host.nudges.isEmpty)
+        let d = try #require((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail)
+        #expect(d.wholeMatch(of: /hook \d+s ocupado/) != nil, "\(d)")
+        #expect(!w.notes.contains { $0.text.contains("ocupado") })
+    }
+
+    /// (b) and (d): an idle agent with no commit is nudged, as before.
+    @Test func aHookEndWithAnIdleAgentIsNudged() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(await r.host.nudges.count == 1)
+        #expect((w.loop?.events ?? []).first { $0.kind == .turnEnded }?.detail?.wholeMatch(of: /hook \d+s ocioso/) != nil)
+        #expect(!w.notes.contains { $0.text.contains("ocupado") })
+    }
+
+    /// (c): an agent busy until the turn's time is over: the wait ends at the deadline and the check judges (no nudge:
+    /// no time left), with the loop's note on the short busy end.
+    @Test func aBusyAgentIsWaitedForOnlyUntilTheDeadline() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 10_000, tick: 5))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
+        #expect(await r.host.nudges.isEmpty)
+        #expect(await r.host.checks == 1)
+        let calls = await r.host.workingCount
+        #expect(calls >= 12 && calls < 20, "\(calls)")   // 60 s of turn at 5 s per poll
+        #expect(w.notes.contains { $0.text.contains("ainda ocupado e sem commit") }, "\(w.notes.map(\.text))")
+    }
+
+    /// (e): a stopping loop does not wait for a busy agent.
+    @Test func aStoppingLoopDoesNotWait() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", Script(lateAfter: 10_000))
+        let loop = r.loop, id = r.work
+        await r.host.setWorkingProbe { await loop.stop(work: id) }
+        let t0 = Date()
+        _ = await r.run()
+        #expect(Date().timeIntervalSince(t0) < 30)
+        #expect(await r.host.workingCount == 1, "only the look at the turn's end")
+        #expect(await r.host.nudges.isEmpty)
     }
 }

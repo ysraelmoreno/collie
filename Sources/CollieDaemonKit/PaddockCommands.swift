@@ -39,9 +39,30 @@ extension CommandRouter {
             if ws.paddocks.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
                 throw ProtocolError(code: .invalidArgs, message: "paddock '\(name)' already exists")
             }
+            let factory = flag(r, "factory")
+            if factory {   // A2: the owner's alone, and only over a profile the doctor passes
+                guard caller == nil else { throw Self.factoryOwnerOnly }
+                // ponytail: checked on the source (the folder, or the repo's working tree) before the worktree exists;
+                // a profile changed but not committed can differ from the new branch's. `paddock factory on` reads the paddock itself
+                let source: URL; if let folder { source = folder } else { source = try await PaddockManager.repoRoot(of: repo) }
+                if let why = FactoryDoctorReader.factoryRefusal(root: source) { throw Self.factoryRefused(why) }
+            }
             try claim(name); defer { paddockBusy.remove(name.lowercased()) }
-            if let folder { return try isoJSON(try await createFolderPaddock(name, folder: folder, createdBy: caller?.id)) }
-            return try isoJSON(try await createPaddock(name, repo: repo, createdBy: caller?.id))
+            if let folder { return try isoJSON(try await createFolderPaddock(name, folder: folder, createdBy: caller?.id, factory: factory)) }
+            return try isoJSON(try await createPaddock(name, repo: repo, createdBy: caller?.id, factory: factory))
+        case "paddock.factory":   // A2: the owner's alone (the admin principal); never an agent's terminal, never MCP
+            guard caller == nil else { throw Self.factoryOwnerOnly }
+            let f = try findPaddock(try need(r, "name"))
+            guard let state = str(r, "state"), state == "on" || state == "off" else {
+                throw ProtocolError(code: .invalidArgs, message: "state must be on|off")
+            }
+            if state == "on" {
+                // B1: the loop reads the profile at HEAD; a worktree's file that differs from it (or is not committed) refuses,
+                // so the doctor's verdict over the tree is the verdict over HEAD. A folder paddock runs no loop: its tree
+                if !f.isFolder, let why = await Self.factoryDirty(URL(fileURLWithPath: f.path)) { throw Self.factoryRefused(why) }
+                if let why = FactoryDoctorReader.factoryRefusal(root: URL(fileURLWithPath: f.path)) { throw Self.factoryRefused(why) }
+            }
+            return try isoJSON(try await setFactory(f.id, state == "on"))
         case "paddock.status":
             var f = try findPaddock(try need(r, "name"))
             if let status = str(r, "status") {   // omitted: only shows the paddock
@@ -107,12 +128,13 @@ extension CommandRouter {
     }
 
     /// Creates paddock `name` off `repo`'s repository, records and persists it, emits `.paddock`. The caller holds `claim(name)`.
-    func createPaddock(_ name: String, repo: URL, createdBy: UUID?) async throws -> Paddock {
+    func createPaddock(_ name: String, repo: URL, createdBy: UUID?, factory: Bool = false) async throws -> Paddock {
         let root = try await PaddockManager.repoRoot(of: repo)
         if let me = ws.terminals.first(where: { $0.id == createdBy }), !(try await paddockRepoAllowed(root, for: me)) {
             throw ProtocolError(code: .invalidArgs, message: "the repo \(root.path) is outside your project: a paddock there would be wider than it")
         }
-        let f = try await PaddockManager.create(name: name, repoRoot: root, createdBy: createdBy)
+        var f = try await PaddockManager.create(name: name, repoRoot: root, createdBy: createdBy)
+        f.factory = factory
         ws.paddocks.append(f)
         do { try await persist() } catch {
             ws.paddocks.removeAll { $0.id == f.id }
@@ -124,12 +146,13 @@ extension CommandRouter {
     }
 
     /// A folder paddock on `folder`: a Shepherd's lies within its project (any existing folder when it started open).
-    func createFolderPaddock(_ name: String, folder: URL, createdBy: UUID?) async throws -> Paddock {
+    func createFolderPaddock(_ name: String, folder: URL, createdBy: UUID?, factory: Bool = false) async throws -> Paddock {
         if let me = ws.terminals.first(where: { $0.id == createdBy }), !startedOpen(me),
            !ProjectRoot.contains(folder.path, root: try await projectRoot(of: me)) {
             throw ProtocolError(code: .invalidArgs, message: "a pasta \(folder.path) fica fora do seu projeto: o cercado seria mais largo que ele")
         }
-        let f = try PaddockManager.createFolder(name: name, folder: folder, createdBy: createdBy)
+        var f = try PaddockManager.createFolder(name: name, folder: folder, createdBy: createdBy)
+        f.factory = factory
         ws.paddocks.append(f)
         do { try await persist() } catch { ws.paddocks.removeAll { $0.id == f.id }; throw error }
         await hub.emit(.paddock(f))
@@ -143,6 +166,27 @@ extension CommandRouter {
         if ProjectRoot.contains(root.path, root: try await projectRoot(of: me)) { return true }
         guard let pasture = ws.paddocks.first(where: { $0.id == me.paddockId }).map({ URL(fileURLWithPath: $0.repoRoot) }) else { return false }
         return SignedAppCheck.realPath(pasture) == SignedAppCheck.realPath(root)
+    }
+
+    static let factoryOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente")
+    static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
+
+    /// B1: why the worktree's `collie-work.json` is not HEAD's, in one line; nil: it is (or git says so).
+    static func factoryDirty(_ dir: URL) async -> String? {
+        let name = ProjectWorkConfig.fileName
+        guard let st = try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", name], in: dir, timeout: .seconds(30)),
+              st.status == 0 else { return "\(name) não pôde ser comparado com o commit HEAD (git status falhou)" }
+        return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil
+            : "\(name) difere do commit HEAD (o que o laço lê); próxima ação: commite ou descarte a mudança e ligue de novo"
+    }
+
+    /// A2: marks (or unmarks) the paddock cercado fábrica, saved and told to the app.
+    func setFactory(_ id: UUID, _ on: Bool) async throws -> Paddock {
+        guard let i = ws.paddocks.firstIndex(where: { $0.id == id }) else { throw ProtocolError(code: .notFound, message: "Paddock not found") }
+        ws.paddocks[i].factory = on
+        try await persist()
+        await hub.emit(.paddock(ws.paddocks[i]))
+        return ws.paddocks[i]
     }
 
     /// Paddock by name (case-insensitive); refuses one with a create/land/delete in flight.
@@ -181,5 +225,17 @@ extension CommandRouter {
     func isoJSON(_ v: some Encodable) throws -> JSONValue {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
         return try JSONDecoder().decode(JSONValue.self, from: e.encode(v))
+    }
+}
+
+/// A2: the human line of a paddock in `collie paddock list` / `status`: the name, "fábrica" beside it when marked, the status.
+public enum PaddockText {
+    public static func line(_ o: [String: JSONValue]) -> String {
+        func str(_ k: String) -> String { if case .string(let s)? = o[k] { s } else { "" } }
+        var l = str("name") + (o["factory"] == .bool(true) ? " (fábrica)" : "") + "\t" + str("status")
+        if case .string(let b)? = o["branch"], !b.isEmpty { l += "\t" + b }
+        if case .string(let x)? = o["path"], !x.isEmpty { l += "\t" + x }   // B1: docs/referencia.md promises the paths
+        if case .string(let x)? = o["loops"] { l += "\t" + x }
+        return l
     }
 }

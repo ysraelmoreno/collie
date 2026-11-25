@@ -1,0 +1,6 @@
+# H6c: find e tap --text por OCR, docs e orientação
+
+Seção O4 (find e tap), e docs do doc. find e tap --text, quando não achar na árvore, rodam OCR só nessa chamada (na região, se --region) e casam também com itens do OCR (mesma ordem de casamento); o toque vai no centro da caixa; a resposta traz via ocr e o aviso sem confirmação de clique; --role ignora itens do OCR. A palavra ocrMs deve aparecer em Sources/CollieDaemonKit/Devices/. Atualize docs/referencia.md, docs/feature-map.md e a linha de Device em CollieOrientation.swift (uma frase, teto 1500 caracteres nas formas normal e curta). Testes com OCRProvider falso: find acha por OCR, tap no centro, via ocr, --role ignora, árvore boa não chama o provedor.
+
+Contexto: `docs/superpowers/specs/2026-11-22-device-ocr-fallback-design.md` (leia o doc inteiro, com as medições) e `docs/superpowers/specs/2026-11-22-device-helper-design.md`. O helper (H1 a H5) e o ScreenModel já existem; reutilize o resolvedor de tap --text/find, ScreenModel e os --then/--timing. Faça SÓ esta tarefa e COMMITE ao final (git add por caminho + git commit).
+Regras: testes só com --filter, sem aparelho nem Vision real (OCRProvider falso); não rode a suíte completa; não edite scripts/. O check é `scripts/check-device-loop5.sh h6c` e o gate roda depois.

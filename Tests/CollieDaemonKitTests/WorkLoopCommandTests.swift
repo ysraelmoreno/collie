@@ -138,7 +138,15 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     /// M3.8: the terminals of `work`'s loop attempts still there, found by the id on their job (never by a name's prefix).
     private func loopAgentsLeft(_ d: Daemon, _ work: UUID) async -> Int {
         guard let w = try? await d.router.work.get(work) else { return 0 }
-        return CommandRouter.loopAgents(of: w, in: await d.router.ws.terminals).count
+        return CommandRouter.loopAgents(of: w, in: await d.router.ws.terminals, reviewRoot: WorkLoop.reviewRoot(of: await d.router.config.paths.root)).count
+    }
+    /// A loop notice typed into the starter's shell (`asks.inject`, `afterQuiet`: after its queue, its quiet window and
+    /// a readiness gate). Delivery is fire-and-forget, so there is no event to await: 90 s absorbs a loaded CI runner
+    /// (the old 20 s did not, run 45073169794) and costs nothing when it passes; a miss says what S's screen held.
+    private func expectNotice(_ d: Daemon, _ s: Term, _ text: String) async {
+        let seen = await waitFor(90) { await d.scrollbackText(s.uuid).contains(text) }
+        let tail = String((await d.scrollbackText(s.uuid)).suffix(600)), queued = await d.router.asks.queued(s.uuid)
+        #expect(seen, "no notice «\(text)» in S's scrollback after 90 s; queued asks: \(queued); tail: \(tail)")
     }
     private func loopEnded(_ d: Daemon, _ id: UUID) async -> Bool {
         await waitFor(60) { (try? await d.router.work.get(id))?.loop.map { $0.state != .running } ?? false }
@@ -197,7 +205,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "A", check: "true")
             let busy = try await spawnIn(d, p, "busy", cwd: x.repo, paddock: "feat")
-            try await d.process(busy.uuid)!.write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
+            try await liveProcess(d, busy.uuid).write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
             #expect(await waitFor(20) { await d.badge(busy.uuid) == .working })
             let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")
@@ -289,7 +297,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let w = try #require(try await d.router.work.get(x.work))
             #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop)) \(w.notes.map(\.text))")
             #expect(await loopAgentsLeft(d, x.work) == 0)
-            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("[collie] Laço de \"Loop work\" terminou: 1 feitas, 0 adiadas") })
+            await expectNotice(d, x.s, "[collie] Laço de \"Loop work\" terminou: 1 feitas, 0 adiadas")
             // a `work.task.done` that lands after the approval does not take the evidence away
             let done = try await work(d, p, x.s, "work.task.done", ["task": .string("Write done")])
             #expect(done.ok, "\(done)")
@@ -458,7 +466,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             guard case .object(let o)? = s.result else { Issue.record("\(s)"); return }
             #expect(o["state"] == .string("cancelled"))
             #expect(await waitFor(20) { await d.router.appCards.isEmpty })
-            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("cancelado antes da aprovação") })
+            await expectNotice(d, x.s, "cancelado antes da aprovação")
             #expect(try await work(d, p, x.s, "work.stop").error?.code == .invalidArgs)
             #expect(try await run(d, p, x.s, approve: false).ok)   // the paddock is free again
             #expect(try await answerCard(d, p, allow: false) != nil)
@@ -630,7 +638,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             try await addTask(d, p, x.s, "A", check: "true")
             #expect(try await trust(d, p).ok)
             let busy = try await spawnIn(d, p, "busy", cwd: x.repo, paddock: "feat")
-            try await d.process(busy.uuid)!.write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
+            try await liveProcess(d, busy.uuid).write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
             #expect(await waitFor(20) { await d.badge(busy.uuid) == .working })
             let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")

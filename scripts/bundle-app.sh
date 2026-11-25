@@ -27,6 +27,8 @@ cp Resources/NOTICE-scrcpy "$APP/Contents/Resources/"
 # collied finds it at <Helpers>/../Resources/scrcpy-server; without it device panels show an error instead of video
 if [ -f vendor/scrcpy-server ]; then cp vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"
 else echo "warning: vendor/scrcpy-server missing (run scripts/fetch-scrcpy-server.sh): no device video" >&2; fi
+# Android accessibility helper (H1, committed APK): collied installs <Helpers>/../Resources/collie-helper.apk; missing = uiautomator only
+cp Resources/collie-helper.apk "$APP/Contents/Resources/"
 # Bundled fonts: ATSApplicationFontsPath (Info.plist) registers Resources/Fonts; missing = system fonts
 cp Resources/NOTICE-fonts "$APP/Contents/Resources/"
 if ls vendor/fonts/*.ttf >/dev/null 2>&1; then

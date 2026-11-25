@@ -12,7 +12,8 @@ enum GitRunner {
     /// `config`: settings for this call, passed as GIT_CONFIG_COUNT/KEY_n/VALUE_n (command scope, like `-c`, but a key may
     /// hold `=`, which `-c key=value` would split).
     static func run(_ args: [String], in dir: URL, timeout: Duration = .seconds(120),
-                    executable: URL = URL(fileURLWithPath: "/usr/bin/git"), config: [(String, String)] = []) async throws(ProtocolError) -> GitResult {
+                    executable: URL = URL(fileURLWithPath: "/usr/bin/git"), config: [(String, String)] = [],
+                    cap: Int = 1 << 20, stdin: Data? = nil) async throws(ProtocolError) -> GitResult {
         var env = ProcessInfo.processInfo.environment
         if !config.isEmpty {   // replaces any inherited GIT_CONFIG_* list
             for k in env.keys where k.hasPrefix("GIT_CONFIG_KEY_") || k.hasPrefix("GIT_CONFIG_VALUE_") { env[k] = nil }
@@ -22,16 +23,21 @@ enum GitRunner {
         env["GIT_TERMINAL_PROMPT"] = "0"; env["GIT_EDITOR"] = "true"; env["GIT_PAGER"] = "cat"
         // a planted promisor remote (partial clone) would fetch, and run its transport, on any missing object
         env["GIT_NO_LAZY_FETCH"] = "1"
+        // F2 U2 (reviewNoReplace): `refs/replace` and the commit-graph sit in the (agent-writable) common dir: a judged
+        // agent's `git replace C C2` would make every git here (the reviewer's copy and diff, the integrator) read C2
+        // while the check ran on C's files. The daemon reads the objects as they are, never a replacement.
+        env["GIT_NO_REPLACE_OBJECTS"] = "1"
         // core.fsmonitor and hooks in the (agent-writable) repo would run arbitrary code in the daemon's git (R4); so would
         // an `ext::` remote (a command as transport), never one the daemon needs.
         // ponytail: other planted config (filters, sshCommand, gpg.program) still runs; sandboxed for an open terminal's request
         let args = executable.lastPathComponent == "git"
-            ? ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"] + args : args
+            ? ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never",
+               "-c", "core.commitGraph=false"] + args : args
         if let sandbox {
             return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
-                                                args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout)
+                                                args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout, cap: cap, stdin: stdin)
         }
-        return try await BoundedProcess.run(executable: executable, args: args, in: dir, env: env, timeout: timeout)
+        return try await BoundedProcess.run(executable: executable, args: args, in: dir, env: env, timeout: timeout, cap: cap, stdin: stdin)
     }
 }
 

@@ -59,7 +59,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }, source: source))
             #expect(await r.run() == .finished)
             let ev = try await r.get().loop?.events ?? []
-            #expect(ev.first { $0.kind == .turnEnded }?.detail == source.rawValue)
+            #expect(ev.first { $0.kind == .turnEnded }?.detail?.hasPrefix(source.rawValue + " ") == true)
         }
     }
 

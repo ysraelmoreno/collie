@@ -17,6 +17,18 @@ extension DeviceService {
         _ = try await sim.simctl(["bootstatus", d.udid, "-b"], timeout: .seconds(120))
     }
 
+    /// A3: the screen for the OCR: `simctl io <udid> screenshot` into a temporary file (removed whatever happens), read
+    /// into memory, and its scale (PNG pixels per point of `points`, the last `device.ui`'s screen). nil: no point size
+    /// yet, simctl failing or no PNG; the screen then says `ocr: unavailable`. Its time counts in `--timing`'s `ocrMs`.
+    func simShot(_ udid: String, points: CGSize?) async -> (png: Data, scale: CGFloat)? {
+        guard let points, points.width >= 1 else { return nil }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("collie-ocr-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard (try? await sim.simctl(["io", udid, "screenshot", file.path], timeout: .seconds(30))) != nil,
+              let png = try? Data(contentsOf: file), let size = AdbParsing.pngSize(png) else { return nil }
+        return (png, CGFloat(size.width) / points.width)
+    }
+
     func runIOS(_ command: String, panel: Panel, udid: String, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
         let sim = sim
         guard try await simulators().contains(where: { $0.udid == udid && $0.state == "booted" }) else {
@@ -57,11 +69,17 @@ extension DeviceService {
             }
             return .object(out)
         case "device.ui":
+            let start = ContinuousClock.now
             let tree = try await describe()
-            guard tree.screen != nil else { throw ProtocolError(code: .internal, message: "axe describe-ui returned no UI tree") }
+            let axeMs = Self.ms(ContinuousClock.now - start)   // AXe runs and parses in one step here
+            guard let pt = tree.screen else { throw ProtocolError(code: .internal, message: "axe describe-ui returned no UI tree") }
             try alive(panel)
             refs[panel.id] = tree.nodes
-            return UITree.result(tree.nodes, truncated: tree.truncated, all: args["all"] == .bool(true))
+            simPoints[panel.id] = pt   // A3: the OCR's pixel-to-point scale
+            let r = UITree.result(tree.nodes, truncated: tree.truncated, all: args["all"] == .bool(true))
+            guard Self.timing(args), case .object(var o) = r else { return r }
+            o["timingMs"] = .object(["axe": axeMs])
+            return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {

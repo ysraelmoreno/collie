@@ -1,0 +1,9 @@
+diff --git a/isca/config.env b/isca/config.env
+new file mode 100644
+index 0000000..8ab7186
+--- /dev/null
++++ b/isca/config.env
+@@ -0,0 +1,3 @@
++# configuração do cliente de pagamentos
++ISCA_API_URL=https://api.exemplo.invalid
++ISCA_API_KEY=ck_isca_9f3b2c7e1a4d6f8b0e2c4a6d8f0b1c3e5a7c9e1f

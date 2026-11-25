@@ -14,6 +14,7 @@ extension CommandRouter {
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
+        if let me = caller, Self.reviewMemoryReads.contains(r.command), reviewerHooksBare(me) { throw Self.reviewMemoryDenied(r.command) }
         if let me = caller { memory.events.noteAgent(me.id, Self.agentName(me)) }   // the events of this terminal say who it runs
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let paddockName = caller?.paddockId.flatMap { id in ws.paddocks.first { $0.id == id }?.name }
@@ -203,6 +204,12 @@ extension CommandRouter {
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
             if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
+            // F2 Z1 (reviewerHooksBare): a loop reviewer gets only who it is and what it may not do: no memory, pitfall,
+            // rule, board post, document, comment nor checklist, all of them text another agent (the one judged) can write
+            if reviewerHooksBare(me) {
+                if r.command == "memory.hookContext" { await asks.sessionHooked(me.id) } else { await asks.promptSubmitted(me.id) }
+                return .object(["output": .string(r.command == "memory.hookContext" ? CollieOrientation.reviewer(me.name) : "")])
+            }
             let text: String
             if r.command == "memory.hookContext" {
                 await asks.sessionHooked(me.id)
@@ -783,10 +790,29 @@ extension CommandRouter {
         return out.utf8.count <= max ? out : String(decoding: Array(keep.utf8.prefix(max)), as: UTF8.self)
     }
 
+    /// F2 Z1: a loop reviewer, by either mark the router has: its id in `loopReviewers` (set in its summon) or a `cwd`
+    /// inside `reviewRoot` (a reviewer a fallen daemon left, no longer marked). Either is enough: a terminal wrongly
+    /// taken for one only loses its memory block. ponytail: the name tail (`AgentNaming.isReviewer`) is not required.
+    /// Hooks here; the reads it would run itself (`collie memory search`, `lot.*`) are `reviewMemoryDenied` (F2 V3).
+    /// F2 V3 (reviewMemoryDenied): the reads a reviewer would run itself (`collie memory search`: it has `COLLIE_TOKEN`
+    /// and the CLI); with `lot.*` (in `lotCommand`) they are refused to it, the judged agent's words never reach its judge.
+    static let reviewMemoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.checklist",
+                                                 "memory.context", "memory.doc-search"]
+    static func reviewMemoryDenied(_ command: String) -> ProtocolError {
+        ProtocolError(code: .unauthorized, message: "'\(command)' is refused to a loop reviewer: it judges the tree, not the memories of who it judges")
+    }
+
+    func reviewerHooksBare(_ t: TerminalRecord) -> Bool {
+        if loopReviewers.contains(t.id) { return true }
+        let root = SignedAppCheck.realPath(WorkLoop.reviewRoot(of: config.paths.root))
+        return SignedAppCheck.realPath(URL(fileURLWithPath: t.cwd)).hasPrefix(root + "/")
+    }
+
     /// One 2048-byte budget: retractions, the rules pushed to the caller (`pull`: also the user's rules changed since its
     /// session started), board posts addressed to it (newest first), the user's comments on its pages, then memories
     /// relevant to `query` and document chunks; scrubbed. `pull`: `memory.task` (relevance leaves the pending uses alone).
     fileprivate func promptBlock(_ me: TerminalRecord, paddock: String?, lot myLot: Lot?, query: String, pull: Bool) async -> String {
+        if reviewerHooksBare(me) { return "" }   // F2 Z1: `memory.task` too (the hook of an agent with no prompt hook)
         var left = 2048, parts: [String] = []
         func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
         let ret = await memory.retractions(for: me.id, paddock: paddock, lot: myLot?.id, limit: left)

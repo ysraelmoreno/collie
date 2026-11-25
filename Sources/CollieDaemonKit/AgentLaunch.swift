@@ -111,9 +111,12 @@ public enum AgentLaunch {
     /// directory (`permissions.additionalDirectories`, in Collie's settings file only), so reading one never prompts.
     /// `pluginDirs`: Claude only, one `--plugin-dir` each, in order (the terminal's procedures as skills, `ProcedureSkills`;
     /// `/collie:loop`, `LoopCommand`).
+    /// `reviewerNoMcp` (F2 W1): a loop reviewer (`reviewerHooksBare`) gets no MCP server at all: `--strict-mcp-config`
+    /// with an empty `--mcp-config`, so a server the judged agent planted in `~/.claude.json` (writable in strict) or a
+    /// project `.mcp.json` never loads, and not collie's either (it only judges and writes its JSON). Codex: no collie MCP.
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
                                   codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false,
-                                  filesDir: URL? = nil, pluginDirs: [URL] = []) throws -> LaunchSpec {
+                                  filesDir: URL? = nil, pluginDirs: [URL] = [], reviewerNoMcp: Bool = false) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -140,12 +143,13 @@ public enum AgentLaunch {
             if let filesDir { json["permissions"] = ["additionalDirectories": [filesDir.path]] }
             try write(json, f)
             // no `env`: the MCP child inherits COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN from claude, like the hooks.
-            // Additive (no --strict-mcp-config): the user's own MCP servers stay.
+            // Additive (no --strict-mcp-config): the user's own MCP servers stay. A reviewer: none (reviewerNoMcp).
             let m = mcpFile(rec.id, in: hooksDir)
-            try write(["mcpServers": ["collie": ["type": "stdio", "command": collie.path, "args": ["mcp"]]]], m)
+            let servers: [String: Any] = reviewerNoMcp ? [:] : ["collie": ["type": "stdio", "command": collie.path, "args": ["mcp"]]]
+            try write(["mcpServers": servers], m)
             // the model it ran (summon --model, collie model, its transcript), unless the command picks one itself
             let model = rec.model.flatMap { base.contains("--model") ? nil : " --model " + quote($0) } ?? ""
-            return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
+            return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path) + (reviewerNoMcp ? " --strict-mcp-config" : "")
                          + pluginDirs.map { " --plugin-dir " + quote($0.path) }.joined() + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
@@ -170,7 +174,7 @@ public enum AgentLaunch {
         case .codex:
             // TOML basic strings/arrays; JSON string escaping is compatible. `env_vars` forwards the names only.
             var o = ["notify=" + literal([collie.path, "hook", "codex-notify"])]
-            if codexMCP {
+            if codexMCP && !reviewerNoMcp {
                 o += ["mcp_servers.collie.command=" + literal(collie.path), "mcp_servers.collie.args=" + literal(["mcp"]),
                       "mcp_servers.collie.env_vars=" + literal(mcpEnv)]
             }

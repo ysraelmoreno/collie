@@ -106,6 +106,28 @@ extension DeviceService {
         func shellInput(_ a: [String]) async throws(ProtocolError) -> JSONValue {
             _ = try await adb(["shell", "input"] + a); return .object([:])
         }
+        // The device helper (H3), when ready: every command below tries it first and, when it is not ready, has gone
+        // (it then stays in fallback for the session) or refuses, does what it did before (uiautomator, `input`).
+        // The answers are the same either way.
+        let helper = helpers[serial]
+        func helped<T: Decodable>(_ r: HelperProtocol.Request, as _: T.Type) async -> T? {
+            guard let line = await helper?.send(r) else { return nil }
+            return try? HelperProtocol.decode(line, as: T.self)
+        }
+        func acked(_ r: HelperProtocol.Request) async -> Bool { await helped(r, as: HelperProtocol.Reply.self) != nil }
+        /// A helper dump with an active window and nodes (an empty one sends the helper to fallback: H7).
+        func helperDump() async -> HelperProtocol.Dump? { await helper?.dump() }
+        /// `click` at `path` (the helper climbs to a clickable ancestor, else touches the node's center): true done,
+        /// false `node gone` (the screen changed since the dump), nil not through the helper.
+        func click(_ path: [Int]) async -> Bool? {
+            guard let line = await helper?.send(.click(path: path)) else { return nil }
+            do throws(ProtocolError) { _ = try HelperProtocol.decode(line, as: HelperProtocol.Reply.self); return true }
+            catch { return error.message.contains("node gone") ? false : nil }
+        }
+        func tapAt(_ x: Int, _ y: Int) async throws(ProtocolError) -> JSONValue {
+            if await acked(.tap(x: Double(x), y: Double(y))) { return .object([:]) }
+            return try await shellInput(["tap", "\(x)", "\(y)"])
+        }
         switch command {
         case "device.screenshot":
             let r = try await adb(["exec-out", "screencap", "-p"])
@@ -120,36 +142,77 @@ extension DeviceService {
             } catch { throw ProtocolError(code: .internal, message: "cannot write screenshot: \(error.localizedDescription)") }
             return .object(["path": .string(file.path), "width": .number(Double(size.width)), "height": .number(Double(size.height))])
         case "device.ui":
-            _ = try await adb(["shell", "uiautomator", "dump", "/sdcard/collie-ui.xml"])
-            let xml = try await adb(["exec-out", "cat", "/sdcard/collie-ui.xml"])
-            let (nodes, truncated) = UITree.parse(xml.stdoutData)
+            let clock = ContinuousClock(), start = clock.now
+            let nodes: [UINode], truncated: Bool, timing: [String: JSONValue]
+            if let d = await helperDump() {
+                let dumped = clock.now
+                (nodes, truncated) = UITree.nodes(d)
+                timing = ["adb": Self.ms(dumped - start), "parse": Self.ms(clock.now - dumped), "source": .string("helper")]
+            } else {
+                // one adb call: the XML comes straight on stdout; a device whose uiautomator cannot write /dev/tty prints
+                // no hierarchy there, so fall back to the file dump (two calls)
+                // ponytail: such a device pays the failed tty try on every dump; remember it per serial if one shows up
+                var xml = AdbParsing.ttyDump(try await adb(["exec-out", "uiautomator", "dump", "/dev/tty"]).stdoutData)
+                let via = xml == nil ? "file" : "tty"
+                if xml == nil {
+                    _ = try await adb(["shell", "uiautomator", "dump", "/sdcard/collie-ui.xml"])
+                    xml = try await adb(["exec-out", "cat", "/sdcard/collie-ui.xml"]).stdoutData
+                }
+                let dumped = clock.now
+                (nodes, truncated) = UITree.parse(xml ?? Data())
+                timing = ["adb": Self.ms(dumped - start), "parse": Self.ms(clock.now - dumped), "dump": .string(via), "source": .string("uiautomator")]
+            }
             try alive()
             refs[panel.id] = nodes
-            return UITree.result(nodes, truncated: truncated, all: args["all"] == .bool(true))
+            let r = UITree.result(nodes, truncated: truncated, all: args["all"] == .bool(true))
+            guard Self.timing(args), case .object(var o) = r else { return r }
+            o["timingMs"] = .object(timing)
+            return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
-                guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
+                guard var n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
-                return try await shellInput(["tap", "\(n.center.x)", "\(n.center.y)"])
+                // semantic click on a node the helper read; a stale path: one fresh read, the same node found again
+                // (class, text, desc and id), one more click. Still gone, or not clickable by the helper: tap its center.
+                if let path = n.path, var done = await click(path) {
+                    if !done, let d = await helperDump() {
+                        let fresh = UITree.nodes(d).nodes
+                        try alive()
+                        refs[panel.id] = fresh
+                        if let m = fresh.first(where: { $0.cls == n.cls && $0.text == n.text && $0.desc == n.desc && $0.id == n.id }), let p = m.path {
+                            n = m; done = await click(p) ?? false
+                        }
+                    }
+                    if done { return .object([:]) }
+                }
+                return try await tapAt(n.center.x, n.center.y)
             }
             guard let x = try Self.int(args, "x"), let y = try Self.int(args, "y") else {
                 throw ProtocolError(code: .invalidArgs, message: "device.tap needs x and y, or --ref")
             }
-            return try await shellInput(["tap", "\(x)", "\(y)"])
+            return try await tapAt(x, y)
         case "device.swipe":
             let c = try ["x1", "y1", "x2", "y2"].map { k throws(ProtocolError) in
                 guard let v = try Self.int(args, k) else { throw ProtocolError(code: .invalidArgs, message: "Missing argument '\(k)'") }
-                return "\(v)"
+                return v
             }
-            return try await shellInput(["swipe"] + c + ["\(try Self.int(args, "ms", 1...10_000) ?? 300)"])
+            let ms = try Self.int(args, "ms", 1...10_000) ?? 300
+            if await acked(.swipe(x1: Double(c[0]), y1: Double(c[1]), x2: Double(c[2]), y2: Double(c[3]), ms: ms)) { return .object([:]) }
+            return try await shellInput(["swipe"] + c.map { "\($0)" } + ["\(ms)"])
         case "device.text":
             guard case .string(let t)? = args["text"], !t.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'text'") }
-            return try await shellInput(["text", try AdbParsing.inputTextArg(t)])
+            let arg = try AdbParsing.inputTextArg(t)   // checked first: the same invalidArgs with or without the helper
+            // ponytail: the helper sets the focused field's text (ACTION_SET_TEXT) where `input text` types at the cursor;
+            // same on the empty fields agents fill. No focused field: `input text`, as before.
+            if await acked(.text(t)) { return .object([:]) }
+            return try await shellInput(["text", arg])
         case "device.key":
             guard case .string(let k)? = args["key"], let code = AndroidKeys.keycode(named: k) else {
                 throw ProtocolError(code: .invalidArgs, message: "Unknown key")
             }
+            // back, home and recents (app switch) as global actions; every other key stays a keyevent
+            if let g = [4: "back", 3: "home", 187: "recents"][code], await acked(.global(g)) { return .object([:]) }
             return try await shellInput(["keyevent", "\(code)"])
         case "device.logcat":
             let n = try Self.int(args, "lines", 1...2000) ?? 200
@@ -177,11 +240,27 @@ extension DeviceService {
                 return s
             }
             guard let pkg = try word("package") else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'package'") }
-            let out = try await adb(try word("activity").map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
+            // No --activity: an app may have several LAUNCHER activities (e.g. leakcanary's), and monkey then opens none (exit 251).
+            // So list them and start the first; monkey only when the list is unavailable or empty.
+            var activity = try word("activity")
+            if activity == nil, let list = try? await adb(["shell", "cmd", "package", "query-activities", "--brief",
+                                                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", pkg]).stdout {
+                let comp = ident.union(CharacterSet(charactersIn: "/"))
+                activity = list.split(whereSeparator: \.isWhitespace).lazy
+                    .filter { $0.hasPrefix("\(pkg)/") && $0.unicodeScalars.allSatisfy(comp.contains) }
+                    .map { String($0.dropFirst(pkg.count + 1)) }.first { !$0.isEmpty }
+            }
+            let out: String
+            do {
+                out = try await adb(activity.map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
                                     ?? ["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"]).stdout
-            guard !out.contains("Error") else { throw ProtocolError(code: .internal, message: "launch failed: \(out.prefix(500))") }
+            } catch { out = "Error" }
+            guard !out.contains("Error"), !out.contains("monkey aborted") else {
+                throw ProtocolError(code: .internal, message: activity.map { "could not start \(pkg)/\($0); check the activity name with --activity" }
+                                    ?? "could not launch \(pkg): no launcher activity found; is it installed? Pass --activity to pick one")
+            }
             await emit(panel.id, "device.app_launched", .object(["serial": .string(serial), "package": .string(pkg)]))
-            return .object([:])
+            return .object(activity.map { ["activity": .string($0)] } ?? [:])
         default:
             throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(command)'")
         }
@@ -250,5 +329,74 @@ extension DeviceService {
         }
         let r = try await mgr.run(["delete", "avd", "-n", LiteAvd.name], env: env, timeout: .seconds(60))
         guard r.status == 0 else { throw ProtocolError(code: .internal, message: "avdmanager delete failed: \(r.stderr.prefix(500))") }
+    }
+}
+
+/// `device screen --ocr|--no-ocr|--region x1,y1,x2,y2`: O2 rule 5 (flag) over the tree's rules 1-3.
+struct OCRMode: Sendable {
+    var forced = false, off = false, region: CGRect?
+    static let auto = OCRMode()
+    /// The rule that fires (`--timing`'s `trigger`: labels|coverage|opaque, flag for --ocr/--region), nil: no OCR.
+    func trigger(_ nodes: [UINode]) -> String? {
+        if off { return nil }
+        return (forced ? .flag : OCR.trigger(nodes))?.rawValue
+    }
+}
+
+/// One OCR pass: the merged nodes (empty on a black/uniform screen or an empty read), nil when the OCR is unavailable
+/// (no provider, no screenshot, provider error); its time and the rule that fired.
+struct OCRRead: Sendable {
+    let nodes: [UINode]?, took: Duration, trigger: String
+}
+
+extension DeviceService {
+    /// Parses the OCR flags; `--region` implies `--ocr` (it asks to read that rectangle) and clashes with `--no-ocr`.
+    static func ocrMode(_ a: [String: JSONValue]) throws(ProtocolError) -> OCRMode {
+        func flag(_ k: String) -> Bool { a[k] == .bool(true) || a[k] == .string("true") }
+        var m = OCRMode(forced: flag("ocr"), off: flag("no-ocr"))
+        switch a["region"] {
+        case nil, .null?: break
+        case .string(let s)?:
+            let v = s.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard v.count == 4, v[0] >= 0, v[1] >= 0, v[2] > v[0], v[3] > v[1] else {
+                throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2 (Android pixels, iOS points, x2 > x1, y2 > y1)")
+            }
+            m.region = CGRect(x: v[0], y: v[1], width: v[2] - v[0], height: v[3] - v[1]); m.forced = true
+        default: throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2")
+        }
+        if m.off && m.forced { throw ProtocolError(code: .invalidArgs, message: "--no-ocr cannot go with --ocr or --region") }
+        return m
+    }
+
+    /// The screen's PNG, in memory (never written).
+    func screencap(_ serial: String) async throws(ProtocolError) -> Data {
+        let r = try await tool().run(["exec-out", "screencap", "-p"], serial: serial, timeout: .seconds(30))
+        guard !r.truncated, AdbParsing.pngSize(r.stdoutData) != nil else { throw ProtocolError(code: .internal, message: "screencap did not return a PNG") }
+        return r.stdoutData
+    }
+
+    /// O1/O3/O5: screenshot, black check, `--region` crop, OCR (accurate), merge with `tree`. Never throws: the screen
+    /// falls back to the tree. ponytail: always `accurate` (the fallback's default); a `--ocr fast` when someone needs it.
+    /// A3: on iOS the tree, `region` and taps are points and the screenshot pixels (`simShot`'s scale): the region is
+    /// scaled up for the crop and the boxes down before they become nodes. Android: scale 1.
+    func ocrRead(panel: Panel, serial: String, tree: [UINode], trigger: String, region: CGRect?) async -> OCRRead {
+        let start = ContinuousClock.now
+        func done(_ n: [UINode]?) -> OCRRead { OCRRead(nodes: n, took: ContinuousClock.now - start, trigger: trigger) }
+        guard let ocr else { return done(nil) }
+        let shot: (png: Data, scale: CGFloat)?
+        if panel.state["platform"] == .string("ios") { shot = await simShot(serial, points: simPoints[panel.id]) }
+        else { shot = (try? await screencap(serial)).map { ($0, 1) } }
+        guard let shot else { return done(nil) }
+        var png = shot.png
+        let scale = shot.scale
+        if OCRImage.uniform(png) { return done([]) }   // black (FLAG_SECURE) or flat: nothing to read
+        var origin = CGPoint.zero
+        if let region {
+            guard let cut = OCRImage.crop(png, to: region.applying(CGAffineTransform(scaleX: scale, y: scale))) else { return done([]) }
+            png = cut.png; origin = cut.rect.origin
+        }
+        guard let items = try? await ocr.recognize(png: png, level: .accurate, languages: ocrLanguages) else { return done(nil) }
+        let toPoints = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale)
+        return done(OCR.nodes(items.map { var i = $0; i.box = i.box.offsetBy(dx: origin.x, dy: origin.y).applying(toPoints); return i }, tree: tree))
     }
 }

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "gate": "bash scripts/gate.sh # jest.config.js vitest.config.ts",
+  "precheck": "npm run lint --if-present",
+  "smoke": "npm run build --if-present",
+  "areas": {
+    "core": "scripts/check-feature.sh src"
+  },
+  "factory": {
+    "version": 1,
+    "static": {
+      "ratchets": [
+        { "name": "todo", "measure": "set -o pipefail; [ -d src ] || { echo 'todo: a pasta src não existe; ajuste o measure' >&2; exit 1; }; { grep -rIc TODO src || [ $? = 1 ]; } | awk -F: '$2 > 0 { print \"todo\", $1, $2 }'", "baseline": "scripts/todo-baseline.txt" }
+      ]
+    },
+    "review": { "personas": ["correcao", "testes", "simplicidade", "seguranca"], "threshold": "major", "callOwner": true },
+    "guardrails": { "budgetSeconds": 1800, "maxTries": 3, "destructive": ["rm -rf", "git push --force", "git reset --hard", "npm publish"], "land": "manual" }
+  }
+}

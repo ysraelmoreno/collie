@@ -24,6 +24,7 @@ private struct Fx {
         setenv("COLLIE_FAKE_ADB_LOGCAT", dir.appendingPathComponent("logcat").path, 1)
         setenv("COLLIE_FAKE_ADB_PNG", fixtures.appendingPathComponent("screen.png").path, 1)
         setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("ui-dump.xml").path, 1)
+        unsetenv("COLLIE_FAKE_ADB_TTY")   // default: /dev/tty prints nothing, so device.ui falls back to the file dump
     }
     /// Logged adb invocations, tab-joined args shown space-joined.
     var lines: [String] {
@@ -106,6 +107,20 @@ private struct LiteFx {
             let r = try await call(p, m, "device.lite.create")
             #expect(!r.ok && r.error?.code == .unauthorized)
             #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
+        }
+    }
+    @Test func helperInstallIsAdminOnlyAndStatusSaysWhy() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "device.helper", ["action": "install"])
+            #expect(!r.ok && r.error?.code == .unauthorized, "\(r)")
+            let i = try await admin(d, p, "device.helper", ["action": "install"])   // the test daemon bundles no APK
+            #expect(i.ok, "\(i)")
+            #expect(field(i, "state") == .string("fallback") && field(i, "reason") == .string("collie-helper.apk is not bundled"))
+            let s = try await call(p, m, "device.helper")
+            #expect(s.ok && field(s, "source") == .string("uiautomator") && field(s, "serial") == .string("emulator-5554"), "\(s)")
+            #expect(!(try await call(p, m, "device.helper", ["action": "nuke"])).ok)
         }
     }
     @Test func liteCreateReturnsTheRow() async throws {
@@ -301,6 +316,170 @@ private struct LiteFx {
         }
     }
 
+    @Test func uiDumpsThroughDevTtyInOneAdbCall() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_TTY", "1", 1)
+        defer { unsetenv("COLLIE_FAKE_ADB_TTY") }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.ui")
+            guard case .string(let tree)? = field(r, "tree") else { Issue.record("\(r)"); return }
+            #expect(tree.contains("[e1]") && tree.contains("Login") && field(r, "timingMs") == nil)
+            #expect(fx.lines.contains("-s emulator-5554 exec-out uiautomator dump /dev/tty"))
+            #expect(!fx.lines.contains { $0.contains("/sdcard/collie-ui.xml") })   // no file dump, no cat
+        }
+    }
+
+    @Test func uiFallsBackToTheFileDumpWhenDevTtyGivesNoXml() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.ui", ["timing": "true"])
+            guard case .string(let tree)? = field(r, "tree") else { Issue.record("\(r)"); return }
+            #expect(tree.contains("[e1]") && tree.contains("Login"))
+            #expect(fx.lines.contains("-s emulator-5554 shell uiautomator dump /sdcard/collie-ui.xml"))
+            guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(t["dump"] == .string("file"))
+            if case .number(let a)? = t["adb"], case .number(let b)? = t["parse"] { #expect(a >= 0 && b >= 0) } else { Issue.record("\(t)") }
+        }
+    }
+
+    @Test func screenTimingAddsTheGroupStep() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_TTY", "1", 1)
+        defer { unsetenv("COLLIE_FAKE_ADB_TTY") }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.screen", ["timing": "true"])
+            guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil, "\(t)")
+            #expect(field(try await call(p, m, "device.screen"), "timingMs") == nil)
+        }
+    }
+
+    @Test func screenGroupsTheTreeAndReportsWhatChanged() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.screen")
+            guard case .string(let text)? = field(r, "text") else { Issue.record("\(r)"); return }
+            #expect(text.hasPrefix("Tela: Offers   [voltar]\nAbas: [Points*] [Combos]") && !text.contains("Mudou"), "\(text)")
+            #expect(field(r, "changed") == .array([]) && field(r, "tree") == nil)
+            guard case .array(let fab)? = field(r, "floating"), case .object(let f)? = fab.first, case .string(let ref)? = f["ref"] else { Issue.record("\(r)"); return }
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs
+            #expect(fx.lines.contains("-s emulator-5554 shell input tap 632 136"))
+            setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("ui-dump.xml").path, 1)
+            let next = try await UnixSocketClient.send(Request(id: "m", terminalId: m.id, token: m.token, command: "device.screen",
+                                                               args: ["all": .bool(true)]), to: p.socket, timeoutSeconds: 60)   // a flag, as the CLI sends it
+            guard case .array(let changed)? = field(next, "changed") else { Issue.record("\(next)"); return }
+            #expect(changed.first == .string("título Offers → -"), "\(changed)")
+            guard case .string(let tree)? = field(next, "tree") else { Issue.record("\(next)"); return }
+            #expect(tree.contains("Login"))   // ui-dump.xml: Welcome sits below the top 15% of the nodes' extent, so no title
+        }
+    }
+
+    @Test func findReturnsTheMatchAndItsRefStaysValid() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "combos"])
+            guard case .string(let ref)? = field(r, "ref"), case .object(let c)? = field(r, "center") else { Issue.record("\(r)"); return }
+            #expect(field(r, "found") == .bool(true) && field(r, "label") == .string("Combos") && field(r, "role") == .string("tab"), "\(r)")
+            #expect(field(r, "clickable") == .bool(true) && c["x"] != nil && c["y"] != nil, "\(r)")
+            let dumps = fx.lines.filter { $0.contains("uiautomator dump") }.count
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // no device.ui between
+            #expect(fx.lines.filter { $0.contains("uiautomator dump") }.count == dumps)
+            let s = try await call(p, m, "device.find", ["text": "Filter", "then": "screen"])
+            guard case .object(let screen)? = field(s, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(s)"); return }
+            #expect(text.hasPrefix("Tela: Offers") && field(s, "role") == .string("button"), "\(s)")
+        }
+    }
+
+    @Test func findNotFoundAndRoleFilter() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let none = try await call(p, m, "device.find", ["text": "Nope"])
+            #expect(none.error?.code == .notFound && none.error?.message.contains("similar:") == true, "\(none)")
+            #expect(field(try await call(p, m, "device.find", ["text": "Combos", "role": "tab"]), "role") == .string("tab"))
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "role": "button"]).error?.code == .notFound)
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "role": "list"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "then": "ui"]).error?.code == .invalidArgs)
+        }
+    }
+
+    /// A list page: a clickable list [0,0][1080,2000] (so find --scroll swipes x 540, y 1500 -> 700) holding `items`.
+    private func page(_ fx: Fx, _ name: String, _ items: [String]) throws -> String {
+        let rows = items.enumerated().map { i, t in
+            "<node index=\"\(i)\" text=\"\(t)\" resource-id=\"\" class=\"android.widget.TextView\" content-desc=\"\" clickable=\"true\" bounds=\"[0,\(i * 200)][1080,\(i * 200 + 200)]\" />"
+        }.joined(separator: "\n")
+        let xml = """
+        <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+        <hierarchy rotation="0"><node index="0" text="" resource-id="com.x:id/list" class="androidx.recyclerview.widget.RecyclerView" content-desc="" clickable="false" scrollable="true" bounds="[0,0][1080,2000]">
+        \(rows)
+        </node></hierarchy>
+        """
+        let f = fx.dir.appendingPathComponent(name)
+        try xml.write(to: f, atomically: true, encoding: .utf8)
+        return f.path
+    }
+    /// `COLLIE_FAKE_ADB_UI` shows `first`; each swipe moves to the next of `then` (none left: the tree stays).
+    private func scrollPages(_ fx: Fx, first: String, then: [String]) throws {
+        let ui = fx.dir.appendingPathComponent("ui.xml")
+        try Data(contentsOf: URL(fileURLWithPath: first)).write(to: ui)
+        setenv("COLLIE_FAKE_ADB_UI", ui.path, 1)
+        let list = fx.dir.appendingPathComponent("scroll")
+        try then.map { $0 + "\n" }.joined().write(to: list, atomically: true, encoding: .utf8)
+        setenv("COLLIE_FAKE_ADB_SCROLL", list.path, 1)
+    }
+    private let scrollSwipe = "-s emulator-5554 shell input swipe 540 1500 540 700 300"
+
+    @Test func findScrollFindsItOnTheThirdRound() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple", "Banana"]), then: [try page(fx, "p2", ["Cherry", "Date"]), try page(fx, "p3", ["Elder", "Target row"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "target", "scroll": "true"])
+            guard case .string(let ref)? = field(r, "ref") else { Issue.record("\(r)"); return }
+            #expect(field(r, "label") == .string("Target row") && field(r, "scrolls") == .number(2) && field(r, "endReached") == .bool(false), "\(r)")
+            #expect(fx.lines.filter { $0 == scrollSwipe }.count == 2, "\(fx.lines)")
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // the last dump set the refs
+            #expect(fx.lines.contains("-s emulator-5554 shell input tap 540 300"), "\(fx.lines)")
+        }
+    }
+
+    @Test func findScrollStopsAtTheEndOfTheList() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple", "Banana"]), then: [try page(fx, "p2", ["Cherry", "Date"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "Nope", "scroll": "true"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 2, endReached: true)") == true, "\(r)")
+            #expect(r.error?.message.contains("similar:") == true, "\(r)")
+            #expect(fx.lines.filter { $0 == scrollSwipe }.count == 2)   // the 2nd swipe moved nothing
+        }
+    }
+
+    @Test func findScrollStopsAtMaxAndChecksArgs() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple"]), then: [try page(fx, "p2", ["Cherry"]), try page(fx, "p3", ["Target"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "Target", "scroll": "true", "max": "1", "dir": "up"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 1, endReached: false)") == true, "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell input swipe 540 700 540 1500 300"), "\(fx.lines)")   // up: the other way
+            for a in [["max": "0", "scroll": "true"], ["max": "31", "scroll": "true"], ["dir": "left", "scroll": "true"], ["max": "2"], ["dir": "up"]] {
+                #expect(try await call(p, m, "device.find", a.merging(["text": "Target"]) { x, _ in x }).error?.code == .invalidArgs, "\(a)")
+            }
+            let s = try await call(p, m, "device.find", ["text": "Cherry", "scroll": "true", "then": "screen"])   // on screen (p2): no swipe
+            #expect(field(s, "scrolls") == .number(0) && field(s, "screen") != nil, "\(s)")
+            #expect(fx.lines.filter { $0.contains("input swipe") }.count == 1)
+        }
+    }
+
     @Test func tapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
@@ -321,6 +500,110 @@ private struct LiteFx {
             let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "screenshot"]).error?.code == .invalidArgs)
             #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "ui", "settle": "3001"]).error?.code == .invalidArgs)
+            #expect(!fx.lines.contains("-s emulator-5554 shell input tap 5 6"))
+        }
+    }
+
+    @Test func waitTextShownGoneAndStableReturnWaitedMs() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            for a in [["text": "login"], ["text": "Nope", "gone": "true"], ["stable": "true"], ["text": "Login", "stable": "true"]] {
+                let r = try await call(p, m, "device.wait", a)
+                guard case .number(let ms)? = field(r, "waitedMs") else { Issue.record("\(a): \(r)"); continue }
+                #expect(field(r, "ok") == .bool(true) && ms >= 0, "\(a)")
+            }
+            #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)   // the wait's dumps updated the refs
+        }
+    }
+
+    @Test func waitTextSeesTheScreenChange() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let ui = fx.dir.appendingPathComponent("ui.xml")
+        try Data(contentsOf: fixtures.appendingPathComponent("offers-ui.xml")).write(to: ui)
+        setenv("COLLIE_FAKE_ADB_UI", ui.path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let later = Task {
+                try await Task.sleep(for: .milliseconds(600))
+                try Data(contentsOf: fixtures.appendingPathComponent("ui-dump.xml")).write(to: ui, options: .atomic)
+            }
+            let r = try await call(p, m, "device.wait", ["text": "Login", "timeout": "10"])
+            try await later.value
+            guard case .number(let ms)? = field(r, "waitedMs") else { Issue.record("\(r)"); return }
+            #expect(ms >= 500, "\(r)")
+            #expect(try await call(p, m, "device.wait", ["text": "Combos", "gone": "true", "timeout": "2"]).ok)   // Offers left
+        }
+    }
+
+    @Test func waitTimeoutIsATimeoutErrorWithTheLastScreen() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "Nope", "timeout": "1"])
+            #expect(r.error?.code == .timeout, "\(r)")
+            #expect(r.error?.message.contains("Last screen:\nTela: Offers") == true, "\(r)")
+        }
+    }
+
+    @Test func waitTimeoutParses() throws {
+        for (v, ms) in [(JSONValue.string("30"), 30_000), (.string("30s"), 30_000), (.string("500ms"), 500), (.number(60), 60_000), (.string("60000ms"), 60_000)] {
+            #expect(try DeviceService.waitTimeoutMs(v).map { [$0.ms] } == [ms] && DeviceService.waitTimeoutMs(v)?.clamped == false, "\(v)")
+        }
+        #expect(try DeviceService.waitTimeoutMs(nil) == nil)
+        // P3: above 60 s (the agent's 120000ms, a bare 120000) waits 60 s with clamped, not invalidArgs
+        for v in [JSONValue.string("120000ms"), .string("120000"), .number(120_000), .string("61s"), .string("60001ms"), .string("99999999999999")] {
+            let t = try DeviceService.waitTimeoutMs(v)
+            #expect(t?.ms == 60_000 && t?.clamped == true, "\(v)")
+        }
+        let w = try DeviceService.waitSpec(["stable": .bool(true), "timeout": .string("120000ms")])
+        #expect(w.timeoutMs == 60_000 && w.clamped)
+        for v in [JSONValue.string("30sec"), .string("0"), .string("-5"), .string("0ms"), .string("abc"), .number(1.5)] {
+            let e = #expect(throws: ProtocolError.self) { try DeviceService.waitTimeoutMs(v) }
+            #expect(e?.code == .invalidArgs && e?.message.hasPrefix("--timeout takes 30, 30s or 500ms") == true && e?.message.contains("\n") == false, "\(v)")
+        }
+    }
+
+    @Test func waitThenScreen() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "Combos", "timeout": "2s", "then": "screen"])
+            guard case .object(let screen)? = field(r, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(r)"); return }
+            #expect(field(r, "ok") == .bool(true) && field(r, "waitedMs") != nil && text.hasPrefix("Tela: Offers"), "\(r)")
+            let u = try await call(p, m, "device.wait", ["stable": "true", "timeout": "500ms", "then": "ui"])
+            guard case .object(let ui)? = field(u, "ui") else { Issue.record("\(u)"); return }
+            #expect(ui["tree"] != nil && field(u, "screen") == nil, "\(u)")
+            let before = fx.lines.filter { $0.contains("uiautomator dump") }.count
+            #expect(try await call(p, m, "device.wait", ["text": "Combos", "then": "screenshot"]).error?.code == .invalidArgs)
+            #expect(fx.lines.filter { $0.contains("uiautomator dump") }.count == before)   // bad --then: no dump
+        }
+    }
+
+    @Test func waitRejectsBadArgsBeforeDumping() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "-1"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
+                #expect(try await call(p, m, "device.wait", a).error?.code == .invalidArgs, "\(a)")
+            }
+            #expect(!fx.lines.contains { $0.contains("uiautomator dump") })
+        }
+    }
+
+    @Test func thenScreenWithSettleStableReturnsTheGroups() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.tap", ["x": "3", "y": "4", "then": "screen", "settle": "stable"])
+            guard case .object(let screen)? = field(r, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(r)"); return }
+            #expect(text.hasPrefix("Tela: Offers") && field(r, "settled") == .bool(true) && field(r, "ui") == nil, "\(r)")
+            let ui = try await call(p, m, "device.key", ["key": "Enter", "then": "ui", "settle": "stable"])
+            #expect(field(ui, "ui") != nil && field(ui, "settled") == .bool(true), "\(ui)")
+            #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "screen", "settle": "fast"]).error?.code == .invalidArgs)
             #expect(!fx.lines.contains("-s emulator-5554 shell input tap 5 6"))
         }
     }
@@ -387,6 +670,49 @@ private struct LiteFx {
             guard case .object(let o)? = ev.result, case .array(let es)? = o["events"],
                   case .object(let e)? = es.first, case .object(let pl)? = e["payload"] else { Issue.record("\(ev)"); return }
             #expect(e["name"] == .string("device.app_launched") && pl["package"] == .string("com.example") && es.count == 2)
+        }
+    }
+
+    /// `query-activities --brief` output for `com.example`, one component per launcher.
+    private func launchers(_ fx: Fx, _ comps: [String]) throws {
+        let f = fx.dir.appendingPathComponent("launchers")
+        try comps.enumerated().map { "  Activity #\($0.offset):\n    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n    \($0.element)" }
+            .joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
+        setenv("COLLIE_FAKE_ADB_LAUNCHERS", f.path, 1)
+    }
+
+    @Test func launchWithTwoLauncherActivitiesStartsTheFirst() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, ["com.example/.BrowseActivity", "com.example/leakcanary.internal.activity.LeakLauncherActivity"])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == .string(".BrowseActivity"), "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell am start -n com.example/.BrowseActivity"))
+            #expect(!fx.lines.contains { $0.contains("monkey") || $0.contains("LeakLauncherActivity") })
+        }
+    }
+
+    @Test func launchWithOneLauncherActivityStartsIt() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, ["com.example/com.example.MainActivity"])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == .string("com.example.MainActivity"), "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell am start -n com.example/com.example.MainActivity"))
+        }
+    }
+
+    @Test func launchWithNoLauncherListFallsBackToMonkey() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, [])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == nil, "\(r)")
+            #expect(fx.lines.contains { $0.contains("query-activities") })
+            #expect(fx.lines.contains("-s emulator-5554 shell monkey -p com.example -c android.intent.category.LAUNCHER 1"))
         }
     }
 

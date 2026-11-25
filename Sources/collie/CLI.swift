@@ -96,10 +96,22 @@ enum CLI {
         if argv.isEmpty { FileHandle.standardError.write(Data(usage().utf8)); return 2 }
         let cmd: (command: String, args: [String: JSONValue])
         do { cmd = try await parse(argv) } catch { err(error.message); return 2 }
+        if let e = RatchetCLI.refusal(cmd.command, cmd.args) { err(e); return 1 }   // F7a: before the measure runs
         do {
             let result = try await Client.call(cmd.command, cmd.args)
             if cmd.command == "android.install" && !json { return await followInstall(result) }   // prints the job lines itself
             if cmd.command == "design.engine.install" && !json { return await followInstall(result, status: "design.engine.status") }
+            if cmd.command == "factory.doctor", case .object(let o) = result {   // U3: --json is the report; a layer below --min exits 1
+                print(json ? jsonString(o["report"] ?? .null) + "\n" : render(cmd.command, result, json: false), terminator: "")
+                return o["passed"] == .bool(false) ? 1 : 0
+            }
+            if cmd.command.hasPrefix("factory.ratchet.") {   // U5: worse (or improved, on check) exits 1
+                // F6a/F7a: the daemon only measures; the baseline is written here, confined again (`RatchetCLI`)
+                let (o, code) = RatchetCLI.handleRatchet(result, command: cmd.command, args: cmd.args,
+                                                         cwd: FileManager.default.currentDirectoryPath, err: err)
+                if o != .null { print(render(cmd.command, o, json: json), terminator: "") }
+                return code
+            }
             print(render(cmd.command, result, json: json), terminator: "")
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
             // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"
@@ -172,9 +184,14 @@ enum CLI {
             }.joined()
         case ("check", .object(let o)) where o["model"] != nil:
             let s = "[model: \(str(o["model"]))]\n" + str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
+        case ("paddock.list", .array(let rows)):   // A2: one line each, "fábrica" beside a marked one's name
+            return rows.map { if case .object(let o) = $0 { PaddockText.line(o) + "\n" } else { "" } }.joined()
+        case ("paddock.status", .object(let o)), ("paddock.factory", .object(let o)): return PaddockText.line(o) + "\n"
         case ("model", .object(let o)): return str(o["model"]) + "\n" + (o["note"].map { "note: \(str($0))\n" } ?? "")
         case (_, .object(let o)) where o["output"] != nil:
             let s = str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
+        case ("device.screen", .object(let o)):
+            return str(o["text"]) + "\n" + (o["tree"].map { "\n" + str($0) + "\n" } ?? "")
         case ("admin.spawn", .object(let o)): return str(o["id"]) + "\n"
         case ("plugin.install", .object(let o)):
             var s = "Instalado \(str(o["name"])) \(str(o["version"]))\n"

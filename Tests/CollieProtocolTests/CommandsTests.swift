@@ -8,6 +8,19 @@ import Foundation
         #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
     }
 
+    /// A2 (reviewAdvisoryDoc): `work run --review` is an opinion (parecer), never an approval, in the CLI help and the
+    /// MCP `work_run` alike.
+    @Test func reviewHelpSaysParecer() throws {
+        let help = try #require(Commands.spec("work.run")?.params.first { $0.name == "review" }?.help)
+        let tool = MCPSchema.tools(shepherd: true).first { if case .object(let o) = $0 { o["name"] == .string("work_run") } else { false } }
+        guard case .object(let o)? = tool, case .object(let schema)? = o["inputSchema"], case .object(let props)? = schema["properties"],
+              case .object(let review)? = props["review"], case .string(let mcp)? = review["description"] else { Issue.record("work_run --review"); return }
+        for h in [help, mcp] {
+            #expect(h.contains("parecer") && h.contains("vetoes with a blocker or major") && h.contains("never approves alone")
+                    && h.contains("equals no --review") && h.contains("strict") && !h.contains("aprovado pelo revisor"), "\(h)")
+        }
+    }
+
     @Test func adminRemoteFromTheCLI() throws {
         let r = try ArgvParser.parse(["admin", "remote", "on", "--port", "47821", "--tailscale-only", "off"])
         #expect(r.command == "admin.remote" && r.args["action"] == .string("on") && r.args["port"] == .number(47821)
@@ -108,7 +121,15 @@ import Foundation
 
     @Test func deviceActionsTakeThenAndSettle() throws {
         let t = try ArgvParser.parse(["device", "tap", "1", "2", "--then", "ui", "--settle", "100"])
-        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .number(100)])
+        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .string("100")])   // ms or stable: a string
+        #expect(try ArgvParser.parse(["device", "key", "Enter", "--then", "screen", "--settle", "stable"]).args
+                == ["key": .string("Enter"), "then": .string("screen"), "settle": .string("stable")])
+        let w = try ArgvParser.parse(["device", "wait", "--text", "Signing in", "--gone", "--timeout", "20"])
+        #expect(w.command == "device.wait" && w.args == ["text": .string("Signing in"), "gone": .bool(true), "timeout": .string("20")])   // 20, 20s or 500ms: the daemon parses
+        #expect(try ArgvParser.parse(["device", "wait", "--stable", "--timeout", "500ms", "--then", "screen"]).args
+                == ["stable": .bool(true), "timeout": .string("500ms"), "then": .string("screen")])
+        let bad = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["device", "wait", "--text", "x", "--for", "3"]) }
+        #expect(bad?.message == "unknown flag --for; device wait takes --text --gone --stable --quiet --timeout --then --panel", "\(String(describing: bad))")
         #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
         for c in ["tap", "swipe", "text", "key", "launch"] {
             let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []
@@ -164,7 +185,7 @@ import Foundation
                          "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_enforce", "memory_flag", "memory_task",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "work_usage", "work_history", "work_handoff",
                          "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
-                         "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
+                         "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_screen", "device_wait", "device_find", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear", "network_rule-add", "network_rule-list", "network_rule-remove", "network_rule-enable", "network_rule-disable", "network_rule-clear",
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
@@ -193,7 +214,7 @@ import Foundation
                                 "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_enforce", "memory_flag", "memory_task",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "work_usage", "work_history", "work_handoff", "work_run", "work_stop", "work_rerail",
                          "herd_list", "herd_get", "herd_save", "herd_apply", "lot_create", "lot_join", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
-                         "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
+                         "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_screen", "device_wait", "device_find", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear", "network_rule-add", "network_rule-list", "network_rule-remove", "network_rule-enable", "network_rule-disable", "network_rule-clear",
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
@@ -224,7 +245,7 @@ import Foundation
     @Test func outRejectedForOtherCommands() {
         for argv in [["design", "inspect", "--out", "x"], ["memory", "get", "--out", "x"]] {
             let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }
-            #expect(e?.message == "unknown flag --out", "\(argv)")
+            #expect(e?.message.hasPrefix("unknown flag --out; ") == true && e?.message.contains("\n") == false, "\(argv)")
         }
         #expect(Commands.all.filter { $0.params.contains { $0.name == "out" } }.map(\.name).filter { !Commands.outputFile.contains($0) }
                 == ["admin.data.export", "artifact.export"])   // their own --out: the daemon writes the backup / the deck

@@ -129,6 +129,7 @@ actor WorkStore {
             if from == .deferred || from == .abandoned {
                 w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].updatedAt = at
                 if !keepTries { w.tasks[i].tries = nil }
+                if w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }   // F2 X3: reopened, the refusals in a row start over
                 w.tasks[i].forgetResume()   // M2b.1: it starts over, with a fresh agent
                 w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
             }
@@ -229,10 +230,10 @@ actor WorkStore {
 
     /// Past the limits, evicted records are added to `lines`. ponytail: whole list scanned per change; fine at this scale.
     private static func enforce(_ list: inout [Work], _ lines: inout [[String: Any]]) {
-        let iso = ISO8601DateFormatter()
+        // R3: formatter only on eviction (rare), not on every mutate
         func tag(_ kind: String, _ w: Work, _ key: String, _ v: some Encodable) -> [String: Any] {
             let obj = (try? JSONSerialization.jsonObject(with: encoder.encode(v))) ?? NSNull()
-            return ["kind": kind, "workId": w.id.uuidString.lowercased(), "at": iso.string(from: Date()), key: obj]
+            return ["kind": kind, "workId": w.id.uuidString.lowercased(), "at": ISO8601DateFormatter().string(from: Date()), key: obj]
         }
         for i in list.indices {
             let w = list[i]

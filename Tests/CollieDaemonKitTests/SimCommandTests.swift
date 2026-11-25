@@ -138,6 +138,20 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    /// A3 (was P2's `unsupported`): `device screen --ocr` on iOS with no OCR provider: the tree and `ocr: unavailable`.
+    @Test func iosScreenOcrWithoutProviderIsUnavailable() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.screen", ["ocr": "true", "timing": "true"])
+            guard case .string(let text)? = field(r, "text"), case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(r.ok && text.hasSuffix("\nocr: unavailable") && field(r, "ocr") == .string("unavailable") && !text.contains("unsupported"))
+            #expect(t["trigger"] == .string("flag") && t["ocrMs"] != nil && t["ocr"] == nil, "\(t)")
+            let off = try await call(p, m, "device.screen", ["no-ocr": "true"])
+            #expect(off.ok && field(off, "ocr") == nil)
+        }
+    }
+
     @Test func iosCommandsMapToTools() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
@@ -191,6 +205,16 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func waitThenScreen() async throws {   // iOS shares device.wait --then with Android
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "mapas", "timeout": "500ms", "then": "screen"])
+            guard case .object(let screen)? = field(r, "screen"), screen["text"] != nil else { Issue.record("\(r)"); return }
+            #expect(field(r, "ok") == .bool(true) && field(r, "waitedMs") != nil, "\(r)")
+        }
+    }
+
     @Test func iosTapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
@@ -200,6 +224,31 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
             #expect(try await call(p, m, "device.tap", ["text": "mapas", "nth": "1"]).ok)   // no device.ui before
             #expect(fx.axe.contains("describe-ui --udid \(booted)") && fx.axe.contains("tap -x \(n.center.x) -y \(n.center.y) --udid \(booted)"), "\(fx.axe)")
             #expect(try await call(p, m, "device.tap", ["text": "no such label"]).error?.code == .notFound)
+        }
+    }
+
+    @Test func iosFindFoundNotFoundAndRole() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.find", ["text": "mapas"])
+            guard case .string(let ref)? = field(r, "ref") else { Issue.record("\(r)"); return }
+            #expect(field(r, "found") == .bool(true) && field(r, "label") == .string("Mapas") && field(r, "center") != nil, "\(r)")
+            #expect(fx.axe.contains("describe-ui --udid \(booted)"))
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // the find's dump set the refs
+            #expect(try await call(p, m, "device.find", ["text": "no such label"]).error?.code == .notFound)
+            #expect(try await call(p, m, "device.find", ["text": "mapas", "role": "field"]).error?.code == .notFound)
+        }
+    }
+
+    @Test func iosFindScrollSwipesInPointsAndSeesTheEnd() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.find", ["text": "no such label", "scroll": "true"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 1, endReached: true)") == true, "\(r)")   // the fake tree never moves
+            #expect(fx.axe.contains { $0.contains("swipe --start-x") }, "\(fx.axe)")
+            #expect(field(try await call(p, m, "device.find", ["text": "mapas", "scroll": "true"]), "scrolls") == .number(0))
         }
     }
 

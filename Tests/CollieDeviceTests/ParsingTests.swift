@@ -43,6 +43,15 @@ private let xml = """
     #expect(d[1].serial == "R58M" && d[1].state == "unauthorized" && d[1].model == nil)
 }
 
+@Test func ttyDumpKeepsTheXmlAndDropsTheTrailer() {
+    let out = Data((xml + "UI hierchary dumped to: /dev/tty\n").utf8)
+    #expect(AdbParsing.ttyDump(out).map { String(decoding: $0, as: UTF8.self) } == xml)
+    #expect(UITree.parse(AdbParsing.ttyDump(out)!).nodes.count == 1)
+    #expect(AdbParsing.ttyDump(Data("ERROR: could not get idle state.\n".utf8)) == nil)   // falls back to the file dump
+    #expect(AdbParsing.ttyDump(Data(xml.prefix(200).utf8)) == nil)   // cut short
+    #expect(AdbParsing.ttyDump(Data()) == nil)
+}
+
 @Test func pngSizeReadsIHDR() {
     var d = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
     d += Data([0, 0, 4, 0x38, 0, 0, 9, 0x60])
@@ -112,4 +121,46 @@ private let xml = """
           case .object(let a) = UITree.result(nodes, truncated: trunc, all: true) else { Issue.record("not an object"); return }
     #expect(c["nodes"] == .number(3) && c["total"] == .number(5) && a["nodes"] == .number(5) && a["total"] == .number(5))
     #expect(c["tree"] == .string(UITree.lines(compact)) && a["tree"] == .string(UITree.lines(nodes)))
+}
+
+@Test func humanizeIdCases() {
+    #expect(humanizeId("configuration_fab") == "configuration fab")
+    #expect(humanizeId("topBarMenu") == "top bar menu")
+    #expect(humanizeId("ICON-btn") == "icon btn")
+    #expect(humanizeId("") == "")
+}
+
+/// The BEES Offers dump (2026-11-21): configuration_fab is a clickable Button with no text or desc.
+@Test func findByHumanizedId() throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/offers-ui.xml")
+    let nodes = UITree.parse(try Data(contentsOf: url)).nodes
+    let fab = try UITree.target(nodes, text: "configuration fab", id: nil, nth: 1)   // what `device find` runs
+    #expect(fab.id == "configuration_fab")
+    #expect(try UITree.target(nodes, text: "Configuration", id: nil, nth: nil).id == "configuration_fab")   // contains
+    #expect(throws: ProtocolError.self) { try UITree.target(nodes, text: "toolbar", id: nil, nth: nil) }   // not clickable: no id match
+    do { _ = try UITree.target(nodes, text: "nope", id: nil, nth: 1); Issue.record("found") } catch {
+        #expect(error.code == .notFound && error.message.contains("; unlabeled: ") && error.message.contains("\(fab.ref) id=configuration_fab"), "\(error.message)")
+    }
+}
+
+/// P3 (2026-11-22): `find "+"` on the BEES Offers dump missed the unlabeled configuration_fab.
+@Test func symbolAliasesFindUnlabeledButtons() throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/offers-ui.xml")
+    let nodes = UITree.parse(try Data(contentsOf: url)).nodes
+    #expect(symbolAliases("+")?.contains("fab") == true && symbolAliases("×") == symbolAliases("x") && symbolAliases("a") == nil)
+    #expect(try UITree.target(nodes, text: "+", id: nil, nth: 1).id == "configuration_fab")
+    #expect(try UITree.target(nodes, text: "<", id: nil, nth: nil).desc == "Navigate up")
+    do { let n = try UITree.target(nodes, text: "x", id: nil, nth: 1); Issue.record("found \(n)") } catch {
+        #expect(error.code == .notFound, "\(error.message)")
+    }
+    // a node whose text is "+" wins over the alias
+    var plus = nodes[0]; plus.ref = "e99"; plus.text = "+"; plus.id = ""; plus.clickable = true; plus.depth = 1
+    #expect(try UITree.target(nodes + [plus], text: "+", id: nil, nth: nil).ref == "e99")
+    // several alias hits: listed as today
+    var add = plus; add.ref = "e98"; add.text = ""; add.id = "add_fab"
+    do { _ = try UITree.target(nodes + [add], text: "+", id: nil, nth: nil); Issue.record("one") } catch {
+        #expect(error.code == .invalidArgs && error.message.contains("2 elements") && error.message.contains("id=add_fab"), "\(error.message)")
+    }
 }

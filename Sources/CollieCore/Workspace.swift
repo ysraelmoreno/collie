@@ -92,6 +92,9 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
     /// "Sempre neste cercado": the owner trusts loops here, so `work.run` starts without its card (every other check of
     /// the run still holds). Only the app sets it (`admin.paddock.trust-loops`); it goes with the paddock.
     public var trustLoops: Bool?
+    /// A2 "cercado fábrica": the owner marked it for auto-land (A4 reads it). Only the owner sets it (`paddock.factory`,
+    /// `paddock.create --factory`: the app or the owner's CLI, never an agent nor MCP); missing = false, nothing migrates.
+    public var factory: Bool = false
     public init(id: UUID, name: String, repoRoot: String, path: String, branch: String, baseBranch: String,
                 status: PaddockStatus = .working, createdBy: UUID? = nil, landedAt: Date? = nil, designSystem: UUID? = nil) {
         self.id = id; self.name = name; self.repoRoot = repoRoot; self.path = path; self.branch = branch
@@ -118,6 +121,7 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt); designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
         apps = try? c.decodeIfPresent([String: String].self, forKey: .apps)   // unreadable: none approved, never the workspace lost
         trustLoops = try? c.decodeIfPresent(Bool.self, forKey: .trustLoops)   // missing or unreadable: not trusted, the card shows
+        factory = (try? c.decodeIfPresent(Bool.self, forKey: .factory)) ?? false   // missing or unreadable: not a factory
     }
 }
 

@@ -103,7 +103,9 @@ extension CommandRouter {
 
     /// `lane` (M3.3, the loop's own; no request carries it): the new terminal stands in `me`'s paddock with the lane as
     /// its folder and its project, so its sandbox is the lane's (strict, closed to the paddock's worktree and the other lanes).
-    func summon(_ r: Request, by me: TerminalRecord, lane: URL? = nil) async throws -> JSONValue {
+    /// `scratch` (F2 X1, the loop's own; no request carries it): a reviewer, born in that empty folder the daemon made,
+    /// as its folder and its project: never the worktree, so nothing the judged agent committed loads there.
+    func summon(_ r: Request, by me: TerminalRecord, lane: URL? = nil, scratch: URL? = nil) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
         try refuseFreeSummoner(me)
@@ -123,9 +125,7 @@ extension CommandRouter {
         }
         try reserve(name); defer { launching.remove(name.lowercased()) }
         // no preset: the Shepherd's own (with its command, for a custom one); a shell only when asked for
-        guard let preset = str(r, "preset").map({ Preset(rawValue: $0) }) ?? me.preset else {
-            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
-        }
+        let preset = try str(r, "preset").map { try Preset.parse($0) } ?? me.preset
         let command = str(r, "command") ?? (str(r, "preset") == nil ? me.command : nil)
         let model = str(r, "model")
         if let model {
@@ -163,9 +163,16 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "lane \(cwd) is not its own project root")
             }
         }
+        if let scratch {
+            // the daemon made the folder itself: no card, as for a lane
+            guard lane == nil, str(r, "paddock") == nil, str(r, "cwd") == nil else {
+                throw ProtocolError(code: .unavailable, message: "a reviewer runs only in its own scratch folder")
+            }
+            cwd = SignedAppCheck.realPath(scratch)
+        }
         // DX backlog 15, strict mode: outside the project only into a folder the user released to this Shepherd; else a card
         var anywhere = startedOpen(me)
-        if lane == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
+        if lane == nil, scratch == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
             let released = SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)
                 .contains { $0.access == .write && ProjectRoot.contains(cwd, root: URL(fileURLWithPath: $0.path)) }
             guard released else {
@@ -177,19 +184,33 @@ extension CommandRouter {
             }
             anywhere = true
         }
-        let root = lane != nil ? URL(fileURLWithPath: cwd)
+        let root = lane != nil || scratch != nil ? URL(fileURLWithPath: cwd)
             : try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: anywhere)
         var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         rec.model = model
         rec.isShepherd = asShepherd   // before the launch: COLLIE_SHEPHERD and the Shepherd orientation come with the first session
         rec.summonedBy = me.id
-        var result = try await launch(rec)
-        try await ensurePaddock(of: rec)
+        // F2 X4: a reviewer is marked before it exists, so no other loop of the paddock ever counts it as working;
+        // unmarked again if the summon fails
+        var born = false
+        if scratch != nil { loopReviewers.insert(rec.id) }
+        defer { if scratch != nil, !born { loopReviewers.remove(rec.id) } }
+        var result: [String: JSONValue]
+        do {
+            result = try await launch(rec)
+            try await ensurePaddock(of: rec)
+        } catch {
+            // F2 Y2a: a reviewer that fails after its launch (`persist`, its paddock gone) goes BEFORE it is unmarked:
+            // else, alive and unmarked, it is "another agent working" until the daemon starts again
+            if scratch != nil { try? await remove(rec) }
+            throw error
+        }
         do {
             try await leash(me, rec)
             try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch
-            if let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
+            // F2 W1: a reviewer joins no lot (no lot_board of the judged agent's group, reviewerNoMcp)
+            if scratch == nil, let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
         } catch { try? await remove(rec); throw error }
         if let p = str(r, "prompt"), !p.isEmpty {
             // the summon exists either way: report, don't fail (a retry would hit "already exists")
@@ -197,6 +218,17 @@ extension CommandRouter {
                 result["promptError"] = .string("\(error.code.rawValue): \(error.message)")
             }
         }
+        born = true
         return .object(result)
+    }
+}
+
+extension Preset {
+    /// The one validation of a preset's text: every command that takes `preset` goes through here.
+    static func parse(_ s: String) throws(ProtocolError) -> Preset {
+        guard let p = Preset(rawValue: s) else {
+            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
+        }
+        return p
     }
 }

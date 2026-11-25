@@ -21,6 +21,14 @@ public enum AdbParsing {
         }
     }
 
+    /// `adb exec-out uiautomator dump /dev/tty` output: the XML up to `</hierarchy>` (the "UI hierchary dumped to"
+    /// line after it dropped); nil when no hierarchy came (an error line, or cut short), to fall back to the file dump.
+    public static func ttyDump(_ d: Data) -> Data? {
+        guard let end = d.range(of: Data("</hierarchy>".utf8), options: .backwards),
+              let open = d.range(of: Data("<hierarchy".utf8)), open.lowerBound < end.lowerBound else { return nil }
+        return d.subdata(in: d.startIndex..<end.upperBound)
+    }
+
     /// Width/height from the PNG IHDR chunk.
     public static func pngSize(_ d: Data) -> (width: Int, height: Int)? {
         let b = [UInt8](d.prefix(24))

@@ -1,0 +1,5 @@
+[project]
+name = "app"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.4"]

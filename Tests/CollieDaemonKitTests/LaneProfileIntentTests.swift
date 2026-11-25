@@ -35,9 +35,9 @@ private struct Rig {
         await d.router.intentTestsAdd(paddock)
         sha = try await GitRunner.run(["rev-parse", "HEAD"], in: f.paddock).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let log = log
-        let recorded: LaneGit = { (args, dir, profile) async throws(ProtocolError) in
+        let recorded: LaneGit = { (args, dir, profile, stdin, timeout, cap) async throws(ProtocolError) in
             await log.add(args, profile)
-            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile)
+            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin, timeout: timeout, cap: cap)
         }
         host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock,
                               sandbox: (f.home, "/bin/zsh"), laneRunner: recorded)

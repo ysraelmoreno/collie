@@ -12,8 +12,25 @@ import CollieCore
 /// and fullscreen (scale 1) were never scaled. The re-add on mouseUp is harmless: the button fires inside `super.mouseUp`.
 @MainActor @Suite(.serialized) struct TerminalFullscreenClickTests {
     static let size = CGSize(width: 640, height: 400)   // canvas pt
-    /// The ⤢ in canvas pt: right padding 10, the "…" menu, spacing 8, then the button (found by scanning at zoom 1).
-    static let button = CGPoint(x: size.width - 46, y: TerminalNodeView.titleHeight / 2)
+    /// The ⤢ in canvas pt, found by clicking along the title bar of a zoom-1 rig (node bounds = canvas pt there) from the
+    /// "…" menu's left edge leftwards until fullscreen toggles. Not a constant: SwiftUI lays the bar out differently by
+    /// macOS (`size.width - 46`, scanned on 15, missed on the macOS 26 runner even at zoom 1). SwiftUI's accessibility
+    /// tree is empty with no AX client, so it can't be read from there. Never clicks the menu (that pops a modal menu).
+    static var button: CGPoint {
+        if let p = located { return p }
+        let r = makeRig(zoom: 1, inFront: false); defer { r.close() }
+        let menu = popUp(in: r.node).map { r.node.convert($0.bounds, from: $0).minX } ?? size.width - 30
+        let y = TerminalNodeView.titleHeight / 2
+        for x in stride(from: menu - 1, to: size.width / 2, by: -2) {
+            r.click(CGPoint(x: x, y: y))
+            if r.canvas.fullscreen != nil { located = CGPoint(x: x, y: y); break }
+        }
+        return located ?? .zero
+    }
+    private static var located: CGPoint?
+    private static func popUp(in v: NSView) -> NSPopUpButton? {
+        v as? NSPopUpButton ?? v.subviews.lazy.compactMap { popUp(in: $0) }.first
+    }
 
     @MainActor final class Parent: NSView {
         var adds = 0
@@ -44,8 +61,13 @@ import CollieCore
         func close() { node.unmount(); other.unmount(); window.close() }
     }
 
-    /// `node` at the zoom, and another node placed away from the click; `inFront` puts that one on top.
     private func rig(zoom: CGFloat, inFront: Bool) -> Rig {
+        #expect(Self.button != .zero, "⤢ not found in the title bar")
+        return Self.makeRig(zoom: zoom, inFront: inFront)
+    }
+
+    /// `node` at the zoom, and another node placed away from the click; `inFront` puts that one on top.
+    private static func makeRig(zoom: CGFloat, inFront: Bool) -> Rig {
         let canvas = CanvasState(); canvas.zoom = zoom
         let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsc-\(UUID())")))
         func make() -> TerminalNodeView {

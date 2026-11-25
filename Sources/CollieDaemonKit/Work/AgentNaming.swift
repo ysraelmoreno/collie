@@ -9,6 +9,23 @@ enum AgentNaming {
     static let max = 48, part = 18, shortId = 8
     static let noWork = "trabalho", noTask = "tarefa"
 
+    /// F2 X4: a loop reviewer's name ends in `reviewerTail` (then, maybe, what `unique` added); F2 Y1: its folder is
+    /// in `WorkLoop.reviewRoot`, `reviewDir` in the daemon's root (`WorkLoop.reviewScratch`). Both together tell an
+    /// orphan reviewer, one a fallen daemon left, from any terminal of the owner's.
+    static let reviewerTail = "-rev", reviewDir = "collie-review"
+
+    /// `<agent>-<persona>-rev`, cut to `max` from the agent's name (the persona and the tail stay).
+    static func reviewer(_ agent: String, persona: String) -> String {
+        let tail = "-" + slug(persona) + reviewerTail
+        return trim(String(agent.prefix(Swift.max(0, max - tail.count)))) + tail
+    }
+
+    static func isReviewer(name: String, cwd: String, reviewRoot: URL) -> Bool {
+        let root = SignedAppCheck.realPath(reviewRoot)
+        return name.range(of: reviewerTail + #"(-[a-z0-9]{1,8})?$"#, options: .regularExpression) != nil
+            && URL(fileURLWithPath: cwd).deletingLastPathComponent().path == root   // `cwd`: a real path (`summon`)
+    }
+
     static func name(work: String, task: String, taskId: String, attempt: Int, lane: Int?) -> String {
         let w = cut(slug(work)), t = cut(slug(task))
         let head = (w.isEmpty ? noWork : w) + "-" + (t.isEmpty ? short(taskId) : t)

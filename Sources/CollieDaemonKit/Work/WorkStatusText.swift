@@ -140,6 +140,30 @@ public enum WorkStatusText {
         }
         return w.loop?.model.map { "modelo dos agentes: " + RerailText.clean($0, max: 64) }
     }
+    /// F2 R1: "revisão: ligada, personas auto" (+ ", revisor <model>"); nil: review off.
+    public static func reviewLine(_ w: Work) -> String? {
+        guard let l = w.loop, l.review == true else { return nil }
+        return "revisão: ligada, personas " + (l.personas.map { RerailText.clean($0.joined(separator: ", "), max: 200) } ?? "auto")
+            + (l.reviewOnly.map { " (só " + RerailText.clean($0.joined(separator: ", "), max: 200) + ")" } ?? "")
+            + (l.reviewThreshold.map { ", veto a partir de " + RerailText.clean($0, max: 10) } ?? "")
+            + (l.reviewerModel.map { ", revisor " + RerailText.clean($0, max: 100) } ?? "")
+    }
+    /// A1: one short line per value the base's `factory` could set, saying where it came from ("revisão: perfil"), then
+    /// the `destructive` warning. None: the base had no `factory` (the loop as before).
+    public static func originLines(_ w: Work) -> [String] {
+        guard let l = w.loop, let o = l.origins else { return [] }
+        let lines = [("review", "revisão"), ("budget", "orçamento"), ("tries", "tentativas")].compactMap { k, label -> String? in
+            // nit (B1): --no-review is "revisão: desligada", never "origem revisão: flag"
+            if k == "review", o[k] == "flag", l.review != true { return "revisão: desligada (--no-review)" }
+            return o[k].map { "origem \(label): " + RerailText.clean($0, max: 10) }
+        } + (o["budgetCut"].map { ["orçamento do perfil (\(RerailText.clean($0, max: 10)) s) cortado para \(l.budget ?? 0) s, o teto do laço"] } ?? [])
+        return lines + (l.destructive.map { ["aviso: factory.guardrails.destructive tem \($0) padrão(ões); ainda não bloqueia comando"] } ?? [])
+    }
+    /// F2 R1: " (agente codex, modelo x)" after a task with its own worker; "" without one.
+    public static func workerLabel(_ t: WorkTask) -> String {
+        let parts = [t.agent.map { "agente " + RerailText.clean($0, max: 20) }, t.model.map { "modelo " + RerailText.clean($0, max: 100) }].compactMap { $0 }
+        return parts.isEmpty ? "" : " (" + parts.joined(separator: ", ") + ")"
+    }
     public static func notifyLine(_ w: Work) -> String? { w.loop?.notify == .end ? "avisos: só no fim" : nil }
 
     /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> [<lane>] <detail>`
@@ -210,6 +234,9 @@ public enum WorkStatusText {
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
         let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
         var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" \(how): \(done.count) feitas, \(deferred.count) adiadas." + stateHint]
+        // A1 (reviewAdvisory): the tasks the review gave no opinion on
+        let silent = ran.filter { $0.review?.hasPrefix("parecer: " + ReviewVerdict.reviewAdvisoryNone) == true }.count
+        if silent > 0 { lines.append("parecer: \(silent) " + (silent == 1 ? "tarefa" : "tarefas") + " " + ReviewVerdict.reviewAdvisoryNone) }
         lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)
@@ -218,13 +245,29 @@ public enum WorkStatusText {
     /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits
     /// (`--parallel` when over 1), then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     /// `gateFromFile` (M13.2): the gate came from `collie-work.json`, not `--gate`: the first line names it and its source.
-    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState, gateFromFile: Bool = false) -> String {
+    /// B1: `profileReviewOff`: the profile asks for a review `--no-review` turned off. The review as it runs (its
+    /// personas, the profile's "só", its threshold) is told here as on the card.
+    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState, gateFromFile: Bool = false, profileReviewOff: Bool = false) -> String {
         let gate = gateFromFile ? l.gate.map { ", portão (\(ProjectWorkConfig.fileName)) «\(RerailText.clean($0, max: 200))»" } ?? "" : ""
         var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
-            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate + ". Parar: collie work stop."]
+            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate
+            + reviewText(l, profileReviewOff: profileReviewOff) + ". Parar: collie work stop."]
         lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
         return bounded(lines, limit: RerailText.limit)
+    }
+
+    /// ", revisão …" for the trusted notice; "" with no review and no profile review turned off.
+    static func reviewText(_ l: WorkLoopState, profileReviewOff: Bool) -> String {
+        let file = " (\(ProjectWorkConfig.fileName))"
+        func names(_ xs: [String]) -> String { xs.map { "«" + RerailText.clean($0, max: 60) + "»" }.joined(separator: " ") }
+        if l.review == true {
+            let who: String = l.personas.map(names) ?? "auto"
+            let only: String = l.reviewOnly.map { " (só " + names($0) + ")" } ?? ""
+            let veto: String = l.reviewThreshold == "blocker" ? ", veto só por blocker" + file : ""
+            return ", revisão por personas: " + who + only + veto
+        }
+        return profileReviewOff ? ", sem revisão: --no-review desliga a do perfil\(file)" : ""
     }
 
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".

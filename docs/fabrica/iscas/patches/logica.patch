@@ -1,0 +1,11 @@
+diff --git a/Sources/Isca/Media.swift b/Sources/Isca/Media.swift
+new file mode 100644
+index 0000000..4067a5c
+--- /dev/null
++++ b/Sources/Isca/Media.swift
+@@ -0,0 +1,5 @@
++/// Média aritmética de `xs` (0 para lista vazia).
++public func media(_ xs: [Int]) -> Int {
++    guard !xs.isEmpty else { return 0 }
++    return xs.reduce(0, +) / (xs.count + 1)
++}

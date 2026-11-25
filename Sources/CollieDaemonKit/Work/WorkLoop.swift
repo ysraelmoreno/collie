@@ -15,7 +15,11 @@ protocol LoopHost: Sendable {
     /// M5.3: the terminal sits in the model's usage-limit dialog, printing nothing (`UsageLimit.detect` on its screen):
     /// the dialog's text, short. nil: not in it. Read only, never typed into.
     func usageLimit(_ terminal: UUID) async -> String?
+    /// P2: the last lines of the terminal's screen (what `usageLimit` reads), raw. nil: none. Read only.
+    func screen(_ terminal: UUID) async -> [String]?
     func dismiss(_ terminal: UUID) async
+    /// F2 Z3b: `dismiss`, then every process still in the terminal's process group killed (`WorkLoop.reapGroup`).
+    func dismissReaping(_ terminal: UUID) async
     /// M5.4: what `terminal`'s agent used, from its own transcript, read just before it is dismissed: counts only. nil:
     /// no number (no transcript, refused, gone, too big); never an error, never holds the loop.
     func tokens(_ terminal: UUID) async -> TokenCount?
@@ -31,6 +35,9 @@ protocol LoopHost: Sendable {
     /// the loop's profile, which cannot write a sibling `lane-*` worktree nor `<common>/worktrees/lane-*`. Only on
     /// paths the daemon builds and validates itself. What runs inside a lane (agent, check, gate) stays in `git`.
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// T1 f2fix8 (reviewOneCopy): `laneGit` with `stdin` fed to git (`cat-file --batch`'s oids), killed past `timeout`,
+    /// its output bounded by `cap` (T2 f2fix8: only `reviewSnapshot` asks above the plain `laneGit`'s 1 MiB).
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult
     /// M3b.5: this daemon's id (its install id), written in every lane it makes: a sweep removes only lanes with it.
     func laneOwner() async -> String
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
@@ -54,6 +61,31 @@ protocol LoopHost: Sendable {
     func laneGone(_ lane: Lane) async
     /// M3.8: the names an attempt's agent may not take: every live terminal's and panel's (a summon refuses them).
     func namesTaken() async -> Set<String>
+    /// F2 R4: a reviewer's terminal: `summon` as the starter's (never leashed to the agent that worked; `loop.model` is
+    /// the persona's), and marked so that `othersWorking`/`anyoneWorking` never count it (the loop's own reviewer is
+    /// no one working in the paddock). Dismissed with `dismiss`.
+    /// F2 X1: `cwd` is its folder and its project: an empty one the loop made (`reviewScratch`, under `reviewRoot`), never the worktree nor
+    /// a checkout of it, so no CLAUDE.md, AGENTS.md, settings or hooks the judged agent committed ever load there.
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID
+    /// F2 Y1: where the reviewers' folders are made (`WorkLoop.reviewScratch`): `<daemon root>/collie-review`.
+    var reviewRoot: URL { get }
+    /// F2 Z2: what a strict loop agent writes under the home besides caches (`WorkLoop.strictWritable`): the home and
+    /// those paths (write grants, paddocks).
+    func strictWrites() async -> (home: URL, paths: [String])
+    /// F2 V2: the home whose `.claude.json` the reviewers read (`reviewGlobalConfigHash`): `strictWrites`'s.
+    func globalConfigHome() async -> URL
+    /// F2 V3: marks `reviewRoot` trusted in `globalConfigHome`'s `.claude.json` (`WorkLoop.trustReviewRoot`): the note to
+    /// leave, nil when nothing was done.
+    func trustReviewers() async -> String?
+    /// F2 A4/A5/V2 (f2fix9): the judged agent, by id, started open (or free of the sandbox): it writes the whole home, so
+    /// a `plantedConfig` above the reviewers is no sign of tampering and is not asked. Read at the attempt's `.dismiss`,
+    /// before the terminal goes (the review comes after it). The premise that `plantedConfig` would find the owner's own
+    /// `~/.claude` was contested (rev-f2i); what goes unchecked in open is a config the agent planted above `reviewRoot`
+    /// (CLAUDE.md, AGENTS.md, `.claude/`): it may sway a reviewer, and the parecer never approves alone (A1: advisory).
+    /// No terminal of that id: false (the check stays).
+    func startedOpen(_ agent: UUID) async -> Bool
+    /// F2 R4: `ask`, returning the text the terminal answered.
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
 
 extension LoopHost {
@@ -61,7 +93,10 @@ extension LoopHost {
     func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func usageLimit(_ terminal: UUID) async -> String? { nil }
+    func screen(_ terminal: UUID) async -> [String]? { nil }
     func tokens(_ terminal: UUID) async -> TokenCount? { nil }
+    /// A host with no processes (the tests' fakes).
+    func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
@@ -69,7 +104,25 @@ extension LoopHost {
     func laneGone(_ lane: Lane) async {}
     /// A host with one git (the tests' fakes, which have no profile).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
+    func laneGit(_ args: [String], stdin: Data?, timeout: Duration, cap: Int, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await GitRunner.run(args, in: dir, timeout: timeout, cap: cap, stdin: stdin)
+    }
     func namesTaken() async -> Set<String> { [] }
+    /// A host with no reviewers: the review fails closed (every persona 'sem resposta').
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
+    }
+    /// The tests' fakes: beside their patches (a fake with reviewers puts it outside the temp dir).
+    var reviewRoot: URL { WorkLoop.reviewRoot(of: patchDir(UUID()).deletingLastPathComponent()) }
+    /// The tests' fakes: the user's home, no grants.
+    func strictWrites() async -> (home: URL, paths: [String]) { (URL(fileURLWithPath: NSHomeDirectory()), []) }
+    func globalConfigHome() async -> URL { await strictWrites().home }
+    /// The tests' fakes: never the user's `~/.claude.json`.
+    func trustReviewers() async -> String? { nil }
+    func startedOpen(_ agent: UUID) async -> Bool { false }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -147,12 +200,14 @@ actor WorkLoop {
     var lanes: [UUID: Lanes] = [:]
     /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
     let notices: LoopNotices
+    /// P2: the wait before an attempt whose prompt was not delivered starts over with a new agent (the tests' zero).
+    let promptRetryWait: Duration
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices()) {
+         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20)) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices
+        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -167,7 +222,18 @@ actor WorkLoop {
     func run(work id: UUID, dir: URL) async -> WorkLoopState.State {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
-        try? await store.update(id) { w in if w.loop?.state == .running { w.loop?.stopReason = nil } }
+        // F2 X3: a new run starts every task's refusals in a row over (only a refusal written by this run counts)
+        // F2 U1: reviewLoopConfigBase, `~/.claude.json` before the run's first judged agent: one base for every attempt
+        // F2 V3: the reviewers' folder trusted first, so the write never counts as "changed during the attempt"
+        let review = (try? await store.get(id))?.loop?.review == true
+        if review, let text = await host.trustReviewers() { await note(id, text) }
+        let base = review ? await reviewLoopConfigBase() : nil
+        try? await store.update(id) { w in
+            guard w.loop?.state == .running else { return }
+            w.loop?.stopReason = nil
+            if let base, w.loop?.reviewConfigBase == nil { w.loop?.reviewConfigBase = base.hash; w.loop?.reviewConfigBaseRisky = base.risky }
+            for i in w.tasks.indices where w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }
+        }
         // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
         let parallel = (try? await store.get(id))?.loop?.parallel ?? 1
         if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
@@ -261,7 +327,17 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name, precheck: loop.precheck != nil), adopt ? .adopted : .started)
+        // F2 U1: the loop's base (`run`), never one taken here: an attempt's agent may have planted it in the last one.
+        // Only a loop that never took one (an engine run outside `run`) takes it here, as before
+        if loop.review == true {
+            if let hash = loop.reviewConfigBase { run.globalConfig = (hash, loop.reviewConfigBaseRisky ?? "") }
+            else { run.globalConfig = await reviewLoopConfigBase() }
+        }
+        // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
+                                                        precheck: loop.precheck != nil, reviewer: loop.review == true,
+                                                        reviewRejectsInRow: task.reviewRejects ?? 0, promptRetries: task.promptRetries ?? 0),
+                                                 adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -308,10 +384,17 @@ actor WorkLoop {
         var mark: UUID?
         /// When the turn's time is over (set by `ask`).
         var deadline: Date?
+        /// F2 V1: when the last turn (the attempt's or its nudge's) began, and what the loop saw at its end: how long it
+        /// lasted and whether the agent was still working (the `turnEnded` event's detail).
+        var turnAt: Date?, looked: (secs: Int, busy: Bool)?
         /// The branch and the untracked files (the owner's and the agent's) before the check: what `settle` puts back.
         var on: String, loose: Set<String> = []
         var output = ""
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
+        /// F2 X2: the check's and the gate's exit status, the only part of their run the reviewers read.
+        var checkStatus: Int32?, gateStatus: Int32?
+        /// F2 U1: the loop's `reviewLoopConfigBase` (`--review` only)
+        var globalConfig: (hash: String, risky: String)?
         /// When the verdict was reached.
         var at: Date
         var end = AttemptEnd.go
@@ -321,6 +404,8 @@ actor WorkLoop {
         var patched: Bool?
         /// M5.4: the agent's counts, read at the dismiss: the `agentDismissed` event carries them.
         var tokens: TokenCount?
+        /// F2 V2 (f2fix9): the agent started open (`startedOpen`), read at the dismiss: what the review's `plantedConfig` goes by.
+        var agentOpen = false
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
         var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
@@ -329,15 +414,20 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck: true   // the nudges write by themselves, when they go
+        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck, .runReview: true   // the nudges write by themselves, when they go
         default: false
         }
     }
 
+    /// F2 X3: the least of the budget a review needs (seconds): with less, the attempt ends for want of budget and the
+    /// mute reviewers are no refusal.
+    static let reviewMinTurn = 20
+    static let reviewBudgetNote = "[loop] orçamento de tempo sem folga para a revisão (menos de \(reviewMinTurn) s): tentativa não contada, nem como recusa"
+
     /// M2.2b: the events that carry a verdict's facts out of a long wait: a cancel during it replaces them.
     private static func judges(_ e: AttemptMachine.Event) -> Bool {
         switch e {
-        case .checkDone, .gateDone, .blocked: true
+        case .checkDone, .gateDone, .blocked, .reviewDone: true   // F2 X3: a cancelled review's mute reviewers are no refusal
         default: false
         }
     }
@@ -361,6 +451,9 @@ actor WorkLoop {
         }
     }
 
+    /// F2 V1: a turn's end before this many seconds, with its agent busy and no commit, leaves a note when no commit comes.
+    static let shortTurn = 60
+
     /// The `discarded` event's detail when no patch was written (the diff failed or was empty).
     static let noPatch = "sem alterações"
 
@@ -373,6 +466,13 @@ actor WorkLoop {
             // the journal: this attempt's events (it records, it never decides)
             // `discarded` names the patch only when one was written
             // `attemptStarted` went with the attempt's first write
+            var detail = detail
+            // F2 V1: the turn's end says how long it lasted and whether its agent was still working, e.g. `hook 38s ocupado`
+            if kind == .turnEnded, let agent = r.agent, let at = r.turnAt {
+                let secs = Int(host.now().timeIntervalSince(at).rounded()), busy = await host.working(agent)
+                r.looked = (secs, busy)
+                detail = "\(detail ?? "") \(secs)s \(busy ? "ocupado" : "ocioso")"
+            }
             if kind != .attemptStarted {
                 var detail = detail
                 if kind == .agentSummoned, let m = r.loop.escalation(attempt: n) { detail = (detail ?? "") + " [\(m.preset):\(m.model)]" }   // C3
@@ -408,7 +508,7 @@ actor WorkLoop {
             for m in Self.featureMaps where map == nil { if await host.exists(m, in: dir) { map = m } }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
-            r.deadline = r.started + Double(turn)
+            r.deadline = r.started + Double(turn); r.turnAt = host.now()
             let ended = await talk(agent, prompt, .seconds(turn))
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
@@ -421,6 +521,7 @@ actor WorkLoop {
             // part of the same attempt (no `used`, no try); written now, with the turn's end: the nudge's turn may be long
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
+            r.turnAt = host.now()
             return await talk(agent, Self.nudgePrompt, .seconds(rest))
         case .precheckNudge(let tail):
             // as `nudge`: what is left of the turn, never when the loop or the daemon is stopping
@@ -429,6 +530,14 @@ actor WorkLoop {
             guard rest >= 1 else { return .waitExpired }
             await record(id, &r)
             return await talk(agent, Self.precheckPrompt(tail), .seconds(rest))
+        case .promptRetry(let used):
+            // P2: the task's count, not the attempt's (it crosses attempts); the note is the summary's line of it
+            let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))"
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].promptRetries = (x.tasks[i].promptRetries ?? 0) + 1 }
+                x.notes.append(WorkNote(at: at, text: text))
+            }
+            if promptRetryWait > .zero, !Task.isCancelled { await Self.nap(promptRetryWait) }
         case .runPrecheck:
             // a timeout, or a pre-check that could not run, is a failure (status nil): its tail says which
             let limit = Swift.min(Self.precheckTimeout, await left(id, r.loop, since: r.started))
@@ -442,12 +551,32 @@ actor WorkLoop {
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
             }
+            // F2 V1: a turn that ended (hook, error) with its agent still working is not over: wait while it works, never
+            // past the turn's time (a timeout's is already over) nor while the loop or the daemon is stopping
+            let looked = r.looked; r.looked = nil
+            if effect == .lookForCommit, looked?.busy == true, let agent = r.agent, let deadline = r.deadline {
+                while host.now() < deadline, !Task.isCancelled, !stopping.contains(id), await host.working(agent) { await Self.nap(poll) }
+            }
             // for the journal only: the verdict reads the commit again, after the dismiss
-            guard await committed(before: before, branch: branch, dir) else { return .waitExpired }
+            guard await committed(before: before, branch: branch, dir) else {
+                if let looked, looked.busy, looked.secs < Self.shortTurn {
+                    // P2: what the agent's screen showed, read before the dismiss
+                    let screen = if let agent = r.agent, let lines = await host.screen(agent) { Self.screenTail(lines) } else { "" }
+                    let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))"
+                        + (screen.isEmpty ? "" : "\ntela do agente:\n" + screen)
+                    await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
+                }
+                return .waitExpired
+            }
             return .commitSeen(await out(["rev-parse", "--short", "HEAD"], dir))
         case .dismiss:
             // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)
-            if let agent = r.agent { r.tokens = await host.tokens(agent); await host.dismiss(agent) }
+            if let agent = r.agent {
+                r.tokens = await host.tokens(agent)
+                r.agentOpen = await host.startedOpen(agent)   // F2 V2: by id, before the terminal goes
+                // F2 Z3b: with --review, nothing of the judged agent is left alive when the reviewers come
+                if r.loop.review == true { await host.dismissReaping(agent) } else { await host.dismiss(agent) }
+            }
         case .measureFacts:
             // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
             if Task.isCancelled { return .cancelled }
@@ -472,7 +601,7 @@ actor WorkLoop {
             do {
                 let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                r.output = res.stdout + res.stderr; r.checkOutput = r.output
+                r.output = res.stdout + res.stderr; r.checkOutput = r.output; r.checkStatus = res.status
                 return .checkDone(status: res.status, broken: nil)
             } catch where error.code == .timeout {
                 return .checkDone(status: nil, broken: nil)
@@ -496,7 +625,7 @@ actor WorkLoop {
             do {
                 let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(r.loop.gate ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                r.output = res.stdout + res.stderr
+                r.output = res.stdout + res.stderr; r.gateStatus = res.status
                 return .gateDone(status: res.status, broken: nil)
             } catch where error.code == .timeout {
                 r.output = ""
@@ -505,6 +634,93 @@ actor WorkLoop {
                 r.output = ""
                 return .gateDone(status: nil, broken: "gate could not run: \(error.message)")
             }
+        case .runReview:
+            // F2 X3: too little budget for a reviewer to answer: every persona would be mute, a refusal that is not one
+            let rest = await left(id, r.loop, since: r.started)
+            if rest < Self.reviewMinTurn { return .reviewBudgetOut }
+            // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
+            let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkStatus, gate: r.loop.gate == nil ? nil : .some(r.gateStatus), dir)
+            let tree = await reviewTree(dir)
+            let configs = Self.reviewHashAgentConfig(dir, status: tree)
+            // F2 V2: the home's `~/.claude.json` as the reviewers are launched: changed since the start, all mute
+            let home = await host.globalConfigHome()
+            let globalLaunch = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot)
+            // F2 U1: an `env` or `autoConnectIde` the loop's base did not hold exactly mutes first, then any other change
+            let risky = Self.reviewGlobalConfigRisky(home: home)
+            let configSilenced = !risky.isEmpty && risky != r.globalConfig?.risky ? Self.reviewGlobalConfigRiskyNote
+                : r.globalConfig?.hash != globalLaunch ? Self.reviewGlobalConfigMoved : nil
+            var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
+                                   evidence: evidence, configSilenced: configSilenced, agentOpen: r.agentOpen, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
+            if ran.budgetOut { return .reviewBudgetOut }
+            r.pending += ran.events   // P1: the mute causes and the retry, written with the review's own record
+            // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
+            let after = await reviewTree(dir)
+            // F2 Z3b: and the agent configs by their metadata (a file inside an ignored folder the status shows as one line)
+            let configsAfter = Self.reviewHashAgentConfig(dir, status: tree)
+            // F2 W3: another terminal reaching this worktree (the Shepherd's Claude Code, the user) may have written that
+            // config itself during the review: then the change is no touch, and what is new is moved, never deleted
+            let configChanged = configsAfter != configs
+            // F2 V2: changed during the review: nothing the reviewers said counts
+            let globalTouched = Self.reviewGlobalConfigHash(home: home, reviewRoot: host.reviewRoot) != globalLaunch
+            let reviewConfigOthers = configChanged ? await host.othersWorking() : nil
+            // A1 (reviewAdvisory): only a tree really changed fails the attempt (tampering); `~/.claude.json` changed alone
+            // leaves the tree as judged: no opinion ('sem parecer'), the check and the gate decide
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil)
+            let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
+            var movedSaid = ""
+            if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
+                let folder = host.patchDir(id).appendingPathComponent("\(task.id)-\(n)-config")
+                let linked = tops.filter { Self.reviewPathLinked(dir, $0) }   // F2 V3: never through a swapped parent
+                let moved = tops.filter { p in
+                    guard !linked.contains(p) else { return false }
+                    let to = folder.appendingPathComponent(p)
+                    try? FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    return (try? FileManager.default.moveItem(atPath: dir.path + "/" + p, toPath: to.path)) != nil
+                }
+                movedSaid = String(("\nconfig nova com '\(who)' na worktree, movida para \(folder.path): " + moved.joined(separator: ", ")
+                    + (linked.isEmpty ? "" : "\n\(Self.reviewPathLinkedNote): " + linked.joined(separator: ", "))).prefix(400))
+            }
+            if touched {
+                _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
+                // F2 Z3b: a config made inside such a folder goes too (an edited one cannot be put back: the touch says it)
+                // F2 V3: a parent swapped for a symlink: nothing removed through it, the note says which
+                let linked = reviewConfigOthers == nil ? made.filter { Self.reviewPathLinked(dir, $0) } : []
+                if reviewConfigOthers == nil { for p in made where !linked.contains(p) { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) } }
+                // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
+                // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
+                var said = (globalTouched ? "\n" + Self.reviewGlobalConfigTouched : "")
+                    + (linked.isEmpty ? "" : String("\n\(Self.reviewPathLinkedNote): \(linked.joined(separator: ", "))".prefix(400)))
+                if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
+                    let (drop, keep) = Self.reviewerLeftovers(fresh)
+                    if !drop.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + drop, in: dir) }
+                    said += String(((drop.isEmpty ? "" : "\napagados (config de agente): " + drop.joined(separator: ", "))
+                        + (keep.isEmpty ? "" : "\nmantidos (ignorados novos, de quem não se sabe): " + keep.joined(separator: ", "))).prefix(400))
+                }
+                ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
+                ran.line = "parecer: falhou (\(Self.reviewerTouched))"
+                ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
+            } else if globalTouched, !ran.outcome.approved {
+                // F2 reviewVetoKept: a veto from a possibly tampered context can only fail more (the safe side): it stays,
+                // the config note joins it; only a non-veto goes mute
+                ran.note = String(ran.note.prefix(Self.noteChars - 128)) + "\n" + Self.reviewGlobalConfigTouched
+            } else if globalTouched {
+                ran.outcome = ReviewVerdict.silent(Self.reviewGlobalConfigTouched)
+                ran.line = Self.reviewAdvisoryLine(ran.outcome, Self.reviewGlobalConfigTouched)
+                ran.note = String(ran.note.prefix(Self.noteChars - 128)) + "\n" + ran.outcome.notes.joined(separator: "; ")
+            }
+            if !movedSaid.isEmpty { ran.note = String(ran.note.prefix(Self.noteChars - movedSaid.count)) + movedSaid }
+            // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
+            if Task.isCancelled { return .cancelled }
+            let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
+                    x.tasks[i].review = line
+                    // F2 Y2a: a touched tree was not judged: no refusal to count
+                    if !touched { x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1 }
+                }
+                x.notes.append(WorkNote(at: at, text: note))
+            }
+            return touched ? .reviewerTouched : .reviewDone(ran.outcome)
         case .decide:
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:
@@ -568,7 +784,7 @@ actor WorkLoop {
             await record(id, &r) { Self.markDone(&$0, task.id, n: n, at: at, evidence: found, job: name, head: head) }
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
-            let at = r.at
+            let at = r.at, refused = state.facts.review
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)
@@ -578,6 +794,9 @@ actor WorkLoop {
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
                     if last { x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(reason)" } else { x.tasks[i].state = .open }
+                    // F2 X3: "in a row" = review refusals on consecutive attempts with no attempt of another kind between:
+                    // a failure before the review (summon, commit, check, gate) or a deferral starts the count over
+                    if x.tasks[i].reviewRejects != nil, last || refused == nil { x.tasks[i].reviewRejects = 0 }
                 }
                 x.notes.append(WorkNote(at: at, text: text))
                 Self.endJob(&x, name, reason, at: at)
@@ -721,7 +940,10 @@ actor WorkLoop {
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
             g.addTask {
                 do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
-                catch where error.code == .timeout { return .turnTimedOut }
+                catch where error.code == .timeout {
+                    // P2: never reached the agent / its reply timed out after it did
+                    return AskCoordinator.promptNotDelivered(error) ? .promptNotDelivered(error.message, load: Self.loadAverage()) : .turnTimedOut(error.message)
+                }
                 catch { return .turnFailed(error.message) }
             }
             g.addTask {
@@ -734,6 +956,20 @@ actor WorkLoop {
             for await e in g { if let e { g.cancelAll(); return e } }
             return .turnFailed("no turn")
         }
+    }
+
+    /// P2: the one-minute load average (0 when it cannot be read).
+    static func loadAverage() -> Double {
+        var l = [0.0]
+        return getloadavg(&l, 1) == 1 ? l[0] : 0
+    }
+
+    /// P2: the end of an agent's screen for a note: its last `screenLines` lines, clean (as an event's detail, secrets
+    /// hidden), at most `screenChars` characters.
+    static let screenLines = 20, screenChars = 800
+    static func screenTail(_ lines: [String]) -> String {
+        let clean = lines.suffix(screenLines).map { LotBoards.scrub(RerailText.plain(ANSI.strip($0))).trimmingCharacters(in: .whitespaces) }
+        return String(clean.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).suffix(screenChars))
     }
 
     /// M2.2a: a 40-character lowercase hex sha, as `git rev-parse HEAD` prints one. `resumeFrom` comes from the work's
@@ -795,11 +1031,16 @@ actor WorkLoop {
     }
 
     /// The spec's text at `before`; empty: no spec, outside the repo or not committed there.
-    private func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
+    func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
         guard let spec else { return "" }
-        let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
+        let rel = Self.repoRelative(spec, dir)
         guard !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 else { return "" }
         return r.stdout
+    }
+
+    /// A spec's path as the repo knows it: relative to `dir` when under it, else as given.
+    static func repoRelative(_ spec: String, _ dir: URL) -> String {
+        spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
     }
 
     static let configTampered = "alterou \(ProjectWorkConfig.fileName)"
@@ -859,6 +1100,22 @@ actor WorkLoop {
         _ = try? await host.git(["checkout", "-q", "-f", branch == "HEAD" ? before : branch], in: dir)
         _ = try? await host.git(["reset", "-q", "--hard", before], in: dir)
         return wrote
+    }
+
+    static let reviewerTouched = "o revisor mexeu na árvore"
+
+    /// F2 X1: HEAD and the porcelain status with its branch line, before and after the review (nil: git could not say).
+    /// F2 Y2b: ignored files too (`--ignored=matching`), NUL-separated (`-z`, names unquoted): a reviewer's
+    /// `CLAUDE.local.md` is a touch.
+    func reviewTree(_ dir: URL) async -> String? {
+        guard let head = await out(["rev-parse", "HEAD"], dir),
+              let st = await out(["status", "--porcelain", "-z", "-b", "--ignored=matching"], dir) else { return nil }
+        return head + "\n" + st
+    }
+
+    /// The ignored paths (`!! `) of a `reviewTree`.
+    static func ignored(_ tree: String?) -> Set<String> {
+        Set((tree ?? "").split(separator: "\0").filter { $0.hasPrefix("!! ") }.map { String($0.dropFirst(3)) })
     }
 
     func out(_ args: [String], _ dir: URL) async -> String? {

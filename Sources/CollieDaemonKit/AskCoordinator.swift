@@ -697,6 +697,12 @@ public actor AskCoordinator {
         return false
     }
 
+    /// P2: a `.timeout` whose prompt never reached the agent (`timedOut`'s "prompt not delivered", a stalled PTY write),
+    /// not a reply that timed out after it did ("No reply from …").
+    nonisolated static func promptNotDelivered(_ e: ProtocolError) -> Bool {
+        e.code == .timeout && (e.message.contains("prompt not delivered") || e.message.contains("not accepting input"))
+    }
+
     private func timedOut(_ id: UUID, after timeout: Duration) {
         guard let w = waiters[id] else { return }   // already finished
         if w.held {   // cap reached: free the slot; owe its hook unless one may already have been it

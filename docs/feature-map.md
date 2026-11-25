@@ -101,6 +101,18 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   redondo do iPhone com Início também é clicável.
 - **Arquivos:** `Sources/ColliePlugins/DevicePanel.swift`, `Sources/ColliePlugins/DeviceBezel.swift` (geometria e
   desenho da moldura), `Sources/CollieDevice/` (`DeviceFrame.swift`).
+- **Comandos do agente:** `collie device screen` (a tela em grupos), `device ui` (a árvore), `device wait --text|--stable [--timeout 30|30s|500ms] [--then screen|ui]` (W1),
+  `tap --text|--ref … --then screen`, `--timing` em `ui`/`screen`, `device find <texto> [--role tab|button|field] [--then screen] [--scroll [--dir down|up] [--max <n>]]` (E3a, E3b: rola até achar, `scrolls` e `endReached`; F1: `find`/`tap --text` também casam o id humanizado de nós clicáveis, `configuration_fab` = "configuration fab", e o `notFound` lista ids clicáveis sem rótulo).
+  Device helper (H1-H5): `collie device helper status|install|remove [--serial <id>]` (serviço de acessibilidade
+  `collie-helper.apk`, em `Resources/` e no bundle; leitura em dezenas de ms; `--timing` mostra `source: helper|uiautomator`;
+  emulador ganha sozinho, aparelho físico só com opt-in por `install`, porque o serviço lê toda a tela; falha cai no
+  `uiautomator`). Arquivos: `Helpers/android-device/`, `Sources/CollieDevice/HelperProtocol.swift`,
+  `Sources/CollieDaemonKit/Devices/DeviceHelper.swift`. Testes: `--filter DeviceHelperTests`.
+  OCR (H6, Android; A3, iOS por `simctl io screenshot` com caixas convertidas de pixels para pontos; Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
+  (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
+  sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso
+  sem confirmação de clique; `--role` ignora o OCR); `--timing` traz `ocrMs`, `ocrLevel`, `trigger`. Arquivos:
+  `Sources/CollieDevice/OCR.swift`, `Sources/CollieDaemonKit/Devices/VisionOCR.swift`. Testes: `--filter OCRTests`.
 - **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho"): a
   moldura certa para Pixel, Pixel Fold, Pixel Tablet, iPhone 16 Pro, iPhone SE e iPad, nos dois temas; encolher o
   painel até a moldura sumir. Testes: `swift test --disable-sandbox --filter DeviceBezelTests`.
@@ -167,6 +179,33 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
   usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
   aviso "Laço iniciado" dizem "portão (collie-work.json)".
+- **Doutor da fábrica (U3):** `collie factory doctor [--json] [--min 0-3] [--terminal]` (só CLI) dá nota 0 a 3 por
+  camada (`static`, `judge`, `verification`, `review`, `prose`, `guardrails`; FRACO 0-1, OK 2, FORTE 3) com evidência
+  e próxima ação, lendo `collie-work.json` (com `factory`, U1), os scripts que os comandos citam e os `check-*.sh` (até
+  20, 64 KB cada), caminhos até profundidade 4, CI (`.github/workflows/*.yml`, `Makefile`) e `.gitignore`. Núcleo puro
+  `FactoryDoctor` em CollieCore; leitor `FactoryDoctorReader` em `FactoryCommands.swift` com as regras de
+  `WorkConfigFile` (sem link simbólico, arquivo regular, limite). Sai 1 se alguma camada < `--min` (padrão 1); `--json`
+  imprime o `Report`. Só leitura: nunca executa nada.
+- **Catraca da fábrica (U5):** `collie factory ratchet <check|update|raise> <nome> [--reason] [--terminal]` (só CLI):
+  roda o `measure` de `factory.static.ratchets` uma vez (bash no projeto, `RouterLoopHost.runCheck` sem sandbox, 600 s),
+  lê a saída como linhas `<chave> <n>` e compara com o arquivo `baseline`. `check` sai 0 só se igual (melhorou também sai
+  1, como `scripts/ci/lint.sh`: rode `update` e commite); `update` só abaixa; `raise` sobe com razão registrada como
+  `# <data>: <chave> <antes> -> <depois>: <razão>` no arquivo. Núcleo puro `Ratchet` em CollieCore (também modo lista,
+  `compareList`, para o `ci-skip`); `FactoryRatchet` em `FactoryCommands.swift`: baseline confinado ao projeto (sem `..`,
+  sem link simbólico) e gravado atomicamente (temporário + `rename`). `lint.sh`/`ci-skip.txt` ainda não migrados.
+- **Tarefa-isca da fábrica (U4):** `collie factory bait <list|report> [--json] [--terminal]` (só CLI, só leitura):
+  `list` mostra o catálogo `docs/fabrica/iscas/catalogo.json` do projeto (5 iscas: `logica`, `teste-fraco`,
+  `segredo-no-diff`, `corrida`, `spec-editado`; patches em `docs/fabrica/iscas/patches/`, base do check em
+  `docs/fabrica/iscas/base/`); `report` dá a taxa de captura por camada e por persona, as iscas que passaram e o custo,
+  de `.collie/factory/bait-results.json`. O doctor lê o mesmo arquivo: cada isca que passou tira 1 da camada dela.
+  Núcleo puro `FactoryBait`/`BaitResults` em `Sources/CollieCore/FactoryBait.swift` (estrito, `version` 1, caminhos
+  com a regra da U1). A execução é a skill `docs/fabrica/skill/factory-bait/SKILL.md` (cópia `git clone --local` fora
+  do repositório, ciclo normal com `--review`, nunca push).
+- **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
+  não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
+  conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.
+  Relatórios: `docs/superpowers/roadmap/2026-11-22-fabrica/`. Arquivos: `Sources/CollieDaemonKit/Work/ReviewVerdict.swift`,
+  `Sources/CollieDaemonKit/Work/AttemptMachine.swift`.
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 
@@ -223,6 +262,12 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   cercados, o painel de contexto, com "AGENTES" em árvore e "PAINÉIS" (seleção compartilhada com o canvas: ⌘ alterna,
   ⇧ marca o intervalo, botão direito abre o menu do item ou da seleção), e a faixa de abas "Canvas" / "Preferências"
   com "Comando" e "Zoom"), `Sources/CollieApp/MainView.swift`, `Sources/CollieApp/UsagePopover.swift`.
+- **Cercado fábrica (A2):** marca persistente `factory` no cercado, só do dono (app ou CLI do dono; nunca agente nem
+  MCP): `collie paddock create <nome> --factory` e `collie paddock factory <nome> on|off`. Ligar roda o núcleo do
+  doutor da fábrica no `collie-work.json` do cercado e recusa com `static` ou `judge` abaixo de 1 ou perfil inválido;
+  desligar nunca recusa. `paddock list/status` trazem `factory` ("fábrica" ao lado do nome); `factory doctor` mostra
+  "cercado fábrica: sim/não". O laço ainda não usa a marca (A4). Arquivos: `Sources/CollieDaemonKit/PaddockCommands.swift`,
+  `Sources/CollieDaemonKit/FactoryCommands.swift`; testes em `Tests/CollieDaemonKitTests/PaddockFactoryTests.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos

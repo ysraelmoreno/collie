@@ -6,6 +6,9 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Changed
+- **Updates install through Sparkle:** the app checks `appcast.xml` on the release, downloads the dmg, verifies its EdDSA signature and the Apple team, installs (macOS asks for the admin password, or "Install with privilege management", when `/Applications` needs it) and relaunches, with no dmg to download by hand. While an agent is working the relaunch waits for you ("Atualizar mesmo assim" / "Depois"). Local builds (not signed by the team) never update themselves. Preferências › Atualizações now shows "Procurar agora" and the automatic-check switch. `CFBundleVersion` now grows with the tag (0.2.2 is `2002`). The `update.json` is still published so 0.2.x installs reach the first Sparkle version the old way, once.
+
 ## [0.2.2] — 2026-11-25
 
 ### Fixed

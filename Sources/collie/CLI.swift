@@ -92,7 +92,17 @@ enum PluginPublishCLI {
                collie plugin catalog-keygen --out <arquivo>
                collie plugin catalog-sign <plugins.json> --key-env <VAR>
                collie plugin catalog-verify <plugins.json> --public <base64>
+               collie plugin validate <pasta>
         """
+
+    /// `collie plugin validate <pasta>` (PRD T1): exit 0 and the helper's TeamIdentifier, or 1 and the reasons.
+    static func validate(_ a: [String]) async -> Int32 {
+        guard a.count == 1 else { FileHandle.standardError.write(Data((usage + "\n").utf8)); return 2 }
+        let r = await PluginTree.validate(URL(fileURLWithPath: a[0]))
+        guard r.problems.isEmpty else { r.problems.forEach { print($0) }; return 1 }
+        print(r.team.map { "ok\nTeamIdentifier=\($0)" } ?? "ok")
+        return 0
+    }
 
     static func run(_ a: [String]) -> Int32 {
         func fail(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -152,6 +162,7 @@ enum CLI {
         var json = false
         let end = argv.firstIndex(of: "--") ?? argv.count
         if let i = argv[..<end].firstIndex(of: "--json") { argv.remove(at: i); json = true }
+        if argv.first == "plugin", argv.count > 1, argv[1] == "validate" { return await PluginPublishCLI.validate(Array(argv.dropFirst(2))) }
         if argv.first == "plugin", argv.count > 1, PluginPublishCLI.commands.contains(argv[1]) {
             return PluginPublishCLI.run(Array(argv.dropFirst()))
         }

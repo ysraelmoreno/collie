@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import CollieCore
 import CollieProtocol
 import CollieDaemonKit
@@ -74,6 +75,59 @@ enum Client {
     }
 }
 
+/// `collie plugin tree-hash|catalog-keygen|catalog-sign|catalog-verify`: local tools for publishing plug-ins and the
+/// signed catalog (PRD M4, `.github/workflows/plugins-release.yml`), no daemon. The private key is read from the
+/// environment only, never argv.
+enum PluginPublishCLI {
+    static let commands: Set<String> = ["tree-hash", "catalog-keygen", "catalog-sign", "catalog-verify"]
+    static let usage = """
+        usage: collie plugin tree-hash <pasta>
+               collie plugin catalog-keygen --out <arquivo>
+               collie plugin catalog-sign <plugins.json> --key-env <VAR>
+               collie plugin catalog-verify <plugins.json> --public <base64>
+        """
+
+    static func run(_ a: [String]) -> Int32 {
+        func fail(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        func read(_ path: String) throws(ProtocolError) -> Data {
+            guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)) else { throw fail("não consegui ler \(path)") }
+            return d
+        }
+        do throws(ProtocolError) {
+            switch a.first {
+            case "tree-hash" where a.count == 2:
+                print(try PluginTree.hash(URL(fileURLWithPath: a[1])))
+            case "catalog-keygen" where a.count == 3 && a[1] == "--out":
+                let key = Curve25519.Signing.PrivateKey()
+                let b = Data(key.rawRepresentation.base64EncodedString().utf8)
+                let fd = open(a[2], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)   // never overwrites
+                guard fd >= 0 else { throw fail("não consegui criar \(a[2]) (já existe?)") }
+                let n = b.withUnsafeBytes { write(fd, $0.baseAddress, b.count) }
+                close(fd)
+                guard n == b.count else { unlink(a[2]); throw fail("não consegui gravar \(a[2])") }
+                print(key.publicKey.rawRepresentation.base64EncodedString())
+            case "catalog-sign" where a.count == 4 && a[2] == "--key-env":
+                let k = (ProcessInfo.processInfo.environment[a[3]] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !k.isEmpty else { throw fail("\(a[3]) não está no ambiente") }
+                let sig = try PluginCatalog.sign(try read(a[1]), privateKey: k)
+                guard (try? sig.write(to: URL(fileURLWithPath: a[1] + ".sig"), options: .atomic)) != nil else {
+                    throw fail("não consegui gravar \(a[1]).sig")
+                }
+                // sign accepted the key: prints its public half, for the workflow's verify
+                if let raw = Data(base64Encoded: k), let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) {
+                    print(key.publicKey.rawRepresentation.base64EncodedString())
+                }
+            case "catalog-verify" where a.count == 4 && a[2] == "--public":
+                let c = try PluginCatalog.accept(try read(a[1]), signature: try read(a[1] + ".sig"), keys: [a[3]], lastSequence: nil)
+                print("ok: sequence \(c.sequence), \(c.plugins.count) plug-in(s)")
+            default:
+                FileHandle.standardError.write(Data((usage + "\n").utf8)); return 2
+            }
+            return 0
+        } catch { CLI.err(error.message); return 1 }
+    }
+}
+
 enum CLI {
     static func usage() -> String {
         var s = "usage: collie [--json] <command> [args]\n       collie mcp\n\ncommands:\n"
@@ -91,6 +145,9 @@ enum CLI {
         var json = false
         let end = argv.firstIndex(of: "--") ?? argv.count
         if let i = argv[..<end].firstIndex(of: "--json") { argv.remove(at: i); json = true }
+        if argv.first == "plugin", argv.count > 1, PluginPublishCLI.commands.contains(argv[1]) {
+            return PluginPublishCLI.run(Array(argv.dropFirst()))
+        }
         if let h = ArgvParser.help(argv) { print(h, terminator: ""); return 0 }   // `collie summon --help`, `collie help memory`
         if argv.first == "help" || argv.first == "--help" { print(usage(), terminator: ""); return 0 }
         if argv.isEmpty { FileHandle.standardError.write(Data(usage().utf8)); return 2 }

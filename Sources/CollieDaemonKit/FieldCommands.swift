@@ -134,7 +134,7 @@ extension CommandRouter {
             guard let rec, let f = rec.field else {
                 throw fieldError("field '\(name)' sem agente neste cercado: integre collie/field/\(name) à mão, ou collie field drop \(name)")
             }
-            let out = await landField(Self.fieldLane(f, paddock: p), terminal: rec.id, by: me.id, asRequest: true)
+            let out = await landSettled(Self.fieldLane(f, paddock: p), terminal: rec.id, by: me.id, asRequest: true)
             switch out {
             case .landed(let sha): return .object(["outcome": .string("landed"), "sha": .string(sha)])
             case .conflict(let why, let patch):
@@ -178,5 +178,104 @@ extension CommandRouter {
             return .object(o)
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    // MARK: F5: back by itself (spec "Volta", answers 4, 5, 9)
+
+    func fieldCheckBegin(_ terminal: UUID) { if ws.terminals.contains(where: { $0.id == terminal && $0.field != nil }) { fieldChecks[terminal, default: 0] += 1 } }
+    func fieldCheckEnd(_ terminal: UUID) {
+        guard let n = fieldChecks[terminal] else { return }
+        fieldChecks[terminal] = n > 1 ? n - 1 : nil
+    }
+
+    /// Answer 4: something tracked changed, or untracked and not ignored, in the field's tree `dir` (the daemon's git,
+    /// no profile). Git that cannot say counts as dirty: nothing unjudged lands.
+    static func fieldDirty(_ dir: URL) async -> Bool {
+        guard let r = try? await RouterLoopHost.loopGit(["status", "--porcelain"], in: dir, profile: nil), r.status == 0, !r.truncated else { return true }
+        return !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Answer 5: a passing check on a field's agent queues its land and the ask ends now; the result reaches the
+    /// Shepherd as a notice. Any other report goes back as it came.
+    func fieldAfterCheck(_ terminal: UUID, _ check: AskCheckReport?) async -> AskCheckReport? {
+        guard var c = check, c.status == .passed, let rec = ws.terminals.first(where: { $0.id == terminal }), let f = rec.field,
+              let p = ws.paddocks.first(where: { $0.id == rec.paddockId }) else { return check }
+        if await integrators.isLanding(f.branch) { c.field = FieldNote(land: .skipped, reason: FieldLand.alreadyLanding); return c }
+        c.field = FieldNote(land: .queued)
+        let lane = Self.fieldLane(f, paddock: p)
+        Task {
+            let out = await self.landSettled(lane, terminal: terminal, by: nil)
+            let line: String
+            switch out {
+            case .landed(let sha): line = "[collie] field \(f.name) integrado em \(sha.prefix(8))"
+            case .conflict(let why, let patch): line = "[collie] field \(f.name) não integrou: \(why); patch: \(patch?.path ?? "nenhum")"
+            case .waiting(let why): line = "[collie] field \(f.name) não integrou: \(why); patch: nenhum (collie field land \(f.name) tenta de novo)"
+            }
+            await self.fieldNotify(terminal, line)
+        }
+        return c
+    }
+
+    /// `landField`, then (landed) the field rebased on the paddock's new HEAD (answer 9).
+    func landSettled(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false) async -> FieldLand.Outcome {
+        let out = await landField(lane, terminal: terminal, by: by, asRequest: asRequest)
+        if case .landed = out { await rebaseField(terminal, checkBusy: true) }
+        return out
+    }
+
+    /// Answer 9: the field's branch rebased on the paddock's HEAD, only with its agent out of a turn (`checkBusy`: asked
+    /// now; the end of its turn needs not) and its tracked tree clean; else `behind`, tried again at its next turn's
+    /// end. Done: `working` from the new `base`. A rebase that conflicts is undone: `conflict`.
+    func rebaseField(_ terminal: UUID, checkBusy: Bool) async {
+        guard let rec = ws.terminals.first(where: { $0.id == terminal }), let f = rec.field,
+              let p = ws.paddocks.first(where: { $0.id == rec.paddockId }) else { return }
+        let git = fieldGit(p), dir = URL(fileURLWithPath: f.path)
+        func set(_ st: FieldRef.State, base: String? = nil) async {
+            guard let i = ws.terminals.firstIndex(where: { $0.id == terminal }), ws.terminals[i].field?.branch == f.branch else { return }
+            ws.terminals[i].field?.state = st
+            if let base { ws.terminals[i].field?.base = base }
+            try? await persist()
+        }
+        let busy = checkBusy ? await targetBusy(terminal) : false
+        let st = try? await git.laneGit(["status", "--porcelain", "--untracked-files=no"], in: dir)
+        guard !busy, st?.status == 0, st?.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true,
+              let h = try? await git.laneGit(["rev-parse", "HEAD"], in: git.dir), h.status == 0 else { await set(.behind); return }
+        let head = h.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let r = try? await git.laneGit(["rebase", "--no-autostash", head], in: dir)
+        guard r?.status == 0 else {
+            _ = try? await git.laneGit(["rebase", "--abort"], in: dir)
+            await set(.conflict)
+            await fieldNotify(terminal, "[collie] field \(f.name): o rebase em \(head.prefix(8)) conflitou; desfeito, o field fica como estava")
+            return
+        }
+        await set(.working, base: head)
+    }
+
+    /// The end of a field agent's turn: `behind` tries its rebase again; `working` with commits past `base` and no
+    /// `ask --check` in flight becomes `ready`, with one notice to the Shepherd.
+    func fieldTurnEnded(_ terminal: UUID) async {
+        guard let rec = ws.terminals.first(where: { $0.id == terminal }), let f = rec.field,
+              let p = ws.paddocks.first(where: { $0.id == rec.paddockId }) else { return }
+        switch f.state {
+        case .behind: await rebaseField(terminal, checkBusy: false)
+        case .working:
+            guard fieldChecks[terminal] == nil else { return }
+            let git = fieldGit(p), range = f.base.isEmpty ? "HEAD..\(f.branch)" : "\(f.base)..\(f.branch)"
+            guard let n = try? await git.laneGit(["rev-list", "--count", range], in: git.dir), n.status == 0,
+                  (Int(n.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0) > 0,
+                  let i = ws.terminals.firstIndex(where: { $0.id == terminal }), ws.terminals[i].field?.state == .working else { return }
+            ws.terminals[i].field?.state = .ready
+            try? await persist()
+            await fieldNotify(terminal, "[collie] field \(f.name) pronto para integrar: collie field land \(f.name)")
+        default: return
+        }
+    }
+
+    /// A field notice to the Shepherd that summoned `terminal`'s agent, typed once it is quiet.
+    func fieldNotify(_ terminal: UUID, _ line: String) async {
+        fieldNoticeLog = Array((fieldNoticeLog + [line]).suffix(20))
+        guard let up = ws.terminals.first(where: { $0.id == terminal })?.summonedBy,
+              let s = ws.terminals.first(where: { $0.id == up }), Self.isAgent(s) else { return }
+        try? await asks.inject(to: s.id, prompt: line, hold: .seconds(1800), afterQuiet: true)
     }
 }

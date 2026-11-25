@@ -78,13 +78,15 @@ enum FieldLand {
     }
 
     /// Spec, answer 7: `<patches>/<name>-<n>.patch` (the lowest free n), `git diff <base>..<branch>`, 0600. `base` ""
-    /// (a field found again by name): the merge base with the paddock's HEAD. Nil when git cannot say or it cannot be written.
+    /// (a field found again by name): the merge base with the paddock's HEAD. Nil when git cannot say, there is no diff,
+    /// or it cannot be written.
     static func patch(_ lane: Lane, name: String, dir: URL, host: any LoopHost, into patches: URL) async -> URL? {
         var base = lane.base
         if base.isEmpty, let mb = try? await host.git(["merge-base", "HEAD", lane.branch], in: dir), mb.status == 0 {
             base = mb.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard !base.isEmpty, let d = try? await host.git(["diff", "--binary", "\(base)..\(lane.branch)"], in: dir), d.status == 0, !d.truncated else { return nil }
+        guard !base.isEmpty, let d = try? await host.git(["diff", "--binary", "\(base)..\(lane.branch)"], in: dir), d.status == 0, !d.truncated,
+              !d.stdout.isEmpty else { return nil }   // F5: no diff, no file
         let fm = FileManager.default
         guard (try? fm.createDirectory(at: patches, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])) != nil else { return nil }
         var n = 1

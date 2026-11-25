@@ -250,7 +250,9 @@ private func withRig(sandbox: Bool = true, _ body: (Rig) async throws -> Void) a
             let head = try await r.head(r.f.paddock)
             #expect(o["outcome"] == .string("landed") && o["sha"] == .string(head), "\(out)")
             #expect(exists(r.f.paddock.appendingPathComponent("bob.txt")), "merged into the paddock's branch")
-            #expect(await r.rec("bob")?.field?.state == .landed)
+            // F5: landed, then rebased on the paddock's new HEAD: working again from it
+            let after = await r.rec("bob")?.field
+            #expect(after?.state == .working && after?.base == head, "\(String(describing: after))")
         }
     }
 

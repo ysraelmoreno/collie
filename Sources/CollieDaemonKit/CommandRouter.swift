@@ -42,6 +42,10 @@ actor CommandRouter {
     let integrators = PaddockIntegrators()
     /// F3: `field land` requests in flight, per Shepherd: a wait like an `ask` (`fieldShepherdOnlyWaits`).
     var fieldLandHolds: [UUID: Int] = [:]
+    /// F5: `ask --check`s in flight per field agent (its turn's end makes it `ready` only with none).
+    var fieldChecks: [UUID: Int] = [:]
+    /// F5: the last field notices sent to Shepherds. ponytail: 20 lines, read by the tests only for now.
+    var fieldNoticeLog: [String] = []
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
@@ -493,7 +497,13 @@ actor CommandRouter {
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout, gate: gate)) }
                 let busy = await targetBusy(t.id)
                 let r: AskResult
-                if let gate { r = try await asks.askGated(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: askCheckRunner(for: t)) }
+                if let gate {
+                    fieldCheckBegin(t.id)
+                    defer { fieldCheckEnd(t.id) }
+                    var g = try await asks.askGated(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: askCheckRunner(for: t))
+                    g.check = await fieldAfterCheck(t.id, g.check)   // F5: a passing check lands the field, after the ask
+                    r = g
+                }
                 else { r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout) }
                 if let c = r.check, c.status == .failed {
                     throw ProtocolError(code: .conflict, message: "\(c.failure). Fim da saída:\n\(c.tail)")
@@ -533,6 +543,7 @@ actor CommandRouter {
                     let asker = await asks.turnCompleted(terminal: tid, message: str(req, "message"))
                     turnEnds[tid, default: 0] += 1
                     noticeTurnEnded(tid, message: str(req, "message"), askedBy: asker)
+                    Task { await fieldTurnEnded(tid) }   // F5: ready, or the rebase it owed
                 }
                 guard capture else {
                     Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
@@ -585,8 +596,15 @@ actor CommandRouter {
             let delivered: @Sendable () -> Void = { Task { await inbox.delivered(id: id) } }
             do throws(ProtocolError) {
                 if let gate, let run {
-                    r = .success(try await asks.askGated(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: run,
-                                                         detached: true, askId: id, onDelivered: delivered))
+                    await self.fieldCheckBegin(target)
+                    let res: Result<AskResult, ProtocolError>
+                    do throws(ProtocolError) { res = .success(try await asks.askGated(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: run,
+                                                                detached: true, askId: id, onDelivered: delivered)) }
+                    catch { res = .failure(error) }
+                    await self.fieldCheckEnd(target)
+                    var g = try res.get()
+                    g.check = await self.fieldAfterCheck(target, g.check)
+                    r = .success(g)
                 } else {
                     r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id, onDelivered: delivered))
                 }
@@ -613,9 +631,11 @@ actor CommandRouter {
             }
             return nil
         }
-        return AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
-                       checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
-                       greenOk: flag(req, "green-ok"))
+        var g = AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
+                        checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd),
+                        greenOk: flag(req, "green-ok"))
+        if let f = t.field { let dir = URL(fileURLWithPath: f.path); g.dirty = { await Self.fieldDirty(dir) } }   // F5, answer 4
+        return g
     }
 
     /// C1: the judge: the loop's own `runCheck`, under the target's sandbox profile and `checkEnv` (no COLLIE_*). A sandboxed

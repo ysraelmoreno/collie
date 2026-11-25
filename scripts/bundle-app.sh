@@ -62,6 +62,15 @@ if [ -f vendor/weblibs/manifest.json ]; then
   rsync -a --delete vendor/weblibs/ "$APP/Contents/Resources/weblibs/"
 elif [ "${COLLIE_ALLOW_NO_WEBLIBS:-}" = 1 ]; then echo "warning: vendor/weblibs missing: pages get no offline libraries" >&2
 else echo "error: vendor/weblibs missing (run scripts/fetch-weblibs.sh; COLLIE_ALLOW_NO_WEBLIBS=1 bundles without)" >&2; exit 1; fi
+# Sparkle (the app's updater): the framework next to the binary, signed inside out (its XPC services and helper app, then the
+# framework) before the app, with the same hardened runtime and timestamp the notarization needs
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$BIN/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"   # keeps the Versions/ symlinks
+SPK="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
+for x in "$SPK"/XPCServices/*.xpc "$SPK/Updater.app" "$SPK/Autoupdate"; do
+  [ -e "$x" ] && codesign --force -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$x"
+done
+codesign --force -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$APP/Contents/Frameworks/Sparkle.framework"
 codesign --force --deep -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$APP"
 codesign -v "$APP"
 echo "ok: $APP"

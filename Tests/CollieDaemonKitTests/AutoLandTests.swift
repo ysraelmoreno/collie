@@ -846,7 +846,8 @@ private extension CommandRouter {
             #expect(stops == [.landed, .landed, .landBaseMoved], "\(stops)")
             #expect(bases == seen.map { Optional($0) }, "\(bases) \(seen)")
             #expect(await d.router.loopAutoLands(k.id).count == 2)
-            #expect(try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout.contains("t3") == false)
+            let log = try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout
+            #expect(log.contains("t2") && !log.contains("t3"))
         }
     }
 
@@ -866,8 +867,8 @@ private extension CommandRouter {
             let x = try #require(try await store.get(w))
             #expect(x.loop?.stopReason?.code == .landBaseMoved, "\(String(describing: x.loop?.stopReason))")
             #expect(await host.landBases == [judged])
-            let now = try await Self.main(repo)
-            #expect(now != judged && (try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout.contains("t1")) == false)
+            let now = try await Self.main(repo), log = try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout
+            #expect(now != judged && !log.contains("t1"))
             #expect(await d.router.loopAutoLands(k.id).isEmpty)
         }
     }

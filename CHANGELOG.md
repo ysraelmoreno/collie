@@ -7,6 +7,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 ## [Unreleased]
 
 ### Fixed
+- **Conversation capture of a folder that is gone:** a `conversation` job whose terminal started in a folder that was later moved or deleted would fall back to the global store (and write the conversation's learnings there). It is now skipped (the mark moves on, so the chunk is not read again) and never fails. A job whose transcript no longer exists already ended `.ok`; a test pins it.
 - **Memory curator, `failed/` no longer grows forever:** jobs parked after 3 failed attempts (or unreadable) are deleted after 7 days (`Curator.failedKeep`), at daemon start and whenever another job is parked. The "Curador falhando" alert counted every parked file, so a day of environment failures kept it on for good, even after the curator worked again.
 
 ## [0.2.3] — 2026-11-25

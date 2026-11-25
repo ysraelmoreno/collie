@@ -88,13 +88,24 @@ extension CommandRouter {
     /// `work.plan.apply`: the package at `dir` made into `w`'s tasks (never starting its loop).
     func planApply(_ r: Request, _ t: TerminalRecord, _ w: Work, now: Date) async throws -> JSONValue {
         let dir = try await planDir(r, t, confined: true)
-        let (plan, built) = try await PlanApply.apply(dir: dir, approve: try need(r, "approve"), work: w.id, store: work, now: now) { areas throws in
-            try self.areaCheck(areas, for: t)
+        // the `area:` checks built here, on the actor (the project's collie-work.json), by the areas as listed
+        var checks: [String: Result<String, ProtocolError>] = [:]
+        for task in PlanLint.lint(dir).tasks where task.fields["check"] == nil && task.fields["area"] != nil {
+            let areas = task.list("area")
+            do throws(ProtocolError) { checks[areas.joined(separator: ",")] = .success(try areaCheck(areas, for: t)) }
+            catch { checks[areas.joined(separator: ",")] = .failure(error) }
+        }
+        let built = checks
+        let (plan, tasks) = try await PlanApply.apply(dir: dir, approve: try need(r, "approve"), work: w.id, store: work, now: now) { areas in
+            guard let c = built[areas.joined(separator: ",")] else {
+                throw ProtocolError(code: .invalidArgs, message: "o plano mudou durante o apply; rode collie work plan lint de novo")
+            }
+            return try c.get()
         }
         let gate = plan.gate.map { " --gate '\(RerailText.clean($0, max: 300))'" } ?? ""
-        let lines = built.map { "  - \(RerailText.clean($0.title)) [\($0.id)]" + (($0.needs ?? []).isEmpty ? "" : " precisa de \(($0.needs ?? []).joined(separator: ", "))") }
-        return .object(["tasks": .array(built.map { .string($0.id) }), "hash": .string(plan.hash),
-                        "output": .string((["Plano aplicado em \"\(RerailText.clean(w.title))\": \(built.count) tarefa(s) em \(plan.waves) onda(s) (pacote \(plan.hash.prefix(12)))."]
+        let lines = tasks.map { "  - \(RerailText.clean($0.title)) [\($0.id)]" + (($0.needs ?? []).isEmpty ? "" : " precisa de \(($0.needs ?? []).joined(separator: ", "))") }
+        return .object(["tasks": .array(tasks.map { .string($0.id) }), "hash": .string(plan.hash),
+                        "output": .string((["Plano aplicado em \"\(RerailText.clean(w.title))\": \(tasks.count) tarefa(s) em \(plan.waves) onda(s) (pacote \(plan.hash.prefix(12)))."]
                                            + lines + ["O laço não começou. Quando quiser: collie work run --max <N>\(gate) (o cartão no app confirma as tarefas e os limites)."]).joined(separator: "\n"))])
     }
 

@@ -531,7 +531,8 @@ extension CommandRouter {
             }
             return try await prdAdd(r, try await active(try target()), now: now)
         case "work.prd.show":
-            return try prdShow(if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) })
+            let w = if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) }
+            return try prdShow(w)
         case "work.plan.lint":
             let t: TerminalRecord? = caller != nil || str(r, "terminal") != nil ? try target() : nil
             return PlanLint.json(PlanLint.lint(try await planDir(r, t, confined: caller != nil)))

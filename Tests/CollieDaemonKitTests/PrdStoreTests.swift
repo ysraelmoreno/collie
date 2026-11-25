@@ -74,13 +74,13 @@ import CollieProtocol
         let summary = AutoLandSummary.text(w, started: at, ended: at, stop: nil, base: nil, doctor: nil)
         #expect(summary.contains("- PRD: sha256 abababababab · origem: JIRA-12"))
         // kept in the work's state, and read back (a malformed one is nil: the work survives)
-        let back = try JSONDecoder.iso.decode(Work.self, from: JSONEncoder.iso.encode(w))
+        let back = try isoDecoder.decode(Work.self, from: isoEncoder.encode(w))
         #expect(back.prd == [p])
-        var o = try #require(try JSONSerialization.jsonObject(with: JSONEncoder.iso.encode(w)) as? [String: Any])
+        var o = try #require(try JSONSerialization.jsonObject(with: isoEncoder.encode(w)) as? [String: Any])
         o["prd"] = "lixo"
-        #expect(try JSONDecoder.iso.decode(Work.self, from: JSONSerialization.data(withJSONObject: o)).prd == nil)
+        #expect(try isoDecoder.decode(Work.self, from: JSONSerialization.data(withJSONObject: o)).prd == nil)
     }
 }
 
-extension JSONEncoder { fileprivate static var iso: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e } }
-extension JSONDecoder { fileprivate static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
+private let isoEncoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
+private let isoDecoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()

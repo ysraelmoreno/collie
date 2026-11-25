@@ -57,7 +57,7 @@ enum PlanApply {
     /// `dir` linted and applied to work `id` in `store`: its tasks appended, the plan and an audit note recorded. The
     /// loop is never touched (a running or queued one refuses: its approved tasks are not changed under it).
     static func apply(dir: URL, approve: String, work id: UUID, store: WorkStore, now: Date,
-                      areaCheck: ([String]) throws -> String) async throws -> (plan: PlanLint.Plan, tasks: [WorkTask]) {
+                      areaCheck: @Sendable ([String]) throws -> String) async throws -> (plan: PlanLint.Plan, tasks: [WorkTask]) {
         let plan = PlanLint.lint(dir)
         guard let w = try await store.get(id) else { throw ProtocolError(code: .notFound, message: "no work \(id.uuidString.lowercased())") }
         if let s = w.loop?.state, s == .running || s == .queued {

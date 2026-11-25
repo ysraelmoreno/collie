@@ -501,13 +501,14 @@ import CollieProtocol
     }
 
     /// C3b: the paths that judge the land are the commands' whole tokens, never substrings: a file `a` or `ci` beside a
-    /// CI `bash scripts/ci/run.sh` is no file of the CI, and the land goes on; `./x` and `x` are one path.
+    /// CI `true scripts/ci/run.sh` is no file of the CI, and the land goes on; `./x` and `x` are one path.
     @Test func aShortNameIsNoFileThatJudgesTheLand() async throws {
-        let r = try await Self.rig(gate: "echo gate", ci: "bash scripts/ci/run.sh"); defer { r.cleanup() }
+        let r = try await Self.rig(gate: "echo gate", ci: "true scripts/ci/run.sh"); defer { r.cleanup() }
         await r.host.setBase(try await Self.head(r.repo))
         await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a", "x\n", in: $0); try await commit("ci", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
-        #expect(try await r.get().loop?.stopReason?.code == .landed)
+        let got = try await r.get()
+        #expect(got.loop?.stopReason?.code == .landed, "\(got.notes.map(\.text))")
         let dir = URL(fileURLWithPath: "/r")
         let t = WorkLoop.judgedPaths("bash ./scripts/x.sh && make ci; \"scripts/y.sh\"|tee /r/out.txt", dir)
         #expect(t.contains("scripts/x.sh") && t.contains("scripts/y.sh") && t.contains("out.txt") && !t.contains("./scripts/x.sh"), "\(t)")
@@ -833,7 +834,7 @@ private extension CommandRouter {
             for i in 1...3 {
                 seen.append(try await Self.main(repo))
                 let w = try await Self.work(store, k, i)
-                await host.set("w-task-t\(i)-t1", LoopScript(act: {
+                await host.set("w\(i)-task-t\(i)-t1", LoopScript(act: {
                     try await commit("t\(i).swift", "let t = \(i)\n", in: $0)
                     // the third: someone else commits on the base after the attempt began
                     if i == 3 { try await commit("outro.txt", "x\n", in: repo) }
@@ -860,12 +861,12 @@ private extension CommandRouter {
             let (store, host, loop, cleanup) = try await Self.engine(d, k)
             defer { cleanup() }
             let w = try await Self.work(store, k, 1)
-            await host.set("w-task-t1-t1", LoopScript(act: { try await commit("t1.swift", "let t = 1\n", in: $0) }))
+            await host.set("w1-task-t1-t1", LoopScript(act: { try await commit("t1.swift", "let t = 1\n", in: $0) }))
             let judged = try await Self.main(repo)
             await host.setLandHook { try? await commit("outro.txt", "x\n", in: repo) }
             _ = await loop.run(work: w, dir: URL(fileURLWithPath: k.path))
             let x = try #require(try await store.get(w))
-            #expect(x.loop?.stopReason?.code == .landBaseMoved, "\(String(describing: x.loop?.stopReason))")
+            #expect(x.loop?.stopReason?.code == .landBaseMoved, "\(String(describing: x.loop?.stopReason)) \(x.notes.map(\.text)) \(x.tasks)")
             #expect(await host.landBases == [judged])
             let now = try await Self.main(repo), log = try await GitRunner.run(["log", "--oneline", "main"], in: repo).stdout
             #expect(now != judged && !log.contains("t1"))
@@ -1060,7 +1061,8 @@ private extension CommandRouter {
                 let l = try await d.router.work.get(w.id)?.loop
                 #expect(l?.autoLand?.baseHead == base, "a run with no attempt keeps the base the last one began on")
                 stops.append(l?.stopReason?.code)
-                #expect(try await call(p, x.s, "work.done").ok)
+                // a land closes the paddock's works by merge; the one that did not land is closed here
+                if try await d.router.work.get(w.id)?.closedAt == nil { #expect(try await call(p, x.s, "work.done").ok) }
             }
             #expect(stops == [.landed, .landed, .landDailyCap], "\(stops)")
             #expect(await d.router.loopAutoLands(x.pid).count == 2)

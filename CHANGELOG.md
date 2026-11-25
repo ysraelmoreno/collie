@@ -6,6 +6,35 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.0] — draft (not released)
+
+> **Draft.** The factory below is a **preview**: every piece is implemented and covered by tests with fake hosts, but the
+> end-to-end validation in a real repository (A7, `docs/superpowers/specs/autoland/a7-validacao-e2e.md`) has **not run
+> yet**. Do not rely on `--auto-land` for unattended work before it does. Nothing here pushes, opens a PR or tags.
+
+### Added
+- **Factory for users (preview):** the `factory-init` Shepherd skill (a stack detector and Swift, Node and Python models in `docs/fabrica/modelos/`) builds a project's factory profile; `collie factory doctor` scores its layers (static, judge, verification, review, prose, guardrails) from 0 to 3, read only, and exits 1 below `--min`.
+- **Loop with review by personas (preview):** `collie work run --review` has fresh reviewer terminals (personas in `docs/fabrica/personas/`: correção, segurança, testes, simplicidade, motor-concorrência) give each attempt an opinion; a blocker or major finding vetoes, it never approves alone (the check and the gate decide). `--personas`, `--reviewer-model`, `--no-review`; a mute opinion records its cause and is retried once; a prompt that was not delivered (or not submitted) does not spend the attempt; `work task add` takes a per-task agent and model.
+- **`collie-work.json` with a `factory` block:** read strictly (an invalid block refuses `work run` in one line) and applied by `work run` from the base commit, never from the agent's tree: `factory.review` (personas, threshold), `factory.guardrails` (`budgetSeconds` and `maxTries` become the defaults of `--budget` and `--tries`; `destructive` and `land` are shown, not enforced; `autoLandPerDay`), `factory.autoland` (`ci`, `timeoutSeconds`). An explicit flag wins over the profile, the profile over the default, and `work status` says which one each value came from. The Collie repository now has its own profile.
+- **Doctor, bait, ratchet:** `collie factory bait list|report` (a catalog of known-bad changes in `docs/fabrica/iscas/` and the capture rate per layer and persona) and `collie factory ratchet check|update|raise` (a generic measure whose baseline only goes down; raising needs a written reason).
+- **Cercado fábrica:** a persistent mark on a paddock that only the owner sets (`collie paddock create --factory`, `collie paddock factory <name> on|off`, the app's switch and rail badge; never by MCP or an agent terminal); turning it on needs a valid profile with `static` and `judge` at 1 or more.
+- **Auto-land (preview):** `collie work run --auto-land` (factory paddock, committed profile with a `gate`, review on). When every task is done the loop checks, in order, the gate on HEAD, a clean review of each task, runtime acceptance, the local CI, a clean tree and an unmoved base, then runs `paddock land` by merge, **locally: never a push or a PR**. Each failure stops with its own `stopReason` and notifies the owner: `landed`, `landGateRed`, `landReviewVeto`, `landCiRed`, `landDirty`, `landConflict`, `landNotFactory`, `landAcceptRed`, `landBaseMoved`, `landNothing`. The land records the base commit before and after, with the line to revert it.
+- **Queue and caps:** `--queue` leaves an owner-approved work waiting in the paddock; `--auto-land-max N` (default 1, at most 5) lets one execution land several in turn (`queueEmpty`, `maxReached`); `factory.guardrails.autoLandPerDay` (1 to 20, default 3) caps lands per 24 h from a durable record (`landDailyCap`); the factory doctor must still pass before each next work (`landDoctorRegressed`); `--budget` covers the whole execution.
+- **Immutable summary:** every `--auto-land` execution leaves a markdown summary written once in the daemon's own folder (mode 0444, never in the agent's tree, secrets scrubbed): times, `stopReason`, base before/after, who approved and who vetoed (`[persona] file:line`), attempts, the conditions that passed and the one that stopped it, what was not done (no push) and candidate traps repeated across attempts. One end notice carries its path; `work summary` and the app card show it.
+- **Runtime acceptance:** `collie work task add --accept <cmd> [--accept-timeout s]` keeps a shell command in the work's state that runs after the check and the gate and judges the running result (exit 0 = accepted); a failure counts as a failed attempt with its output kept; with `--auto-land` it is the `landAcceptRed` condition.
+- **PRD entry:** `collie work prd add|show` (an immutable, hashed copy of the PRD and its opaque origin), `collie work plan lint` (refuses, with file and line, tasks with no runnable check, trivial checks, cards over 1500 characters, cycles, no cited test) and `collie work plan apply --approve <sha256>` (creates the tasks by wave once the owner confirms the hash; never starts the loop), plus the `factory-plan` skill. `docs/fabrica/auto-land.md` and `docs/fabrica/aceite-e-entrada.md` describe the flow.
+- **Device:** `collie device` got a signed accessibility helper (Android), OCR for `screen`, `find` and `tap --text` (iOS and Android), `ui` compact by default, `screen`, `wait --stable|--settle`, `--then ui|screen`, `find --scroll`, and a device frame in the panel.
+
+### Changed
+- `work run` applies the profile's review and guardrails instead of only describing them; a loop review also runs in open mode.
+- Review text, notes and notices of a run are scrubbed before they reach the owner; the reviewers' folder is trusted in `~/.claude.json` before the review base is taken.
+
+### Not validated yet
+- The auto-land has never landed a real repository end to end (A7); the unit tests use fake hosts and fake clocks.
+- Runtime acceptance scripts for `collie device`, a browser or an app service are examples, not a framework.
+- `factory.guardrails.destructive` is a warning only; it blocks nothing.
+- Parallel lanes (`--parallel` over 1) keep a known gap: a commit made after the integration is not re-reviewed.
+
 ## [0.1.9] — 2026-11-21
 
 ### Added

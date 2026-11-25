@@ -23,7 +23,9 @@ extension CommandRouter {
         if let me = caller {
             project = await memory.repo(for: me.cwd)
         } else if let p = str(r, "repo") {
-            guard try await memory.global.run({ _ in FileManager.default.fileExists(atPath: p) }) else { throw invalid("repo '\(p)' does not exist") }
+            // the global store folder only exists after the first write: a fresh install must not refuse it
+            let exists = p == memory.global.path ? true : try await memory.global.run({ _ in FileManager.default.fileExists(atPath: p) })
+            guard exists else { throw invalid("repo '\(p)' does not exist") }
             project = await memory.repo(for: p)
         } else {
             project = await memory.repo(for: r.cwd ?? memory.global.path)

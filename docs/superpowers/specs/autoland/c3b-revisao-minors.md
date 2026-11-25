@@ -8,3 +8,18 @@
 5. **Testes que passariam com código quebrado.** (a) `AutoLandTests`: teste do `CommandRouter.loopLand` (recusa modo ≠ merge, recusa cercado não-fábrica, `before/after`) com git real em repo temporário; (b) teste de ORDEM das condições: portão e CI vermelhos juntos esperam `landGateRed` e o CI NÃO roda; revisão muda + CI vermelho esperam `landReviewVeto` e o CI não roda; (c) teste do teto diário que passa por `work run` de verdade (sem semear eventos direto).
 
 Check: `scripts/check-autoland-loop.sh c3b`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.
+
+## Segunda tentativa: o que a revisão vetou nas tentativas 1 e 2 (leia antes de começar)
+
+O item 2 (base que andou) foi o que mais gerou vetos. Desenho que resolve os dois majors, com teste que FALHE sem cada correção:
+
+1. **Base de referência por TENTATIVA, igualdade, não ancestralidade.** Hoje `baseHead` é sobrescrito a cada `work run` (inclusive com nil se o `rev-parse` falhar) e `baseOutsideHead` exige a base ancestral do HEAD, o que quebra o 2º land seguido (depois de um land com commit de merge a base fica à frente do cercado).
+   Regra: `baseHead` é gravado no INÍCIO de cada tentativa de uma tarefa (a base como ela era quando o agente começou) e NUNCA no início do `work run` nem em `reopen`; um `work run` sem nenhuma tentativa (tudo já `done`) mantém o `baseHead` anterior; se o `rev-parse` falhar, mantém o anterior (nunca grava nil por cima de um valor); sem valor nenhum ⇒ o land falha FECHADO (`landBaseMoved`, "base desconhecida"). Para trabalho encadeado, a ativação (`activate`/`chainLoop`) recaptura base e `baseHead` (as tentativas dele começam depois do land do anterior).
+   No land: a base de agora tem de ser IGUAL a `baseHead` (`landBaseMoved` se não). Testes: dois lands seguidos no mesmo cercado (trabalho 2 da corrente N=2 e novo `work run`) com baseHead REAL num repositório git temporário passam; a base movida por outro commit entre a tentativa e o land para; reopen+novo run sem tentativas não zera a referência.
+2. **TOCTOU.** Passe a base lida (`baseHead` conferido) para `loopLand` e recuse DENTRO do `claim`, antes do merge, com `landBaseMoved` se o ramo base não aponta mais para ela. Teste: a base anda entre a checagem e o merge.
+3. **Teto diário por `work run` de verdade (teste).** `theDailyCapCountsTheRunsRealLands` chama `WorkLoop.run` direto com host falso; dirija os runs por `call(p, s, "work.run", ...)` com `withDaemon`, como os outros testes do router, e confira `landDailyCap` no terceiro e a gravação em `Paddock.autoLands`.
+4. **Casamento de caminho por token, não substring.** `landJudgeChanged` e `judgesChanged` casam `al.ci.contains(path)` por substring: um arquivo `a` ou `ci` gera `landGateRed` falso, e `./scripts/x.sh` contra `scripts/x.sh` não casa. Extraia os tokens de caminho do gate e do CI (separados por espaço, aspas, `&&`, `;`) e compare o caminho INTEIRO normalizado (sem `./`), com o mesmo normalizador do `tampered`; não mude o `tampered`. Testes: nome curto sem falso positivo; `./scripts/x.sh` casa.
+5. **`work stop` num trabalho `queued`.** O dono precisa poder reenfileirar: devolva o trabalho a `queued` com campo explícito `dequeuedAt` e `queued=false` NÃO terminal, e faça o `work run` seguinte reativá-lo (teste); a resposta de `workStop` usa o estado real depois do `work.update` (se o `chainLoop` ativou na brecha, caia no caminho de parar o motor, não responda `dequeued`).
+6. **`approvedAt`:** teste que passa por `work run --auto-land` num cercado confiável e pela resposta do cartão e confere `approvedAt` gravado (as duas atribuições).
+
+Não adicione nada além disso.

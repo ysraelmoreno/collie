@@ -374,6 +374,8 @@ actor WorkLoop {
             // `discarded` names the patch only when one was written
             // `attemptStarted` went with the attempt's first write
             if kind != .attemptStarted {
+                var detail = detail
+                if kind == .agentSummoned, let m = r.loop.escalation(attempt: n) { detail = (detail ?? "") + " [\(m.preset):\(m.model)]" }   // C3
                 var e = entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
                 if kind == .agentDismissed { e.tokens = r.tokens; r.tokens = nil }
                 r.pending.append(e)
@@ -388,7 +390,9 @@ actor WorkLoop {
         case .summon:
             do {
                 // M3b.6: a name taken since `attempt` read the names gives way to the next one (the job keeps `name`)
-                let work = r.work, loop = r.loop, host = host
+                let work = r.work, host = host
+                var loop = r.loop
+                if let e = loop.escalation(attempt: n) { (loop.preset, loop.model, loop.command) = (e.preset, e.model, nil) }   // C3
                 let base = AgentNaming.name(work: work.title, task: task.title, taskId: task.id, attempt: n, lane: slot)
                 let agent = try await AgentNaming.summon(base, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
                     try await host.summon(name: x, for: work, loop: loop)

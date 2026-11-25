@@ -223,6 +223,28 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// C3: `--escalate` replaces --preset/--model/--command, and takes only claude|cursor entries; refused before the card.
+    @Test func runRefusesABadEscalate() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Real", check: "false")
+            for a: [String: JSONValue] in [["escalate": .string("cursor:a"), "model": .string("sonnet")],
+                                            ["escalate": .string("cursor:a"), "command": .string("cat")],
+                                            ["escalate": .string("codex:x")]] {
+                let r = try await run(d, p, x.s, a, approve: false)
+                #expect(r.error?.code == .invalidArgs && r.error?.message.contains("escalate") == true, "\(r)")
+            }
+            #expect(await d.router.appCards.isEmpty)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
+    @Test func cardShowsTheEscalation() {
+        let w = Work(title: "W", terminalId: UUID())
+        let l = WorkLoopState(escalate: ["cursor:a", "claude:b"])
+        #expect(CommandRouter.loopCardText(w, [], l, paddock: "p")?.contains("escalada de modelo por tentativa: «cursor:a, claude:b»") == true)
+    }
+
     /// C2: `--green-ok` on the task: it goes to the card, marked.
     @Test func runAcceptsAGreenCheckMarkedGreenOk() async throws {
         try await withDaemon { d, p in

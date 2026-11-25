@@ -172,6 +172,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
     /// agent is told its output's tail once (nil: none, the loop as before).
     public var precheck: String?
+    /// C3, `work run --escalate agent:model,…`: the agent of attempt `n` of a task is entry `min(n, count) - 1`; with it
+    /// set, `preset`/`model`/`command` are nil. nil: every attempt runs the same agent, as before.
+    public var escalate: [String]?
+    /// The preset and model of the task's attempt `n` (1-based) under `escalate`; nil without it.
+    public func escalation(attempt n: Int) -> (preset: String, model: String)? {
+        guard let list = escalate, !list.isEmpty else { return nil }
+        let parts = list[Swift.min(Swift.max(n, 1), list.count) - 1].split(separator: ":", maxSplits: 1).map(String.init)
+        return parts.count == 2 ? (parts[0], parts[1]) : nil
+    }
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
@@ -278,8 +287,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil) {
-        self.parallel = parallel; self.notify = notify; self.precheck = precheck
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil, escalate: [String]? = nil) {
+        self.escalate = escalate; self.parallel = parallel; self.notify = notify; self.precheck = precheck
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
@@ -307,6 +316,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
         precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
+        escalate = (try? c.decodeIfPresent([String].self, forKey: .escalate)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

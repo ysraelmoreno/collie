@@ -426,6 +426,7 @@ public enum Commands {
                              ParamSpec("preset", .string, help: "The attempts' agent preset (default: yours, as summon)"),
                              ParamSpec("model", .string, help: "Claude model for the attempts' agents"),
                              ParamSpec("command", .string, help: "Command line for the attempts' agents (custom preset)"),
+                             ParamSpec("escalate", .string, help: "agent:model,… (claude|cursor): attempt n of a task runs entry min(n, count); cheap first, stronger after failures. Excludes --preset/--model/--command"),
                              ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)")],
                     timeoutSeconds: 60, shepherdOnly: true),
         CommandSpec(name: "work.stop", summary: "Stop the active work's loop after the current attempt's verdict",

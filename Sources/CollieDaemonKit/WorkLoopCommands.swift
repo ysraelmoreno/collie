@@ -66,6 +66,7 @@ extension CommandRouter {
         // the summon's own checks run again per attempt; these only save three failed attempts
         if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
+        let escalate = try Self.parseEscalate(str(r, "escalate"), excludes: ["preset", "model", "command"].filter { str(r, $0) != nil })
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
         let gateFlag = str(r, "gate")
         if let gateFlag, gateFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -93,11 +94,11 @@ extension CommandRouter {
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
-                                 model: Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
+                                 model: escalate != nil ? nil : Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck, escalate: escalate)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -178,6 +179,24 @@ extension CommandRouter {
         var o = o
         if let warning { o["warning"] = .string(warning) }
         return .object(o)
+    }
+
+    /// C3: `--escalate a:m,b:m`: each entry `claude|cursor` + `:` + a model name (as `summon --model`), at most 10; nil: not given.
+    /// `excludes`: the flags given beside it (`--preset/--model/--command`), which it replaces.
+    static func parseEscalate(_ s: String?, excludes: [String]) throws -> [String]? {
+        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard let s else { return nil }
+        guard excludes.isEmpty else { throw bad("--escalate replaces --\(excludes.joined(separator: "/--")): give the agent and model in each entry (cursor:composer-2.5,claude:sonnet)") }
+        let entries = s.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !entries.isEmpty, entries.count <= Int(loopTriesMax) else { throw bad("--escalate takes 1-\(Int(loopTriesMax)) entries agent:model") }
+        for e in entries {
+            let p = e.split(separator: ":", maxSplits: 1).map(String.init)
+            guard p.count == 2, ["claude", "cursor"].contains(p[0]) else {
+                throw bad("--escalate entry '\(e)' must be claude:<model> or cursor:<model>")
+            }
+            do { try ClaudeModel.validate(p[1]) } catch { throw bad(error.message) }
+        }
+        return entries
     }
 
     /// M5.6: `--model` given always wins; absent, the daemon's `loopModel`, but only for agents that run Claude (summon
@@ -285,6 +304,7 @@ extension CommandRouter {
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
             + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.escalate.map { "escalada de modelo por tentativa: \(quoted($0.joined(separator: ", "))). " } ?? "")
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"

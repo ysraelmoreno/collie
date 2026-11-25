@@ -154,7 +154,8 @@ import CollieProtocol
             await #expect(throws: ProtocolError.self) {
                 _ = try await PlanApply.apply(dir: f.dir, root: f.dir, approve: hash, work: id, store: s, now: now, areaCheck: noArea)
             }
-            #expect(try await s.get(id)?.tasks.isEmpty == true && s.get(id)?.plan == nil)
+            let w = try await s.get(id)
+            #expect(w?.tasks.isEmpty == true && w?.plan == nil)
         }
     }
 

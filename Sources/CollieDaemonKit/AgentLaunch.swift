@@ -53,8 +53,12 @@ public enum AgentLaunch {
     /// sessionStart (§8) and preToolUse/postToolUse (§11) are what cursor-agent 2026.11.22 fires; sessionStart's `additional_context`
     /// (max 10 000 chars) carries the text Claude gets at SessionStart. `commands/` carries `/collie:loop` (`LoopCommand`). A stdio MCP child gets only HOME/LOGNAME/PATH/
     /// SHELL/TERM/USER from cursor, so the COLLIE_* names are listed as `${env:NAME}` (cursor expands them; no values on disk).
-    static func cursorPlugin(_ id: UUID, hooksDir: URL, collie: URL) throws -> URL {
+    static func cursorPlugin(_ id: UUID, hooksDir: URL, collie: URL, shepherd: Bool = false) throws -> URL {
         let dir = cursorPluginDir(id, in: hooksDir)
+        // a Shepherd's delegation rule is a rule (always applied), not a line of the orientation: that text has a 1500-character
+        // cap, where it lost the "then hand over the task" step, and a Cursor Shepherd opened the terminal and did the work itself
+        let rule = dir.appendingPathComponent("rules/\(delegateRuleFile)")
+        if shepherd { try write(delegateRule, rule) } else { try? FileManager.default.removeItem(at: rule) }
         try write(["name": "collie", "version": "1.0.0", "description": "Collie orientation and tools"],
                   dir.appendingPathComponent(".cursor-plugin/plugin.json"))
         // preToolUse/postToolUse (spike REPORT §11): the in-turn mark, and a write becomes the plug-ins' `edit` (D1)
@@ -68,6 +72,24 @@ public enum AgentLaunch {
         try write(LoopCommand.markdown(arguments: false), dir.appendingPathComponent("commands/\(LoopCommand.cursorCommandFile)"))
         return dir
     }
+    static let delegateRuleFile = "collie-delegate.mdc"
+    /// The Cursor Shepherd's always-applied rule (`rules/` of the plugin): opening a terminal is delegation, not a second worker.
+    static let delegateRule = """
+    ---
+    description: Collie Shepherd: delegate work to a terminal, never do it yourself
+    alwaysApply: true
+    ---
+    You are a Collie Shepherd: you coordinate, other agents do the work.
+
+    When the user asks you to open, create or start a terminal or an agent, that is a request to DELEGATE:
+    1. `collie summon <name>` (no --preset: it is the same kind of agent as you).
+    2. Hand that terminal the whole task: `collie ask <name> "<the task, with what it needs to know>" --no-wait`.
+    3. Wait for its reply (it comes back as a message; `collie ask result <id>`), check it, and answer the user.
+
+    Do not do that work yourself, in parallel or before it answers. Do not use your own subagents. Do not edit the files you asked it to change.
+    Your part is only to summon, ask, check, review what comes back, and report.
+    """
+
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
     static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_SHEPHERD"]
     /// Claude has an earlier conversation for `cwd` (R25): a session file in `<config>/projects/<cwd, every
@@ -163,7 +185,7 @@ public enum AgentLaunch {
             if agent.name == "cursor-agent" {
                 // --trust only under Collie's sandbox (a free terminal keeps the dialog); never a second --model/--trust
                 if innerSandboxOff && !c.contains("--trust") { flags += " --trust" }
-                flags += " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)
+                flags += " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie, shepherd: rec.isShepherd).path)
                 if let m = rec.model, !c.contains("--model") { flags += " --model " + quote(m) }
             }
             return spec(["-lc", String(c[..<agent.end]) + flags + c[agent.end...]])
@@ -187,7 +209,7 @@ public enum AgentLaunch {
                 throw ProtocolError(code: .invalidArgs, message: "cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)")
             }
             return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled --trust" : "")
-                         + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)
+                         + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie, shepherd: rec.isShepherd).path)
                          + (rec.model.map { " --model " + quote($0) } ?? "")])
         case .custom: throw ProtocolError(code: .invalidArgs, message: "custom preset needs a command")
         }

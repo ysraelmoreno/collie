@@ -6,6 +6,9 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Fixed
+- **A Cursor Shepherd asked to open a terminal did the work itself:** the orientation teaches `collie summon` but, under its 1500-character cap, never said to hand the task over, so the agent opened the terminal and kept working in parallel. A Cursor Shepherd's plugin now carries an always-applied rule (`rules/collie-delegate.mdc`): after `collie summon`, give the terminal the task with `collie ask <name> "<task>" --no-wait`, wait for its reply, do not do the work or use your own subagents. A plain Cursor terminal gets no rule.
+
 ## [0.2.4] — 2026-11-25
 
 ### Fixed

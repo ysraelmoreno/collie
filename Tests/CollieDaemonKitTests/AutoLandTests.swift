@@ -32,8 +32,9 @@ import CollieProtocol
     private static func expectStopped(_ r: LoopRig, _ code: Stop.Code, _ at: SourceLocation = #_sourceLocation) async throws {
         #expect(await r.run() == .stopped, sourceLocation: at)
         let w = try await r.get()
-        // C5d: a stop that discards the attempt's commits reopens its task; one that keeps them leaves it done
-        #expect(w.tasks[0].state == (WorkLoop.discards.contains(code) ? .open : .done), sourceLocation: at)
+        // C5d: a discard that dropped the attempt's commits reopens its task (its note); one that kept them leaves it done
+        let reopened = w.notes.contains { $0.text.hasPrefix("[reopen]") }
+        #expect(w.tasks[0].state == (reopened ? .open : .done), "\(w.notes.map(\.text))", sourceLocation: at)
         #expect(w.loop?.stopReason?.code == code, "\(String(describing: w.loop?.stopReason))", sourceLocation: at)
         #expect(await r.host.lands.isEmpty, sourceLocation: at)
         #expect(w.loop?.autoLand?.before == nil && w.loop?.autoLand?.after == nil, sourceLocation: at)

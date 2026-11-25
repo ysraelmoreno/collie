@@ -281,7 +281,8 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let r = await cmd.result
             if case .success(let v) = r { Issue.record("a cancelled work run went on: \(v)") }
             #expect(await d.router.loopPaddocks.isEmpty, "a cancelled work run left the paddock reserved")
-            #expect(await d.router.workLoops.isEmpty && (try await d.router.work.get(x.work))?.loop == nil)
+            #expect(await d.router.workLoops.isEmpty)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
             // and the paddock takes a new run at once
             await d.router.c5cHold(nil)
             #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)

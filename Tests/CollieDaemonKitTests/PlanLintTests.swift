@@ -71,12 +71,84 @@ struct PlanFixture {
         let p = PlanLint.lint(f.dir)
         #expect(rules(p) == ["tasks/api.md:3:check-trivial"])
         #expect(p.findings[0].message.contains("Sources/Api.swift"))
-        // a grep of another file, outside the scope and not in the card, is not this rule's
+        // C4a: a grep of another file runs no code either: refused too (once it named the task's file only)
         try f.write("tasks/api.md", PlanFixture.card("API", check: "grep -q route docs/rotas.md", extra: "scope: Sources/**"))
-        #expect(PlanLint.lint(f.dir).passed)
+        #expect(rules(PlanLint.lint(f.dir)) == ["tasks/api.md:3:check-trivial"])
         // a check that runs the test alongside is fine
         try f.write("tasks/api.md", PlanFixture.card("API", check: "test -f Sources/Api.swift && swift test --filter ApiTests", extra: "scope: Sources/**"))
         #expect(PlanLint.lint(f.dir).passed)
+    }
+
+    /// C4a: the check cut at `&&`, `||`, `;`, `|`: one that swallows its failure, or whose every piece only inspects
+    /// files or always passes, is `check-trivial`; one piece that runs code makes it a check.
+    @Test func aCheckThatAlwaysPassesOrRunsNoCodeIsTrivial() throws {
+        for c in ["grep -q rota Sources/Api.swift || true", "swift test --filter ApiTests || true", "swift test --filter ApiTests; true",
+                  "swift test --filter ApiTests || :", "grep -q rota Sources/Api.swift && echo ok", "cat Sources/Api.swift | wc -l",
+                  "find Sources -name Api.swift", "diff a.txt b.txt", "! grep -q FIXO Sources/Api.swift", "stat Sources/Api.swift && head -1 x",
+                  "test -f ./Sources/Api.swift"] {
+            var t = PlanFixture.good; t["api"] = PlanFixture.card("API", check: c, extra: "scope: Sources/Api.swift")
+            let f = try PlanFixture(waves: PlanFixture.waves, tasks: t); defer { f.cleanup() }
+            #expect(rules(PlanLint.lint(f.dir)) == ["tasks/api.md:3:check-trivial"], "\(c)")
+        }
+        // `./path` is the task's own file
+        #expect(PlanLint.trivialCheck("test -f ./Sources/Api.swift", scope: ["Sources/Api.swift"], body: "")?.contains("(Sources/Api.swift)") == true)
+        for c in ["swift test --filter ApiTests", "scripts/check.sh", "make check && grep -q ok out.txt", "grep -q x a.txt && swift build --build-tests",
+                  "swift test --filter ApiTests && grep -q \"<div>\" out.html", "true && bash scripts/check.sh"] {
+            var t = PlanFixture.good; t["api"] = PlanFixture.card("API", check: c, extra: "scope: Sources/Api.swift")
+            let f = try PlanFixture(waves: PlanFixture.waves, tasks: t); defer { f.cleanup() }
+            #expect(PlanLint.lint(f.dir).passed, "\(c)")
+        }
+    }
+
+    /// C4a: `<x>` and `...` are placeholders only as whole words: `grep "<div>"` and `diff <(a) <(b)` are commands.
+    @Test func aPlaceholderIsAWholeWord() {
+        for c in ["grep \"<div>\" index.html", "diff <(a) <(b)", "echo a...b && make", "grep -q '<a href>' x"] {
+            #expect(PlanLint.checkRefusal(c) == nil, "\(c)")
+        }
+        for c in ["swift test --filter <teste>", "<comando>", "make ...", "TODO"] {
+            #expect(PlanLint.checkRefusal(c) != nil, "\(c)")
+        }
+    }
+
+    /// C4a: `tasks`, `waves.md` and each card are `lstat`ed before any read: a link (even to a folder of good cards out
+    /// of the project), a package reached by `..` out of the project: `plan-unsafe-path`, the lint fails.
+    @Test func linksAndPathsOutOfTheProjectAreRefused() throws {
+        let out = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { out.cleanup() }
+        let fm = FileManager.default
+        // the folder `tasks` a link to good cards elsewhere
+        let a = try PlanFixture(waves: PlanFixture.waves, tasks: [:]); defer { a.cleanup() }
+        try fm.removeItem(at: a.dir.appendingPathComponent("tasks"))
+        try fm.createSymbolicLink(at: a.dir.appendingPathComponent("tasks"), withDestinationURL: out.dir.appendingPathComponent("tasks"))
+        let pa = PlanLint.lint(a.dir)
+        #expect(!pa.passed && rules(pa).contains("tasks:1:plan-unsafe-path") && pa.tasks.isEmpty, "\(pa.text)")
+        // one card a link
+        let b = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { b.cleanup() }
+        try fm.removeItem(at: b.dir.appendingPathComponent("tasks/api.md"))
+        try fm.createSymbolicLink(at: b.dir.appendingPathComponent("tasks/api.md"), withDestinationURL: out.dir.appendingPathComponent("tasks/api.md"))
+        #expect(rules(PlanLint.lint(b.dir)) == ["tasks/api.md:1:plan-unsafe-path"])
+        // waves.md a link
+        let c = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { c.cleanup() }
+        try fm.removeItem(at: c.dir.appendingPathComponent("waves.md"))
+        try fm.createSymbolicLink(at: c.dir.appendingPathComponent("waves.md"), withDestinationURL: out.dir.appendingPathComponent("waves.md"))
+        #expect(rules(PlanLint.lint(c.dir)).first == "waves.md:1:plan-unsafe-path")
+        // `..`: the package out of the project it must lie in
+        let up = URL(fileURLWithPath: out.dir.path + "/tasks/..")
+        let pu = PlanLint.lint(up, root: out.dir.appendingPathComponent("tasks"))
+        #expect(!pu.passed && rules(pu).contains(".:1:plan-unsafe-path"), "\(pu.text)")
+        #expect(PlanLint.lint(up, root: out.dir).passed)
+    }
+
+    /// C4a: a card that does not open (a folder, no read permission) is a `task-unreadable` finding with its file.
+    @Test func anUnreadableCardIsSaid() throws {
+        var t = PlanFixture.good; t["api"] = nil
+        let f = try PlanFixture(waves: PlanFixture.waves, tasks: t); defer { f.cleanup() }
+        try FileManager.default.createDirectory(at: f.dir.appendingPathComponent("tasks/api.md"), withIntermediateDirectories: true)
+        #expect(rules(PlanLint.lint(f.dir)) == ["tasks/api.md:1:task-unreadable"])
+        try FileManager.default.removeItem(at: f.dir.appendingPathComponent("tasks/api.md"))
+        try f.write("tasks/api.md", PlanFixture.card("API", check: "swift test --filter ApiTests"))
+        chmod(f.dir.appendingPathComponent("tasks/api.md").path, 0)
+        defer { chmod(f.dir.appendingPathComponent("tasks/api.md").path, 0o644) }
+        #expect(rules(PlanLint.lint(f.dir)) == ["tasks/api.md:1:task-unreadable"])
     }
 
     @Test func areaAndCheckTogetherAreRefused() throws {

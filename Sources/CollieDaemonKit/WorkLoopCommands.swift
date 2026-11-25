@@ -827,23 +827,41 @@ extension CommandRouter {
     /// `merge` (never a push nor a PR), only while it is a factory's. The base branch's commit before and after.
     /// C3b: `base`, the base's commit the land was judged on: another one under the claim, right before the merge, throws
     /// `.conflict` and merges nothing.
-    func loopLand(_ paddock: UUID, mode: LandMode, message: String, base: String? = nil) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    func loopLand(_ paddock: UUID, mode: LandMode, message: String, base: String? = nil) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
         guard mode == .merge else { throw ProtocolError(code: .invalidArgs, message: "auto-land lands only by merge, never \(mode.rawValue)") }
         guard var f = ws.paddocks.first(where: { $0.id == paddock }) else { throw ProtocolError(code: .notFound, message: "the loop's paddock is gone") }
         guard f.factory else { throw ProtocolError(code: .invalidArgs, message: "paddock '\(f.name)' is not a factory's") }
+        // C4a: the base before, for a throw that comes after the merge (inside `PaddockManager.land`): it counts too
+        // ponytail: read before the land's claim; another paddock landing on the same base in between counts here as
+        // well (the cap errs toward stopping)
+        let start = try? await loopBaseHead(paddock)
         do {
             // C2: a failure after the merge (the save) comes back as `late`, never as a throw: the base moved
             let (res, late) = try await landPaddockKeepingLate(&f, mode: .merge, message: message, base: base)
             // C3a: `before` is the base's HEAD read under the land's claim right before the merge (another paddock landing
             // on the same base before it is in it); equal to `after`: the merge made no commit, nothing is counted
             guard let after = res.commit, let before = res.before else { throw ProtocolError(code: .internal, message: "the land gave no commit") }
-            if before != after, let i = ws.paddocks.firstIndex(where: { $0.id == paddock }) {
-                let now = Date()
-                ws.paddocks[i].autoLands = (ws.paddocks[i].autoLands ?? []).filter { $0 > now.addingTimeInterval(-86_400) } + [now]
-                try? await persist()
-            }
-            return (before, after, late.map { ($0 as? ProtocolError)?.message ?? "\($0)" })
-        } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
+            let unrecorded = before == after ? nil : await recordAutoLand(paddock)
+            return (before, after, late.map { ($0 as? ProtocolError)?.message ?? "\($0)" }, unrecorded)
+        } catch {
+            let e = (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)")
+            // C4a: the merge happened (the base moved) before the throw: a land all the same, in the cap
+            if e.code != .conflict, let start, let now = try? await loopBaseHead(paddock), now != start { _ = await recordAutoLand(paddock) }
+            throw e
+        }
+    }
+
+    /// C4a: a land of `paddock` now, in its daily record (`Paddock.autoLands`), persisted. nil: recorded; else why it
+    /// could not be written (the record stays in memory, so this daemon still counts it).
+    func recordAutoLand(_ paddock: UUID) async -> String? {
+        guard let i = ws.paddocks.firstIndex(where: { $0.id == paddock }) else { return "o cercado sumiu" }
+        let now = Date()
+        ws.paddocks[i].autoLands = (ws.paddocks[i].autoLands ?? []).filter { $0 > now.addingTimeInterval(-86_400) } + [now]
+        do {
+            if landRecordFails { throw ProtocolError(code: .internal, message: "a gravação do registro falhou (teste)") }
+            try await persist()
+            return nil
+        } catch { return (error as? ProtocolError)?.message ?? "\(error)" }
     }
 
     func loopDismiss(_ id: UUID) async {
@@ -1035,7 +1053,7 @@ struct RouterLoopHost: LoopHost {
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
     func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
-    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
         try await router.loopLand(paddock, mode: mode, message: message, base: base)
     }
     func notifyOwner(_ line: String) async { await router.hub.emit(.notify(starter, message: String(line.prefix(2000)))) }

@@ -120,6 +120,7 @@ import CollieCore
     }
 
     /// The loop runs the command it holds in the work's state; a file the agent leaves in the tree is never read.
+    /// C4a: and one it commits that the acceptance names (absent from the base) fails the attempt before anything runs.
     @Test func theCommandComesFromTheStateNeverFromTheTree() async throws {
         let r = try await Self.rig(accept: "test ! -f collie-accept.txt"); defer { r.cleanup() }
         await r.host.set("w-task-a-t1", Script(act: { d in
@@ -128,8 +129,57 @@ import CollieCore
         }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.commands == ["true", "test ! -f collie-accept.txt"])
+        #expect(await r.host.commands == ["true"])
         #expect(w.tasks[0].accept == "test ! -f collie-accept.txt" && w.tasks[0].state == .deferred)
+        #expect(w.tasks[0].lastFailure?.contains("cita «collie-accept.txt»") == true)
+    }
+
+    /// C4a: the acceptance names a script the base does not have: the attempt that creates it would write what judges
+    /// it. Failed with the reason, the command never run, even when the spec names the file.
+    @Test func anAcceptanceOfAScriptTheBaseLacksFails() async throws {
+        let r = try await Self.rig(accept: "bash scripts/accept.sh"); defer { r.cleanup() }
+        try await commit("spec.md", "crie scripts/accept.sh\n", in: r.repo)
+        let spec = r.repo.appendingPathComponent("spec.md").path
+        try await r.store.update(r.work) { $0.tasks[0].spec = spec }
+        await r.host.set("w-task-a-t1", Script(act: { d in
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+            try await commit("scripts/accept.sh", "exit 0\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(await r.host.commands == ["true"])
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].acceptPassed == false)
+        #expect(w.tasks[0].lastFailure?.contains("o aceite cita «scripts/accept.sh» que não existe no commit base: crie-o numa tarefa anterior e commite") == true,
+                "\(w.tasks[0].lastFailure ?? "")")
+    }
+
+    /// C4a: a huge failed acceptance: the whole output in a file, the note only its head and tail (3000 characters),
+    /// and the next prompt never more than 4000 characters of acceptance notes in all.
+    @Test func aHugeAcceptanceOutputGoesToAFileAndTheNoteKeepsHeadAndTail() async throws {
+        let r = try await Self.rig(accept: "echo INICIO; for i in $(seq 1 5000); do echo linha-$i; done; echo FIM; exit 3", tries: 3)
+        defer { r.cleanup() }
+        await r.host.set("w-task-a-t2", Script(act: { try await commit("b.swift", "let b = 1\n", in: $0) }))
+        await r.host.set("w-task-a-t3", Script(act: { try await commit("c.swift", "let c = 1\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        let notes = w.notes.filter { $0.text.hasPrefix("[loop a]") }
+        #expect(notes.count == 3)
+        for n in notes {
+            let out = try #require(n.text.range(of: WorkLoop.acceptMark).map { String(n.text[$0.upperBound...]) })
+            #expect(out.hasPrefix("INICIO") && out.hasSuffix("FIM") && out.count < WorkLoop.acceptNoteChars + 300, "\(out.count)")
+            #expect(out.contains("saída inteira em ") && !out.contains("linha-2500\n"))
+        }
+        let file = r.host.patchDir(r.work).appendingPathComponent("accept-output/a-1.txt")
+        let whole = try String(contentsOf: file, encoding: .utf8)
+        #expect(whole.contains("linha-2500\n") && whole.hasPrefix("INICIO") && whole.hasSuffix("FIM"))
+        #expect(notes[0].text.contains(file.path))
+        // the third attempt's prompt: two notes of ~3000 characters, at most 4000 of them together
+        let prompt = await r.host.prompts["w-task-a-t3"] ?? ""
+        #expect(prompt.components(separatedBy: WorkLoop.acceptMark).count - 1 == 2)
+        let sum = WorkLoop.promptNotes(Array(notes.prefix(2))).compactMap { t in t.range(of: WorkLoop.acceptMark).map { t[$0.upperBound...].count } }.reduce(0, +)
+        #expect(sum <= WorkLoop.acceptPromptChars, "\(sum)")
+        #expect(prompt.contains("FIM"))
+        #expect(prompt.count < WorkLoop.acceptPromptChars + 2500, "\(prompt.count)")
     }
 
     /// A work with no `--accept` runs exactly as before: no acceptance event, nothing recorded on the task.

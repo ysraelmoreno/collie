@@ -535,7 +535,10 @@ extension CommandRouter {
             return try prdShow(w)
         case "work.plan.lint":
             let t: TerminalRecord? = caller != nil || str(r, "terminal") != nil ? try target() : nil
-            return PlanLint.json(PlanLint.lint(try await planDir(r, t, confined: caller != nil)))
+            let dir = try await planDir(r, t, confined: caller != nil)
+            // C4a: a terminal's lint reads only inside its project (links, special files and `..` refused)
+            let root: URL? = if let t { try? await projectRoot(of: t) } else { nil }
+            return PlanLint.json(PlanLint.lint(dir, root: root))
         case "work.plan.apply":
             guard caller == nil else {
                 throw ProtocolError(code: .unauthorized, message: "'work.plan.apply' é do dono (a CLI fora de um terminal): ele aprova o pacote que viu")

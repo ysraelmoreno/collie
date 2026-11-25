@@ -81,6 +81,9 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var resumeAt: Date?
     /// M2b.1: nothing to resume: the three go together.
     public mutating func forgetResume() { resumeFrom = nil; resumeBranch = nil; resumeAt = nil }
+    /// C4a: the loop's verdicts on the task (a clean review, the HEAD it judged, a passed acceptance) dropped: what the
+    /// auto-land trusts is only ever an attempt's own (`work task done` by hand, `work task reopen`).
+    public mutating func clearVerdicts() { reviewClean = nil; reviewedHead = nil; acceptPassed = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
                 evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil) {
@@ -276,6 +279,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// C3b: the base branch is not the commit it was when the last attempt began (`AutoLand.baseHead`), or no
                 /// such commit is known: the merge would integrate a tree nobody judged on that base. The owner redoes it.
                 case landBaseMoved
+                /// C4a: the merge was made but the paddock's land record (`Paddock.autoLands`, what the daily cap counts)
+                /// could not be written: the loop stops rather than land on uncounted; the owner is told.
+                case landRegistryFailed
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -308,6 +314,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landAcceptRed: "auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado"
             case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
             case .landBaseMoved: "auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova"
+            case .landRegistryFailed: "auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
             case .unknown: "motivo desconhecido"
             }

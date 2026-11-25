@@ -95,7 +95,9 @@ protocol LoopHost: Sendable {
     /// C2: `late`, what failed AFTER the merge (saving the paddock): the base moved all the same; nil: nothing did.
     /// A throw is a land that never merged. C3b: `base`, the base's commit the land was judged on: under the land's claim,
     /// right before the merge, a base branch elsewhere throws `.conflict` (`landBaseMoved`); nil: not checked.
-    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?)
+    /// C4a: `unrecorded`, why the land merged but its record (what the daily cap counts) could not be written: the
+    /// loop stops (`landRegistryFailed`) and the owner is told; nil: recorded (or nothing to record).
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?)
     /// A4: one line for the owner (`notify`).
     func notifyOwner(_ line: String) async
     /// A5: why the paddock's `factory doctor` no longer passes the minimum (static and judge at least 1), read now;
@@ -147,7 +149,7 @@ extension LoopHost {
     func startedOpen(_ agent: UUID) async -> Bool { false }
     /// A host with no paddock to land (the tests' fakes): never a factory's, and its land refuses.
     func factoryPaddock() async -> Bool { false }
-    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
         throw ProtocolError(code: .unavailable, message: "this host lands nothing")
     }
     func notifyOwner(_ line: String) async {}
@@ -701,7 +703,7 @@ actor WorkLoop {
             }
         case .guardAccept:
             // F3: the agent may not rewrite what judges its result, as for the gate
-            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: "o aceite") else { return .acceptClear }
+            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: "o aceite", refuseNew: true) else { return .acceptClear }
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = false; x.tasks[i].acceptResult = "não rodou: " + why }
             }
@@ -888,10 +890,14 @@ actor WorkLoop {
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)
-            // F3: a failed acceptance that ran leaves its WHOLE output (already scrubbed and bounded), never only the tail
-            let whole = state.facts.accept != nil ? r.acceptOutput : nil
+            // F3: a failed acceptance that ran leaves its WHOLE output (already scrubbed and bounded); C4a: in the
+            // evidence (a file), the note only its head and tail (`acceptNote`): the notes go back into the next prompt
+            var whole = state.facts.accept != nil ? r.acceptOutput : nil
+            if let all = whole, !all.isEmpty {
+                whole = Self.acceptNote(all, file: Self.keepAcceptOutput(all, dir: host.patchDir(id), task: task.id, attempt: n))
+            }
             let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))"
-                + (whole.map { $0.isEmpty ? "" : "\nsaída do aceite:\n" + $0 } ?? (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))))
+                + (whole.map { $0.isEmpty ? "" : Self.acceptMark + $0 } ?? (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
@@ -1119,17 +1125,22 @@ actor WorkLoop {
     /// the attempt's tree, so an agent cannot authorise itself by editing its spec.
     // ponytail: substring match on the command text, no shell parsing; a script the gate reaches indirectly
     // (sourced by another script, a directory argument) is not seen. Parse the command if that gap is ever used.
-    /// F3: the task's acceptance is guarded the same way (`by`: what runs the file, for the reason).
-    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String = "o portão") async -> String? {
+    /// F3: the task's acceptance is guarded the same way (`by`: what runs the file, for the reason). C4a: `refuseNew`
+    /// (the acceptance): a file its text names that the attempt created (not in `before`) fails it too, whatever the
+    /// spec says: the agent would write the script that judges it.
+    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String = "o portão", refuseNew: Bool = false) async -> String? {
         let named = await specText(spec, at: before, dir)
         // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
         guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir), d.status == 0 else {
             return "gate did not run (could not list what the attempt changed)"
         }
-        for path in d.stdout.split(separator: "\0").map(String.init) where gate.contains(path) && !named.contains(path) {
-            if (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0 {
-                return "a tentativa alterou «\(path)», que \(by) executa"
+        for path in d.stdout.split(separator: "\0").map(String.init) where gate.contains(path) {
+            let existed = (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0
+            // a created file only when named whole (`judgedPaths`): `curl …/health` is no file `health`
+            if refuseNew && !existed && Self.judgedPaths(gate, dir).contains(Self.normalPath(path, dir)) {
+                return "\(by) cita «\(path)» que não existe no commit base: crie-o numa tarefa anterior e commite"
             }
+            if existed && !named.contains(path) { return "a tentativa alterou «\(path)», que \(by) executa" }
         }
         return nil
     }
@@ -1265,6 +1276,43 @@ actor WorkLoop {
         return head + "\n… (\(clean.utf8.count - 2 * half) bytes cortados no meio) …\n" + tail
     }
 
+    /// C4a: what a note of a failed acceptance keeps (`acceptNoteChars`, head and tail) and what the next attempt's prompt
+    /// carries of all of them together (`acceptPromptChars`); the whole output goes to a file (`keepAcceptOutput`).
+    static let acceptMark = "\nsaída do aceite:\n", acceptNoteChars = 3000, acceptPromptChars = 4000
+
+    /// C4a: `out` whole in `<patchDir>/accept-output/<task>-<attempt>.txt` (0600); nil: it could not be written.
+    static func keepAcceptOutput(_ out: String, dir: URL, task: String, attempt: Int) -> String? {
+        let folder = dir.appendingPathComponent("accept-output")
+        let url = folder.appendingPathComponent("\(EvidenceFiles.dir(dir, task: task).lastPathComponent)-\(attempt).txt")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try Data(out.utf8).write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            return url.path
+        } catch { return nil }
+    }
+
+    /// C4a: the acceptance's output as a note keeps it: whole up to `acceptNoteChars`, else its head and its tail (half
+    /// each) and where the whole is.
+    static func acceptNote(_ out: String, file: String?) -> String {
+        guard out.count > acceptNoteChars else { return out }
+        let half = acceptNoteChars / 2
+        return String(out.prefix(half)) + "\n… (\(out.count - 2 * half) caracteres cortados; saída inteira em \(file ?? "nenhum arquivo: a gravação falhou")) …\n" + String(out.suffix(half))
+    }
+
+    /// C4a: the notes as the prompt carries them: the acceptances' outputs, newest first, at most `acceptPromptChars` in
+    /// all (an older one past it keeps only its tail that fits, or a line saying it was left out).
+    static func promptNotes(_ notes: [WorkNote]) -> [String] {
+        var left = acceptPromptChars
+        return notes.reversed().map { n -> String in
+            guard let r = n.text.range(of: acceptMark) else { return n.text }
+            let out = n.text[r.upperBound...]
+            let kept = out.count <= left ? String(out) : left > 2 ? "… " + String(out.suffix(left - 2)) : "(omitida: o limite das notas de aceite no prompt foi atingido)"
+            left = Swift.max(0, left - out.count)
+            return String(n.text[..<r.upperBound]) + kept
+        }.reversed()
+    }
+
     /// Why `what` (the check, the gate) did not pass, from its exit status (nil: it timed out); nil = it passed.
     static func failure(_ what: String, _ status: Int32?) -> String? {
         guard let status else { return "\(what) timed out" }
@@ -1295,7 +1343,7 @@ actor WorkLoop {
         ]
         if let gate { lines += ["e depois este portão:", gate] }
         if let map { lines.append("O mapa de funcionalidades do projeto está em \(map): use os nomes dele.") }
-        if !notes.isEmpty { lines.append("O que falhou nas tentativas anteriores:"); lines += notes.map(\.text) }
+        if !notes.isEmpty { lines.append("O que falhou nas tentativas anteriores:"); lines += promptNotes(notes) }
         lines.append("")
         lines.append(spec ?? task.title)
         return lines.joined(separator: "\n")
@@ -1354,7 +1402,14 @@ extension WorkLoop {
         do { base = try await host.baseHead() } catch { return await failed(.gitFailed, "git falhou", "a base: \(error.message)") }
         if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
         // C3b: the gate and the CI run from the agent's tree: the files that judge the land must be the base's
-        if let base, let why = await judgesChanged(al, base: base, head: head, dir) { return await failed(.landGateRed, "portão não rodou", why) }
+        // C4a: fail closed: a base known at the attempt (`al.baseHead`) but unread now, or the other way, is no comparison.
+        // Only a host that never knew a base (a folder paddock, the tests' fakes) has nothing to compare.
+        switch (base, al.baseHead) {
+        case (nil, nil): break
+        case (let base?, _?):
+            if let why = await judgesChanged(al, base: base, head: head, dir) { return await failed(.landGateRed, "portão não rodou", why) }
+        default: return await failed(.landGateRed, "portão não rodou", "não consegui comparar o que julga o land com a base")
+        }
         await phase(id, .gate)
         if let why = await run(al.gate, checkTimeout) { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
         // parecer mudo/inválido or a task with no review in its last attempt is no approval
@@ -1383,7 +1438,7 @@ extension WorkLoop {
         guard let now = try? await store.get(id), now.closedAt == nil, now.loop?.state == .running else { return .init(.workGone) }
         guard await host.starterAlive() else { return .init(.starterGone) }
         do {
-            let (before, after, late) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)", base: base == nil ? nil : al.baseHead)
+            let (before, after, late, unrecorded) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)", base: base == nil ? nil : al.baseHead)
             // C3a: no commit made (nothing new, or integrated already): no land, no undo line, not counted anywhere
             if before == after {
                 await note(id, "[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))")
@@ -1400,6 +1455,12 @@ extension WorkLoop {
             if let late {
                 await note(id, LotBoards.scrub(String("[loop] auto-land: a base MUDOU (merge feito, \(before.prefix(12)) -> \(after.prefix(12))), "
                     + "mas o passo depois do merge falhou: \(late)".prefix(Self.noteChars))))
+            }
+            // C4a: a land the daily cap may not count is no land to chain from: stop, and the owner knows why
+            if let unrecorded {
+                let line = LotBoards.scrub(String("[loop] auto-land: merge feito (\(before.prefix(12)) -> \(after.prefix(12))), mas o registro do teto diário não foi gravado: \(unrecorded); o laço parou".prefix(Self.noteChars)))
+                await note(id, line)   // the stop's own notice tells the owner (its label: "chame o dono")
+                return .init(.landRegistryFailed, detail: Self.eventDetail(unrecorded))
             }
             return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))" + (late.map { "; depois do merge falhou: \(Self.eventDetail($0))" } ?? ""))
         } catch {

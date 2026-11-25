@@ -97,20 +97,23 @@ actor LoopFakeHost: LoopHost {
     func setFactory(_ f: Bool) { isFactory = f }
     func setLandError(_ e: ProtocolError?) { landError = e }
     func factoryPaddock() async -> Bool { isFactory }
-    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?) {
+    func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
         lands.append(mode); landBases.append(base)
         guard mode == .merge else { Issue.record("land by \(mode)"); throw ProtocolError(code: .invalidArgs, message: "only merge") }
         if let landError { throw landError }
         await landHook?()
         if let (router, paddock) = landRouter { return try await router.loopLand(paddock, mode: mode, message: message, base: base) }
         // C3a: as the router does: a merge with no commit is no land and is not recorded
-        if landsNothing { return (Self.landedAfter, Self.landedAfter, nil) }
+        if landsNothing { return (Self.landedAfter, Self.landedAfter, nil, nil) }
         landedAt.append(now())
-        return (Self.landedBefore, Self.landedAfter, landLate)
+        return (Self.landedBefore, Self.landedAfter, landLate, landUnrecorded)
     }
     /// C2: what fails after the merge (the router's save): the land happened all the same.
     var landLate: String?
     func setLandLate(_ l: String?) { landLate = l }
+    /// C4a: the land merged but its record (`Paddock.autoLands`) could not be written.
+    var landUnrecorded: String?
+    func setLandUnrecorded(_ u: String?) { landUnrecorded = u }
     /// C3a: the paddock's durable land record (`Paddock.autoLands` in the router), and a land whose merge makes no commit.
     var landedAt: [Date] = [], landsNothing = false
     func autoLands() async -> [Date] {

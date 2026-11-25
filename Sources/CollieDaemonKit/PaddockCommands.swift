@@ -214,7 +214,7 @@ extension CommandRouter {
     /// C3b: `base` (the auto-land's), the base's commit the merge must still find under the claim (`PaddockManager.land`).
     func landPaddockKeepingLate(_ f: inout Paddock, mode: LandMode, message: String?, stopAtLate: Bool = false, base: String? = nil) async throws -> (LandResult, (any Error)?) {
         try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
-        let res = try await PaddockManager.land(&f, mode: mode, message: message, base: base)
+        let res = try await PaddockManager.land(&f, mode: mode, message: message, base: base, failAfterMerge: landFailsAfterMerge)
         let id = f.id, i = ws.paddocks.firstIndex { $0.id == id }
         let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
         if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it

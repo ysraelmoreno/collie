@@ -16,8 +16,11 @@ enum PlanLint {
     /// A file past this is not read (a card has at most `cardMax` characters).
     static let fileMax = 64 * 1024
     static let keys: Set<String> = ["check", "area", "accept", "accept-timeout", "needs", "scope", "evidence", "agent", "model"]
-    /// The commands a check made only of these inspects files, never runs the code.
-    static let inspectors: Set<String> = ["grep", "egrep", "fgrep", "rg", "test", "[", "[[", "ls"]
+    /// The commands that only inspect files, never run the code (C4a: a heuristic, see `trivialCheck`).
+    static let inspectors: Set<String> = ["grep", "egrep", "fgrep", "rg", "test", "[", "[[", "ls",
+                                          "cat", "find", "stat", "head", "tail", "wc", "diff", "sed", "awk", "cmp", "file", "md5", "shasum"]
+    /// The commands that always pass and check nothing.
+    static let trivial: Set<String> = ["true", ":", "echo", "printf", "exit"]
 
     struct Finding: Codable, Equatable, Sendable { var file: String; var line: Int; var rule: String; var message: String }
     struct Field: Equatable, Sendable { var value: String; var line: Int }
@@ -52,13 +55,37 @@ enum PlanLint {
         }
     }
 
-    static func lint(_ dir: URL) -> Plan {
+    /// C4a: `root`, the project the package must lie in (`plan apply`, `work plan lint` of an agent); nil: the package's
+    /// own folder. `tasks`, `waves.md` and each card are `lstat`ed before any read: a link, a special file or a path out
+    /// of `root` is a `plan-unsafe-path` finding and is never read.
+    static func lint(_ dir: URL, root: URL? = nil) -> Plan {
         var f: [Finding] = []
         func add(_ file: String, _ line: Int, _ rule: String, _ m: String) { f.append(Finding(file: file, line: line, rule: rule, message: m)) }
         var hashed: [(name: String, data: Data)] = []
+        let fence = root ?? dir
+        /// true: `name` may not be read (the finding added): a link, a special file, out of `fence`. A missing one, or a
+        /// card that is a folder (`readText` says it is unreadable), is false.
+        func unsafe(_ name: String, folder: Bool = false) -> Bool {
+            let path = dir.appendingPathComponent(name).path
+            var st = stat()
+            guard lstat(path, &st) == 0 else { return false }
+            let kind = st.st_mode & S_IFMT
+            let why: String
+            if kind == S_IFLNK { why = "\(name) é um link: o pacote não segue links (leria fora do projeto)" }
+            else if kind != (folder ? S_IFDIR : S_IFREG) && !(kind == S_IFDIR && !folder) { why = "\(name) não é \(folder ? "uma pasta" : "um arquivo comum")" }
+            else if !ProjectRoot.contains(path, root: fence) { why = "\(name) está fora do projeto \(fence.path)" }
+            else { return false }
+            add(name, 1, "plan-unsafe-path", why)
+            return true
+        }
+        if !ProjectRoot.contains(dir.path, root: fence) { add(".", 1, "plan-unsafe-path", "o pacote \(dir.path) está fora do projeto \(fence.path)") }
         func readText(_ name: String) -> String? {
             let url = dir.appendingPathComponent(name)
-            guard let d = PrdStore.read(url) else { return nil }
+            guard let d = PrdStore.read(url) else {
+                // C4a: a card that does not open (unreadable, a folder) is said, never dropped in silence
+                if FileManager.default.fileExists(atPath: url.path) { add(name, 1, "task-unreadable", "não consegui ler \(name)") }
+                return nil
+            }
             hashed.append((name, d))
             guard d.count <= fileMax else {
                 add(name, 1, "cartao-grande", "arquivo com \(d.count) bytes; um cartão tem até \(cardMax) caracteres"); return nil
@@ -70,7 +97,8 @@ enum PlanLint {
         // waves.md
         var waves: [[(id: String, line: Int)]] = []
         var gate: String?
-        if let text = readText("waves.md") {
+        let wavesUnsafe = unsafe("waves.md")
+        if !wavesUnsafe, let text = readText("waves.md") {
             for (i, raw) in text.components(separatedBy: "\n").enumerated() {
                 let l = raw.trimmingCharacters(in: .whitespaces)
                 if l.hasPrefix("## ") { waves.append([]); continue }
@@ -80,20 +108,21 @@ enum PlanLint {
                 guard !waves.isEmpty else { add("waves.md", i + 1, "onda", "tarefa '\(id)' fora de onda: ponha-a sob um título '## Onda N'"); continue }
                 waves[waves.count - 1].append((id, i + 1))
             }
-        } else if !hashed.contains(where: { $0.name == "waves.md" }) {
+        } else if !wavesUnsafe, !FileManager.default.fileExists(atPath: dir.appendingPathComponent("waves.md").path) {
             add("waves.md", 1, "onda", "não há waves.md em \(dir.path): ele lista as tarefas por onda ('## Onda 1', '- <id>')")
         }
         waves.removeAll { $0.isEmpty }
         if waves.isEmpty && hashed.contains(where: { $0.name == "waves.md" }) { add("waves.md", 1, "onda", "nenhuma tarefa listada: '## Onda 1' e, embaixo, '- <id>' de cada tarefa") }
 
         // tasks/*.md
-        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("tasks").path)) ?? [])
+        let tasksUnsafe = unsafe("tasks", folder: true)
+        let names = tasksUnsafe ? [] : ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("tasks").path)) ?? [])
             .filter { $0.hasSuffix(".md") && !$0.hasPrefix(".") }.sorted()
-        if names.isEmpty { add("tasks", 1, "onda", "não há tasks/*.md em \(dir.path): um cartão por tarefa, tasks/<id>.md") }
+        if names.isEmpty && !tasksUnsafe { add("tasks", 1, "onda", "não há tasks/*.md em \(dir.path): um cartão por tarefa, tasks/<id>.md") }
         var cards: [String: (url: URL, text: String)] = [:]
         for n in names {
             let rel = "tasks/" + n
-            if let t = readText(rel) { cards[String(n.dropLast(3))] = (dir.appendingPathComponent(rel), t) }
+            if !unsafe(rel), let t = readText(rel) { cards[String(n.dropLast(3))] = (dir.appendingPathComponent(rel), t) }
         }
         let allIds = Set(names.map { String($0.dropLast(3)) })
 
@@ -106,7 +135,7 @@ enum PlanLint {
                     add("waves.md", line, "onda", "id '\(id)' inválido: letras, números, '.', '_' e '-', até 40"); continue
                 }
                 guard allIds.contains(id) else { add("waves.md", line, "onda", "a tarefa '\(id)' não tem cartão: crie tasks/\(id).md"); continue }
-                guard let c = cards[id] else { continue }   // unreadable: already a finding
+                guard let c = cards[id] else { continue }   // unsafe or unreadable: already a finding
                 tasks.append(parse(id, wave: w, url: c.url, text: c.text))
             }
         }
@@ -158,9 +187,8 @@ enum PlanLint {
             add(c.line, "area-e-check", "'area:' e 'check:' não andam juntos: 'area:' monta o check a partir do collie-work.json; use um ou outro")
         case (let c?, nil):
             if let why = checkRefusal(c.value) { add(c.line, "check-inexecutavel", why) }
-            else if let file = ownFileInspected(c.value, t) {
-                add(c.line, "check-trivial", "o check só faz grep/test -f/ls no arquivo que a tarefa cria (\(file)): ele passa sem o código funcionar; rode o teste")
-            }
+            else if let why = trivialCheck(c.value, scope: t.list("scope"), body: t.text.components(separatedBy: "\n").enumerated()
+                .filter { $0.offset + 1 != c.line }.map(\.element).joined(separator: "\n")) { add(c.line, "check-trivial", why) }
         case (nil, let a?):
             if TaskScheduler.list(a.value).isEmpty { add(a.line, "check-inexecutavel", "'area:' vazia: nomeie as áreas do collie-work.json") }
         }
@@ -183,30 +211,43 @@ enum PlanLint {
     static func checkRefusal(_ c: String) -> String? {
         let t = c.trimmingCharacters(in: .whitespaces)
         if t.isEmpty { return "check vazio: escreva o comando que roda o teste da tarefa" }
-        if t.range(of: #"\b(TODO|TBD|FIXME|XXX)\b|<[^<>\s]+>|\.\.\."#, options: .regularExpression) != nil {
+        // C4a: `<x>` and `...` only as a whole word (`<comando>`): `grep "<div>"` and `diff <(a) <(b)` are commands
+        let words = t.split(whereSeparator: \.isWhitespace).map(String.init)
+        if t.range(of: #"\b(TODO|TBD|FIXME|XXX)\b"#, options: .regularExpression) != nil
+            || words.contains(where: { $0 == "..." || $0.range(of: #"^<[^<>\s()]+>$"#, options: .regularExpression) != nil }) {
             return "check com marcador por preencher («\(RerailText.clean(t, max: 200))»): escreva o comando de verdade"
         }
         let cmds = commands(t)
-        if cmds.allSatisfy({ ["true", ":", "echo", "printf", "exit"].contains($0.first ?? "") }) {
+        if cmds.allSatisfy({ trivial.contains($0.first ?? "") }) {
             return "check que não verifica nada («\(RerailText.clean(t, max: 200))»): ele passa sem rodar teste"
         }
         return nil
     }
 
-    /// The file a check made only of grep/test/ls inspects that is the task's own (in its `scope:`, or named in its
-    /// card; with no scope, any); nil: the check runs something else, or inspects only other files.
-    static func ownFileInspected(_ c: String, _ t: Task) -> String? {
-        let cmds = commands(c)
-        guard !cmds.isEmpty, cmds.allSatisfy({ inspectors.contains($0.first ?? "") }) else { return nil }
-        var files: [String] = []
-        for cmd in cmds {
-            var args = cmd.dropFirst().filter { !$0.hasPrefix("-") && !["]", "]]", "!"].contains($0) }
-            if ["grep", "egrep", "fgrep", "rg"].contains(cmd[0]) { args = Array(args.dropFirst()) }   // the pattern
-            files += args.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'\"")) }.filter { !$0.isEmpty }
+    /// C4a: why a check passes without running the code; nil: some piece of it runs something (a build, a test, a
+    /// script, a project command). Cut at `&&`, `||`, `;`, `|`: one ending in `|| true`, `|| :` or `; true` is always
+    /// green; one whose every piece is an inspector (`inspectors`) or always passes (`trivial`) judges no code. The
+    /// message names the task's own file it inspects (in `scope`, or named in `body`; `./` dropped) when there is one.
+    // ponytail: a heuristic on the words, no shell parsing: `bash -c 'grep x f'` or a script that only greps passes.
+    // The linter refuses the plain shapes; the review and the gate stay the real judges.
+    static func trivialCheck(_ c: String, scope: [String], body: String) -> String? {
+        let t = c.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.range(of: #"(\|\||;)\s*(true|:)\s*($|[;&|)])"#, options: .regularExpression) != nil {
+            return "o check engole a falha («|| true», «|| :» ou «; true»): ele fica verde sempre; rode o teste sem isso"
         }
-        let scope = t.list("scope")
-        let body = t.text.components(separatedBy: "\n").enumerated().filter { $0.offset + 1 != t.fields["check"]?.line }.map(\.element).joined(separator: "\n")
-        return files.first { f in scope.isEmpty || scope.contains { TaskScheduler.globsOverlap(f, $0) } || body.contains(f) }
+        let cmds = commands(t).map { Array($0.drop { $0 == "!" }) }.filter { !$0.isEmpty }
+        guard !cmds.isEmpty, cmds.allSatisfy({ inspectors.contains($0[0]) || trivial.contains($0[0]) }) else { return nil }
+        func norm(_ p: String) -> String { var s = p[...]; while s.hasPrefix("./") { s = s.dropFirst(2) }; return String(s) }
+        var files: [String] = []
+        for cmd in cmds where inspectors.contains(cmd[0]) {
+            var args = cmd.dropFirst().filter { !$0.hasPrefix("-") && !["]", "]]", "!"].contains($0) }
+            if ["grep", "egrep", "fgrep", "rg", "sed", "awk"].contains(cmd[0]) { args = Array(args.dropFirst()) }   // the pattern
+            files += args.map { norm($0.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))) }.filter { !$0.isEmpty }
+        }
+        let scope = scope.map(norm)
+        let own = files.first { f in scope.contains { TaskScheduler.globsOverlap(f, $0) } || body.contains(f) }
+        return own.map { "o check só inspeciona o arquivo que a tarefa cria (\($0)): ele passa sem o código funcionar; rode o teste" }
+            ?? "o check só inspeciona arquivos (grep, test, cat, diff…) e não roda código: ele passa sem o código funcionar; rode o teste ou o script do projeto"
     }
 
     /// A shell line cut at `&&`, `||`, `;`, `|` and newlines, each piece its words, leading `VAR=value`s dropped.

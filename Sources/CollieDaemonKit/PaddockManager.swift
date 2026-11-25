@@ -80,7 +80,8 @@ enum PaddockManager {
 
     /// C3b: `base`, the commit the base branch must be on right before the merge (the auto-land's judged base): another
     /// one throws `.conflict` and nothing is merged. nil: not checked (`paddock land` by hand).
-    static func land(_ f: inout Paddock, mode: LandMode, message: String?, base: String? = nil) async throws(ProtocolError) -> LandResult {
+    /// C4a: `failAfterMerge`, the tests' seam: a throw once the base moved (as a failing `rev-parse` would).
+    static func land(_ f: inout Paddock, mode: LandMode, message: String?, base: String? = nil, failAfterMerge: Bool = false) async throws(ProtocolError) -> LandResult {
         try refuseFolder(f)
         let fl = f
         let pasture = URL(fileURLWithPath: fl.repoRoot), paddock = URL(fileURLWithPath: fl.path)
@@ -138,6 +139,7 @@ enum PaddockManager {
             f.status = .done; f.landedAt = Date()
             return LandResult(mode: mode, commit: commit, prURL: url)
         }
+        if failAfterMerge { throw fail("falhou depois do merge (teste)") }
         let commit = try await git(["rev-parse", "HEAD"], in: pasture)
         f.status = .done; f.landedAt = Date()
         return LandResult(mode: mode, commit: commit, prURL: nil, before: before)

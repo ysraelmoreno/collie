@@ -25,6 +25,8 @@ actor CommandRouter {
     var paddockBusy: Set<String> = []
     /// C2: the tests' seam: the save after a land's merge fails (`landPaddockKeepingLate`), as a full disk would.
     var landSaveFails = false
+    /// C4a: the tests' seams: the persist of an auto-land's record fails (`recordAutoLand`); the land throws after its merge.
+    var landRecordFails = false, landFailsAfterMerge = false
     /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).
     var paddockDeleting: Set<UUID> = []
     /// Each paddock's last computed status (PaddockAutoStatus); in memory: after a restart the first computation applies.

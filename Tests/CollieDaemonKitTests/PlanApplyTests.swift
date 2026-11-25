@@ -89,6 +89,39 @@ import CollieProtocol
         #expect(throws: ProtocolError.self) { try PlanApply.tasks(p, approve: p.hash, existing: [], now: now, areaCheck: noArea) }
     }
 
+    /// C4a: `plan apply` revalidates each task's `spec` (its card, links resolved) against the project.
+    @Test func aSpecOutOfTheProjectIsRefused() throws {
+        let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
+        let p = PlanLint.lint(f.dir)
+        #expect(throws: ProtocolError.self) {
+            try PlanApply.tasks(p, approve: p.hash, existing: [], now: now, root: f.dir.appendingPathComponent("outro"), areaCheck: noArea)
+        }
+        #expect(try PlanApply.tasks(p, approve: p.hash, existing: [], now: now, root: f.dir, areaCheck: noArea).count == 3)
+    }
+
+    /// C4a: `work run` of a work with a PRD: a task added after the plan (`work task add`) passes the linter's check rule,
+    /// and each task of the plan still runs its own card (whose content is in the approved hash).
+    @Test func tasksAddedAfterThePlanPassTheCheckRule() throws {
+        let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
+        let p = PlanLint.lint(f.dir)
+        var w = Work(title: "W", terminalId: UUID())
+        w.prd = [WorkPrd(sha256: String(repeating: "a", count: 64), bytes: 3)]
+        w.tasks = try PlanApply.tasks(p, approve: p.hash, existing: [], now: now, areaCheck: noArea)
+        w.plan = WorkPlan(dir: f.dir.path, sha256: p.hash, tasks: ["login", "api", "tela"])
+        #expect(CommandRouter.prdPlanRefusal(w) == nil)
+        for c in ["grep -q rota Sources/Api.swift || true", "swift test --filter X; true", "grep -q x a.swift && echo ok", "true"] {
+            var x = w; x.tasks.append(WorkTask(id: "depois", title: "Depois", check: c))
+            #expect(CommandRouter.prdPlanRefusal(x)?.contains("adicionada depois do plano aprovado") == true, "\(c)")
+            x.tasks[3].state = .done   // the loop takes no done task
+            #expect(CommandRouter.prdPlanRefusal(x) == nil, "\(c)")
+        }
+        var ok = w; ok.tasks.append(WorkTask(id: "depois", title: "Depois", check: "swift test --filter DepoisTests"))
+        #expect(CommandRouter.prdPlanRefusal(ok) == nil)
+        // a planned task whose spec no longer is its card
+        var moved = w; moved.tasks[1].spec = "/tmp/outra-spec.md"
+        #expect(CommandRouter.prdPlanRefusal(moved)?.contains("não aponta mais para o seu cartão") == true)
+    }
+
     @Test func workRunOfAWorkWithAPrdRunsTheApprovedPlan() throws {
         let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
         var w = Work(title: "W", terminalId: UUID())

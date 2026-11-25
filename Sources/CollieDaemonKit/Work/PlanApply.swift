@@ -8,7 +8,8 @@ import CollieProtocol
 enum PlanApply {
     /// The tasks `p` makes for a work that has `existing` ones. `areaCheck` builds a check from `area:` (the project's
     /// collie-work.json, as `work task add --area`). Throws the refusal.
-    static func tasks(_ p: PlanLint.Plan, approve: String, existing: [WorkTask], now: Date,
+    /// C4a: `root`, the project: no task's `spec` (its card, links resolved) may lie outside it.
+    static func tasks(_ p: PlanLint.Plan, approve: String, existing: [WorkTask], now: Date, root: URL? = nil,
                       areaCheck: ([String]) throws -> String) throws -> [WorkTask] {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         guard p.passed else {
@@ -31,7 +32,9 @@ enum PlanApply {
             let check: String
             if let c = t.fields["check"]?.value { check = c } else { check = try areaCheck(t.list("area")) }
             guard check.count <= CommandRouter.maxWorkText else { throw bad("check", "tem mais de \(CommandRouter.maxWorkText) caracteres") }
-            var task = WorkTask(id: t.id, title: t.title, updatedAt: now, spec: SignedAppCheck.realPath(t.url), check: check,
+            let spec = SignedAppCheck.realPath(t.url)
+            if let root, !ProjectRoot.contains(spec, root: root) { throw bad("spec", "aponta para fora do projeto (\(RerailText.clean(spec, max: 200)))") }
+            var task = WorkTask(id: t.id, title: t.title, updatedAt: now, spec: spec, check: check,
                                 evidenceGlob: t.fields["evidence"]?.value, needs: t.needs.isEmpty ? nil : t.needs,
                                 scope: t.fields["scope"] == nil ? nil : t.list("scope"))
             if let e = task.evidenceGlob, let why = EvidenceFiles.refusal(e) { throw bad("evidence", why) }
@@ -56,14 +59,14 @@ enum PlanApply {
 
     /// `dir` linted and applied to work `id` in `store`: its tasks appended, the plan and an audit note recorded. The
     /// loop is never touched (a running or queued one refuses: its approved tasks are not changed under it).
-    static func apply(dir: URL, approve: String, work id: UUID, store: WorkStore, now: Date,
+    static func apply(dir: URL, root: URL? = nil, approve: String, work id: UUID, store: WorkStore, now: Date,
                       areaCheck: @Sendable ([String]) throws -> String) async throws -> (plan: PlanLint.Plan, tasks: [WorkTask]) {
-        let plan = PlanLint.lint(dir)
+        let plan = PlanLint.lint(dir, root: root)
         guard let w = try await store.get(id) else { throw ProtocolError(code: .notFound, message: "no work \(id.uuidString.lowercased())") }
         if let s = w.loop?.state, s == .running || s == .queued {
             throw ProtocolError(code: .invalidArgs, message: "o laço deste trabalho está \(s == .running ? "rodando" : "na fila"): o plano não muda as tarefas que ele aprovou; espere-o terminar")
         }
-        let built = try tasks(plan, approve: approve, existing: w.tasks, now: now, areaCheck: areaCheck)
+        let built = try tasks(plan, approve: approve, existing: w.tasks, now: now, root: root, areaCheck: areaCheck)
         // ponytail: built from the work read above; a task added between the read and this write could share an id
         try await store.update(id) { x in
             x.tasks += built

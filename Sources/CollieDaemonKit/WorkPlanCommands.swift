@@ -88,15 +88,16 @@ extension CommandRouter {
     /// `work.plan.apply`: the package at `dir` made into `w`'s tasks (never starting its loop).
     func planApply(_ r: Request, _ t: TerminalRecord, _ w: Work, now: Date) async throws -> JSONValue {
         let dir = try await planDir(r, t, confined: true)
+        let root = try await projectRoot(of: t)
         // the `area:` checks built here, on the actor (the project's collie-work.json), by the areas as listed
         var checks: [String: Result<String, ProtocolError>] = [:]
-        for task in PlanLint.lint(dir).tasks where task.fields["check"] == nil && task.fields["area"] != nil {
+        for task in PlanLint.lint(dir, root: root).tasks where task.fields["check"] == nil && task.fields["area"] != nil {
             let areas = task.list("area")
             do throws(ProtocolError) { checks[areas.joined(separator: ",")] = .success(try areaCheck(areas, for: t)) }
             catch { checks[areas.joined(separator: ",")] = .failure(error) }
         }
         let built = checks
-        let (plan, tasks) = try await PlanApply.apply(dir: dir, approve: try need(r, "approve"), work: w.id, store: work, now: now) { areas in
+        let (plan, tasks) = try await PlanApply.apply(dir: dir, root: root, approve: try need(r, "approve"), work: w.id, store: work, now: now) { areas in
             guard let c = built[areas.joined(separator: ",")] else {
                 throw ProtocolError(code: .invalidArgs, message: "o plano mudou durante o apply; rode collie work plan lint de novo")
             }
@@ -110,15 +111,30 @@ extension CommandRouter {
     }
 
     /// `work.run` of a work with a PRD: its plan applied, still passing the linter, with the hash the owner approved.
+    /// C4a: each task of the plan still runs its own card as its `spec` (the card's content is in the hash: a spec
+    /// pointing elsewhere would run text nobody approved), and every task added later (`work task add`, CLI or MCP)
+    /// that the loop would take passes the linter's check rule (`PlanLint.checkRefusal`, `trivialCheck`).
     static func prdPlanRefusal(_ w: Work) -> String? {
         guard w.prd?.isEmpty == false else { return nil }
         guard let applied = w.plan else {
             return "o trabalho tem PRD: o laço roda o plano aprovado; rode collie work plan lint <pasta> e o dono, collie work plan apply <pasta> --approve <hash>"
         }
-        let p = PlanLint.lint(URL(fileURLWithPath: applied.dir, isDirectory: true))
+        let dir = URL(fileURLWithPath: applied.dir, isDirectory: true)
+        let p = PlanLint.lint(dir)
         guard p.passed else { return "o plano do PRD (\(applied.dir)) não passa mais no linter:\n" + p.text }
         guard p.hash == applied.sha256 else {
             return "o plano do PRD (\(applied.dir)) mudou depois de aprovado (aprovado \(applied.sha256.prefix(12)), agora \(p.hash.prefix(12))); volte o pacote ao aprovado, ou aplique o novo num trabalho novo"
+        }
+        let planned = Set(applied.tasks)
+        for t in w.tasks where planned.contains(t.id) {
+            guard let card = p.tasks.first(where: { $0.id == t.id }), t.spec == SignedAppCheck.realPath(card.url) else {
+                return "a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)] do plano aprovado não aponta mais para o seu cartão (\(applied.dir)/tasks/\(t.id).md): a spec que roda é a do pacote aprovado"
+            }
+        }
+        for t in w.tasks where !planned.contains(t.id) && (t.state == .open || t.state == .inProgress) {
+            let c = t.check ?? ""
+            guard let why = PlanLint.checkRefusal(c) ?? PlanLint.trivialCheck(c, scope: t.scope ?? [], body: "") else { continue }
+            return "a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)], adicionada depois do plano aprovado, tem um check que o linter recusa: \(why)"
         }
         return nil
     }

@@ -51,6 +51,9 @@ actor LoopFakeHost: LoopHost {
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?
     func setProbe(_ p: @escaping @Sendable (String) async -> Void) { probe = p }
+    /// C5c: answers a check (command, timeout) in place of bash; nil from it: bash runs (a test holds, counts or times out a check).
+    var checkStub: (@Sendable (String, Duration) async throws(ProtocolError) -> ProcessResult?)?
+    func setCheckStub(_ s: @escaping @Sendable (String, Duration) async throws(ProtocolError) -> ProcessResult?) { checkStub = s }
     /// In order: "dismiss <name>", "check".
     var events: [String] = []
     /// Another terminal of the paddock in a turn (blocks the loop's reset).
@@ -365,6 +368,7 @@ actor LoopFakeHost: LoopHost {
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)
+        if let stub = checkStub, let r = try await stub(command, timeout) { return r }
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }

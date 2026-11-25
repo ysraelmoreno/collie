@@ -240,22 +240,24 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
-    /// C5c: `work run` never waits for the pre-check: a slow check (20 s) and the reply comes at once, `starting`, the
-    /// loop in its pre-check phase; `work stop` then ends it at once and frees the paddock.
+    /// C5c: `work run` never waits for the pre-check: its check blocks on a FIFO nobody writes (it ends only when
+    /// killed), yet the reply comes, `starting`, with the loop in its pre-check phase; `work stop` then ends it and
+    /// frees the paddock. No wall clock.
     @Test func workRunReturnsBeforeThePreCheckEnds() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try await addTask(d, p, x.s, "Slow", check: "sleep 20; true")
+            let fifo = FileManager.default.temporaryDirectory.appendingPathComponent("c5c-\(UUID().uuidString.prefix(8)).fifo")
+            #expect(mkfifo(fifo.path, 0o600) == 0)
+            defer { try? FileManager.default.removeItem(at: fifo) }
+            try await addTask(d, p, x.s, "Slow", check: "cat '\(fifo.path)' >/dev/null; true")
             #expect(try await trust(d, p).ok)
-            let t0 = ContinuousClock.now
             let r = try await run(d, p, x.s, ["command": .string("cat")], approve: false)
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
-            #expect(o["state"] == .string("starting") && ContinuousClock.now - t0 < .seconds(10), "\(r)")
+            #expect(o["state"] == .string("starting"), "\(r)")
             #expect(await waitFor(20) { (try? await d.router.work.get(x.work))?.loop?.phase == .preCheck })
             let stop = try await work(d, p, x.s, "work.stop")
             #expect(stop.ok, "\(stop)")
             #expect(await loopEnded(d, x.work))
-            #expect(ContinuousClock.now - t0 < .seconds(18))
             #expect(try await d.router.work.get(x.work)?.loop?.stopReason?.code == .requested)
             #expect(await waitFor(20) { await d.router.loopPaddocks.isEmpty })
         }

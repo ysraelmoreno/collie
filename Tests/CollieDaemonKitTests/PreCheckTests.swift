@@ -4,9 +4,9 @@ import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 
-/// C5c: the loop's first phase, the "check já passa" pre-check, run by the engine (a fake host, real checks in a temp
-/// repo): its own ceiling (past it: red), a green check stops the loop with `checkAlreadyGreen` and no attempt,
-/// `--green-ok` skips it, `work stop` cancels it at once.
+/// C5c: the loop's first phase, the "check já passa" pre-check, run by the engine (a fake host whose checks a test can
+/// hold or time out, no wall clock): its own ceiling (past it: red), a green check stops the loop with
+/// `checkAlreadyGreen` and no attempt, `--green-ok` skips it, `work stop` cancels it, at most four at once.
 @Suite struct PreCheckTests {
     private static func rig(_ tasks: [WorkTask], ceiling: Duration = .seconds(30)) async throws -> (LoopRig, WorkLoop) {
         let r = try await LoopRig(tasks, tries: 1)
@@ -17,13 +17,19 @@ import CollieProtocol
     }
 
     @Test func aSlowCheckPastTheCeilingCountsRed() async throws {
-        // green, but only after 20 s: past the 300 ms ceiling it is red, and the attempt runs (and passes)
-        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Task a", check: "test -f a.swift || { sleep 20; true; }")], ceiling: .milliseconds(300))
+        // a green check that outlives the pre-check's ceiling: the host answers it as `BoundedProcess` does past its
+        // timeout (the fake clock moved on by the ceiling, `.timeout` thrown), no wall clock; red, so the attempt runs
+        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Task a", check: "true")], ceiling: WorkLoop.defaultPreCheckTimeout)
         defer { r.cleanup() }
+        let host = r.host, ceilings = Box<[Duration]>([])
+        await host.setCheckStub { _, timeout throws(ProtocolError) in
+            guard timeout == WorkLoop.defaultPreCheckTimeout else { return nil }   // the attempt's own check runs for real
+            ceilings.value.append(timeout); host.advance(Double(timeout.components.seconds))
+            throw ProtocolError(code: .timeout, message: "bash timed out")
+        }
         await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0) }))
-        let t0 = ContinuousClock.now
         #expect(await loop.run(work: r.work, dir: r.repo) == .finished)
-        #expect(ContinuousClock.now - t0 < .seconds(15))
+        #expect(ceilings.value == [.seconds(120)])
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.loop?.stopReason == nil, "\(String(describing: w.loop?.stopReason))")
         let kinds = w.loop?.events?.map(\.kind) ?? []
@@ -57,28 +63,61 @@ import CollieProtocol
     }
 
     @Test func aWorkStopDuringThePreCheckCancelsIt() async throws {
-        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Task a", check: "sleep 30")])
+        let (r, loop) = try await Self.rig([WorkTask(id: "a", title: "Task a", check: "true")])
         defer { r.cleanup() }
+        // the check never ends by itself: only the cancel of `work stop` wakes it
+        let (entered, inside) = AsyncStream<Void>.makeStream(), cancelled = Box(false)
+        await r.host.setCheckStub { _, _ in
+            inside.yield()
+            try? await Task.sleep(for: .seconds(3600))
+            cancelled.value = Task.isCancelled
+            return ProcessResult(status: 143, stdout: "", stderr: "", truncated: false)
+        }
         let store = r.store, id = r.work
         let run = Task { await loop.run(work: id, dir: r.repo) }
-        #expect(await waitFor(10) { (try? await store.get(id))?.loop?.phase == .preCheck })
-        let t0 = ContinuousClock.now
+        for await _ in entered { break }
+        #expect((try? await store.get(id))?.loop?.phase == .preCheck)
         await loop.stop(work: id)
         #expect(await run.value == .stopped)
-        #expect(ContinuousClock.now - t0 < .seconds(10))
+        #expect(cancelled.value, "the check was not cancelled")
         let w = try await r.get()
         #expect(w.loop?.stopReason?.code == .requested && w.loop?.phase == nil && w.loop?.used == 0, "\(String(describing: w.loop))")
     }
 
     @Test func atMostFourChecksRunAtOnce() async throws {
-        let tasks = (1...6).map { WorkTask(id: "t\($0)", title: "T\($0)", check: "sleep 1; false") }
-        let (r, loop) = try await Self.rig(tasks)
+        let tasks = (1...6).map { WorkTask(id: "t\($0)", title: "T\($0)", check: "false") }
+        let (r, _) = try await Self.rig(tasks)
         defer { r.cleanup() }
-        let t0 = ContinuousClock.now
-        let green = await WorkLoop.greens(tasks, host: r.host, dir: r.repo, timeout: .seconds(10))
-        let took = ContinuousClock.now - t0
-        _ = loop
-        // six of 1 s, four at a time: two rounds (not one, not six)
-        #expect(green.isEmpty && took >= .seconds(2) && took < .seconds(5), "\(took)")
+        // each check waits for the test to let it go: release one at a time once as many as can be in are in
+        let held = HeldChecks()
+        await r.host.setCheckStub { _, _ in
+            await held.enter()
+            return ProcessResult(status: 1, stdout: "", stderr: "", truncated: false)
+        }
+        let greens = Task { await WorkLoop.greens(tasks, host: r.host, dir: r.repo, timeout: .seconds(10)) }
+        for left in stride(from: 6, to: 0, by: -1) {
+            #expect(await waitFor(10) { await held.waiting >= min(WorkLoop.preCheckParallel, left) }, "\(left) left")
+            await held.releaseOne()
+        }
+        #expect(await greens.value.isEmpty)
+        #expect(await held.most == 4 && held.entered == 6, "most \(await held.most)")
     }
+}
+
+/// A check held until the test lets it go: how many wait now, the most seen at once, how many came.
+private actor HeldChecks {
+    private(set) var most = 0, entered = 0
+    private var parked: [CheckedContinuation<Void, Never>] = []
+    var waiting: Int { parked.count }
+    func enter() async {
+        entered += 1
+        await withCheckedContinuation { parked.append($0); most = Swift.max(most, parked.count) }
+    }
+    func releaseOne() { if !parked.isEmpty { parked.removeFirst().resume() } }
+}
+
+private final class Box<T>: @unchecked Sendable {
+    private let lock = NSLock(); private var v: T
+    init(_ v: T) { self.v = v }
+    var value: T { get { lock.withLock { v } } set { lock.withLock { v = newValue } } }
 }

@@ -15,6 +15,11 @@ Com sub-Pastores, o dono precisa ver quem convocou quem e poder cortar um ramo. 
 3. No menu de um sub-Pastor: **Encerrar ramo** (a dispensa em cascata do B1, pelo comando de admin que o app já usa
    para fechar terminal, com a confirmação de hoje) e o interruptor de Pastor que já existe (desligar: ele deixa de
    convocar; os convocados ficam).
+4. **Pastor marcado pelo usuário é Pastor de raiz.** Achado na revisão do B1 (`279e047d`): o daemon trata como
+   sub-Pastor (sem `--paddock`, teto 6, profundidade contada) qualquer Pastor com `summonedBy`. Um worker convocado
+   que o usuário marca como Pastor no app (o caso do `cursor-lead` em 2026-11-24) deve virar Pastor de raiz: o
+   `terminal.update` com `shepherd: true` vindo do app (admin) limpa `summonedBy`
+   (`Sources/CollieDaemonKit/CommandRouter.swift`, ~linha 788). Teste em `ShepherdTests`.
 
 ## Aceite
 
@@ -24,7 +29,7 @@ Com sub-Pastores, o dono precisa ver quem convocou quem e poder cortar um ramo. 
 ## Check
 
 ```
-swift test --disable-sandbox --filter AgentTreeTests
+swift test --disable-sandbox --filter AgentTreeTests && swift test --disable-sandbox --filter ShepherdTests
 ```
 
 ---

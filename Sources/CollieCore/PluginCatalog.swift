@@ -15,7 +15,10 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
         public var minCollie: String?
         public var recalled: Recall?
     }
-    public struct Recall: Codable, Sendable, Equatable { public var reason: String, at: Date }
+    public struct Recall: Codable, Sendable, Equatable {
+        public var reason: String, at: Date
+        public init(reason: String, at: Date) { self.reason = reason; self.at = at }
+    }
     public struct Item: Codable, Sendable, Equatable {
         public var id: String, name: String, publisher: String, summary: String
         public var kind: Kind, minCollie: String, versions: [Version]

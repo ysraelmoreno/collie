@@ -416,7 +416,18 @@ public struct InstalledPlugin: Codable, Sendable, Equatable {
     public var enabled: Bool
     public var installedAt: Date
     public var error: String?
-    public init(id: String, version: String, sha256: String, enabled: Bool, installedAt: Date, error: String? = nil) {
+    public enum Source: String, Codable, Sendable { case catalog, folder }
+    /// Where it came from; nil = folder (installs from before the catalog).
+    public var source: Source?
+    /// Set from the catalog by tree hash (any source); a recalled one stays off until a reinstall of another tree.
+    public var recalled: PluginCatalog.Recall?
+    public init(id: String, version: String, sha256: String, enabled: Bool, installedAt: Date, error: String? = nil,
+                source: Source? = nil, recalled: PluginCatalog.Recall? = nil) {
         self.id = id; self.version = version; self.sha256 = sha256; self.enabled = enabled; self.installedAt = installedAt; self.error = error
+        self.source = source; self.recalled = recalled
+    }
+    /// The refusal to enable or reinstall a recalled version.
+    public static func recalledRefusal(_ r: PluginCatalog.Recall) -> ProtocolError {
+        ProtocolError(code: .conflict, message: "versão recolhida: \(r.reason). Atualize ou remova.")
     }
 }

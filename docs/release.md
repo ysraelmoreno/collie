@@ -143,6 +143,26 @@ build/Collie.app build/update.json`:
 - `requiresServiceRestart: true` (opcional, não gerado hoje) só entra à mão quando uma versão quebrar a
   compatibilidade do daemon antigo com o app novo.
 
+## Sparkle (instalação do app)
+
+O app se atualiza pelo Sparkle 2 (spec `docs/superpowers/specs/2026-11-25-sparkle-updater-design.md`): ele lê
+`https://github.com/ysraelmoreno/collie/releases/latest/download/appcast.xml`, baixa o dmg do release, confere a assinatura
+EdDSA e a do time Apple, instala (com o pedido de senha do macOS quando `/Applications` o exige) e relança.
+
+- **Chave:** o par EdDSA é do dono (`generate_keys` do Sparkle). A **pública** vai no `Info.plist` (`SUPublicEDKey`); a
+  **privada** fica no Keychain do dono e no secret `SPARKLE_ED_PRIVATE_KEY` do repositório. Nunca em arquivo, log ou chat.
+- **CI:** o passo **Appcast** do `release.yml` baixa o `sign_update` da versão fixada (sha256 conferido), roda
+  `scripts/ci/appcast.sh <tag> <dmg> build/Collie.app build/appcast.xml` (a chave entra por stdin) e o `appcast.xml` sobe
+  **depois** do dmg e do `update.json`. Sem o secret o release falha: um appcast sem assinatura nunca é publicado. Depois de
+  publicar, **Conferir manifesto publicado** compara o appcast publicado com o gerado e confere `length` e `url` com o dmg.
+- **Versão:** `CFBundleVersion` = `MAJOR*1000000 + MINOR*1000 + PATCH` da tag (`scripts/ci/build-number.sh`; 0.2.2 → `2002`).
+  O Sparkle compara esse número, então ele só pode crescer com a tag.
+- **Se a chave privada se perder:** nenhum app já instalado aceita atualização assinada por outra chave. Gera-se um par novo, a
+  nova pública entra num build distribuído por fora (dmg na mão) e dali em diante vale a nova.
+- Testes offline: `scripts/ci/test-build-number.sh` e `scripts/ci/test-appcast.sh` (com um `sign_update` de mentira).
+- Roteiro manual (passo do dono): atualizar entre duas versões com Sparkle numa máquina em que `/Applications` pede senha;
+  conferir que o PID do `collied` sobrevive à troca e que o aviso de agente ocupado aparece.
+
 ### Testar com outra fonte (`COLLIE_UPDATE_MANIFEST`)
 
 O daemon (`collied`) lê `COLLIE_UPDATE_MANIFEST` em qualquer build, só com `file://` (outro esquema é ignorado, com

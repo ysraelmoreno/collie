@@ -200,7 +200,7 @@ public final class Daemon: Sendable {
             captureHold: .seconds(config.captureHoldSeconds), readyQuiet: config.askReadyQuiet, readyMax: config.askReadyMax,
             submitConfirm: AskLimits.production.submitConfirm, minTimeoutSeconds: config.askMinTimeoutSeconds)
         limits.replyQuiet = config.askReplyQuiet
-        let asks = AskCoordinator(limits: limits)
+        let asks = AskCoordinator(limits: limits, screenRenderer: config.screenRenderer)
         // a replay (base64 of the whole memory tail) must always fit the stream send queue on its own
         precondition(config.memoryCapBytes / 3 * 4 + 64 * 1024 < UnixSocketServer.Connection.sendCap,
                      "memoryCapBytes too large for the stream send queue")

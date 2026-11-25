@@ -381,18 +381,20 @@ public actor AskCoordinator {
     private let submitConfirm: Duration
     /// Every time limit of this coordinator (M11.1): the daemon passes `AskLimits.production`, tests short ones.
     nonisolated let limits: AskLimits
-    public init(limits: AskLimits) {
-        self.limits = limits
+    /// A4: renders a terminal's output into its screen (the daemon's `screenRenderer`); nil: Cursor's idle answer is the scrollback.
+    private let screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)?
+    public init(limits: AskLimits, screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)? = nil) {
+        self.limits = limits; self.screenRenderer = screenRenderer
         idleQuiet = limits.idleQuiet; heldMax = limits.heldMax; captureHoldMax = limits.captureHold
         submitConfirm = limits.submitConfirm
         (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
     }
     public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120,
-                submitConfirmSeconds: Double? = nil) {
+                submitConfirmSeconds: Double? = nil, screenRenderer: (@Sendable (Data, Int, Int) -> String)? = nil) {
         var l = AskLimits.production
         l.idleQuiet = .seconds(idleQuietSeconds); l.heldMax = .seconds(heldMaxSeconds); l.captureHold = .seconds(captureHoldSeconds)
         if let submitConfirmSeconds { l.submitConfirm = .seconds(submitConfirmSeconds) }
-        self.init(limits: l)
+        self.init(limits: l, screenRenderer: screenRenderer)
     }
 
     /// Registers a spawned terminal. Wires output (paste-mode tracking) and exit (fails its asks).
@@ -1059,7 +1061,19 @@ public actor AskCoordinator {
         let s = t.scrollback.text(since: mark)
         targets[to]?.idleOwed = true   // never consumed if the target really has no hook
         targets[to]?.owedText = String(s.text.suffix(64 * 1024))
-        finish(id, .success(AskResult(output: s.text, source: .idle, truncated: s.truncated)))
+        var result = AskResult(output: s.text, source: .idle, truncated: s.truncated)
+        // A4: Ink repaints the whole frame on every spinner tick; the answer is the rendered screen, minus its frame
+        if t.cursorTUI, let render = screenRenderer {
+            let size = t.process.size ?? (120, 40)
+            let screen = render(t.scrollback.snapshot().data, size.cols, size.rows)
+            let answer = CursorScreen.answer(screen)
+            if !answer.isEmpty {
+                let cut = CursorScreen.isCut(screen)
+                result = AskResult(output: cut ? answer + "\n(resposta cortada na altura da tela: collie check <nome> --screen)" : answer,
+                                   source: .idle, truncated: cut)
+            }
+        }
+        finish(id, .success(result))
         return false
     }
 }

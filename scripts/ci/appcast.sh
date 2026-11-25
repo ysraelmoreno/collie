@@ -27,7 +27,8 @@ MINSYS="$(plist LSMinimumSystemVersion)"
 
 SIZE="$(stat -f %z "$DMG")"
 (( SIZE > 0 )) || die "empty $DMG"
-SIG="$("${SPARKLE_SIGN_UPDATE:-sign_update}" -p -f - "$DMG" <<<"$SPARKLE_ED_PRIVATE_KEY")" || die "sign_update failed"
+# printf into a pipe: a here-string would land in a temp file on this shell
+SIG="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "${SPARKLE_SIGN_UPDATE:-sign_update}" -p -f - "$DMG")" || die "sign_update failed"
 [[ "$SIG" =~ ^[A-Za-z0-9+/]+=*$ ]] || die "sign_update gave no signature"
 
 TMP="$(mktemp "$OUT.XXXXXX")"

@@ -12,7 +12,7 @@ import CollieCore
     /// The agents working now (names); set once the daemon client exists. Empty until then.
     var busy: @MainActor () -> [String]
     private var controller: SPUStandardUpdaterController?
-    private var held: (() -> Void)?
+    fileprivate(set) var held: (() -> Void)?
 
     init(busy: @escaping @MainActor () -> [String] = { [] }, disabled: Bool = !SparkleUpdater.signedByTeam()) {
         self.busy = busy
@@ -55,8 +55,11 @@ import CollieCore
     }
 }
 
-/// Sparkle calls its delegate on the main thread; `@preconcurrency` makes that the checked isolation.
-extension SparkleUpdater: @preconcurrency SPUUpdaterDelegate {
+/// Sparkle calls its delegate on the main thread, which is this class's isolation.
+extension SparkleUpdater: SPUUpdaterDelegate {
+    /// A session that ended in an error leaves no relaunch to run later.
+    func updater(_ updater: SPUUpdater, didAbortWithError error: any Error) { held = nil }
+
     func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
                  untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
         let working = busy()

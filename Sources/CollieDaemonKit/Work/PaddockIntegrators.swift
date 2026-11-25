@@ -41,17 +41,17 @@ enum FieldLand {
     /// it, up to `wait`, looking every `poll`.
     static func land(_ lane: Lane, dir: URL, integrators: PaddockIntegrators, integrator: LaneIntegrator, host: any LoopHost,
                      gate: String?, gateTimeout: Duration, patches: URL,
-                     wait: Duration = paddockWait, poll: Duration = .seconds(2)) async -> Outcome {
+                     wait: Duration = paddockWait, poll: Duration = .seconds(2), tip: String? = nil) async -> Outcome {
         guard lane.isField else { return .conflict(reason: "'\(lane.branch)' não é branch de field", patch: nil) }
         guard await integrators.beginLanding(lane.branch) else { return .waiting(reason: alreadyLanding) }
         let out = await landing(lane, dir: dir, integrator: integrator, host: host, gate: gate, gateTimeout: gateTimeout,
-                                patches: patches, wait: wait, poll: poll)
+                                patches: patches, wait: wait, poll: poll, tip: tip)
         await integrators.endLanding(lane.branch)
         return out
     }
 
     private static func landing(_ lane: Lane, dir: URL, integrator: LaneIntegrator, host: any LoopHost, gate: String?,
-                                gateTimeout: Duration, patches: URL, wait: Duration, poll: Duration) async -> Outcome {
+                                gateTimeout: Duration, patches: URL, wait: Duration, poll: Duration, tip: String?) async -> Outcome {
         let deadline = ContinuousClock.now + wait
         while true {
             let st = try? await host.git(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=no"], in: dir)
@@ -67,7 +67,7 @@ enum FieldLand {
         let name = String(lane.branch.dropFirst(LaneWorktree.fieldBranchPrefix.count))
         let r: LaneIntegrator.Result
         do {
-            r = try await integrator.integrate(lane, title: "field \(name)", attempt: 1, tries: 1, gate: gate, gateTimeout: gateTimeout, as: host)
+            r = try await integrator.integrate(lane, title: "field \(name)", attempt: 1, tries: 1, gate: gate, gateTimeout: gateTimeout, as: host, tip: tip)
         } catch { return .conflict(reason: error.message, patch: nil) }
         switch r.outcome {
         case .integrated, .noop: return .landed(sha: r.head)
@@ -144,7 +144,8 @@ extension CommandRouter {
     /// F3: lands the field `lane` of the agent `terminal`, for the Shepherd `by` (nil: the app; then its summoner's
     /// profile). The gate is `collie-work.json`'s committed at the paddock's HEAD. `asRequest`: `by` is blocked in this
     /// call (`field land`), a wait like an `ask`. Keeps `rec.field.state` (`landing`, then `landed`/`conflict`/as it was).
-    func landField(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false) async -> FieldLand.Outcome {
+    /// `tip`: the sha to merge (a check's judged commit), not the branch's tip at merge time.
+    func landField(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false, tip: String? = nil) async -> FieldLand.Outcome {
         guard let rec = ws.terminals.first(where: { $0.id == terminal }), let pid = rec.paddockId,
               let p = ws.paddocks.first(where: { $0.id == pid }), !p.isFolder else {
             return .conflict(reason: "o agente do field ou o cercado dele não existe", patch: nil)
@@ -170,7 +171,7 @@ extension CommandRouter {
         let before = rec.field?.state
         setFieldState(terminal, .landing)
         let out = await FieldLand.land(lane, dir: dir, integrators: integrators, integrator: integrator, host: host, gate: gate,
-                                       gateTimeout: WorkLoop.defaultCheckTimeout, patches: host.patchDir(UUID()))
+                                       gateTimeout: WorkLoop.defaultCheckTimeout, patches: host.patchDir(UUID()), tip: tip)
         if asRequest, let by { fieldLandHolds[by, default: 1] -= 1; if fieldLandHolds[by] ?? 0 <= 0 { fieldLandHolds[by] = nil } }
         switch out {
         case .landed: setFieldState(terminal, .landed)

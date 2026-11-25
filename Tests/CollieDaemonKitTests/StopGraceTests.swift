@@ -104,7 +104,7 @@ import CollieProtocol
         #expect(w.tasks[0].state == .deferred)
         let stop = try #require(w.loop?.stopReason)
         #expect(stop.code == .landTasksNotDone && stop.detail == "Task a" && !stop.finishes, "\(stop)")
-        #expect(stop.label.contains("Task a") && stop.label.contains("nada integrado"), stop.label)
+        #expect(stop.label.contains("Task a") && stop.label.contains("nada integrado"), "\(stop.label)")
         #expect(await r.host.lands.isEmpty)
         // work status, the history's note and the owner's summary line name it
         #expect(WorkStatusText.loopLine(w)?.contains("tarefa(s) não feitas (Task a)") == true, "\(String(describing: WorkStatusText.loopLine(w)))")

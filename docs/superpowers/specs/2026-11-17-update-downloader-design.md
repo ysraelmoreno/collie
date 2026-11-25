@@ -1,5 +1,8 @@
 # Atualizador automático do Collie — design
 
+> **A instalação foi substituída pelo Sparkle** (`2026-11-25-sparkle-updater-design.md`, plano `2026-11-25-sparkle-updater.md`):
+> o que esta spec diz sobre daemon, versão do bundle e motor figcraft continua valendo; a troca por `rename` e a UI de instalação não.
+
 Status: rascunho para o dono revisar (2026-11-17), revisado (revisão independente aplicada em 2026-11-17: B1, B2,
 I1–I11 e menores). Nada implementado. Plano: `docs/superpowers/plans/2026-11-17-update-downloader.md`.
 

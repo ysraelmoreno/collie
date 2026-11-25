@@ -109,6 +109,13 @@ enum UpdateModel {
         return (open.count, open.filter { badges[$0.id] == .working }.map(\.name))
     }
 
+    /// Sparkle's relaunch is on hold: who is working now and what the two buttons do.
+    static func busyNotice(version: String, busy: [String]) -> String {
+        let n = busy.count == 1 ? "1 agente trabalhando" : "\(busy.count) agentes trabalhando"
+        return "Há \(n) agora: \(busy.joined(separator: ", ")). Atualizar para \(version) fecha e reabre o Collie; "
+            + "\"Depois\" espera os agentes terminarem e então instala."
+    }
+
     /// `restart`: the "restart the service" choice is selected (a busy agent then makes the install wait).
     static func sheet(version: String, open: Int, busy: [String], restart: Bool, engine: String?) -> InstallSheetText {
         let intro: String, options: [String], notes: [String]

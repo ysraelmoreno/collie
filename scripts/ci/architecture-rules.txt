@@ -28,3 +28,9 @@ forbid-import CollieCore Cocoa
 forbid-import CollieCore Carbon
 forbid-import CollieCore Quartz
 forbid-import CollieCore PDFKit
+
+# Sparkle (the app's updater) is linked by CollieApp only: never the daemon, the CLI or the base modules.
+forbid-closure collied Sparkle
+forbid-closure collie Sparkle
+forbid-import CollieCore Sparkle
+forbid-import CollieProtocol Sparkle

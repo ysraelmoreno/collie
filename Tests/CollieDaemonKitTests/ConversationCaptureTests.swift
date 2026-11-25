@@ -60,6 +60,11 @@ private struct Env {
         #expect(try await call("work.hook", ["hook": name, "payload": payload]).ok)
     }
 }
+private func conversationJob(_ e: Env, transcript: String, projects: String, cwd: String) throws -> CuratorJob {
+    let p = ConversationPayload(terminal: e.tid, name: "dev", transcript: transcript, projects: projects, cwd: cwd, lot: nil)
+    let payload = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p))
+    return CuratorJob(id: UUID(), kind: .conversation, store: "", payload: payload, dedupe: "t|\(transcript)", createdAt: Date(), attempts: 0)
+}
 private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30), preset: String = "shell",
                      at file: String = ".claude/projects/-tmp-repo/s.jsonl",
                      _ body: (Env) async throws -> Void) async throws {
@@ -259,6 +264,39 @@ private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30
     }
 
     /// Review Focus 1: a symlink to a key, or a path outside `<config>/projects`: nothing read, nothing sent.
+    /// A job whose transcript no longer exists ends `.ok` (nothing spent, nothing asked), never an error that burns attempts.
+    @Test func jobWithVanishedTranscriptEndsOk() async throws {
+        try await withEnv { e in
+            let projects = e.transcript.deletingLastPathComponent().deletingLastPathComponent()
+            let gone = e.transcript.deletingLastPathComponent().appendingPathComponent("vanished.jsonl")
+            let job = try conversationJob(e, transcript: gone.path, projects: projects.path, cwd: e.root.path)
+            let asked = Trace()
+            let r = try await e.d.router.runConversationJob(job, call: { _ in await asked.add("asked"); return e.fake.output })
+            #expect(r == .ok)
+            #expect(await asked.events.isEmpty)
+        }
+    }
+
+    /// The folder the terminal started in was moved or deleted: the job ends `.ok`, asks nothing, writes nothing (not even
+    /// into the global store), creates no store at that path, and the mark moves on so the chunk is not read again.
+    @Test func jobWhoseFolderIsGoneIsSkipped() async throws {
+        try await withEnv { e in
+            try Data(talk(3).utf8).write(to: e.transcript)
+            let projects = e.transcript.deletingLastPathComponent().deletingLastPathComponent()
+            let missing = FileManager.default.temporaryDirectory.appendingPathComponent("moved-away-\(UUID().uuidString)")
+            let job = try conversationJob(e, transcript: e.transcript.path, projects: projects.path, cwd: missing.path)
+            let before = try await e.records().count
+            let asked = Trace()
+            let r = try await e.d.router.runConversationJob(job, call: { _ in await asked.add("asked"); return e.fake.output })
+            #expect(r == .ok)
+            #expect(await asked.events.isEmpty)
+            #expect(try await e.records().count == before)
+            #expect(try await e.d.router.memory.global.run { $0.store.all().records.count } == 0)
+            #expect(!FileManager.default.fileExists(atPath: missing.path))
+            #expect(e.mark == (try e.size()))
+        }
+    }
+
     @Test func badTranscriptPathIgnored() async throws {
         try await withEnv { e in
             let key = e.transcript.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

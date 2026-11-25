@@ -6,6 +6,31 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-11-25
+
+### Fixed
+- **Memory curator, an environment failure spends no attempt:** when a call fails because the sandbox blocked the CLI, there is no network or name resolution (`getaddrinfo`, `ENOTFOUND`, …) or its workspace folder is gone, or the provider is unavailable, the job waits for the next tick instead of burning one of its 3 attempts and heading for `failed/`. It counts as a bad call, so a provider that never works is paused. A plain failure of the run (bad exit, junk answer, timeout) still spends an attempt.
+- **Conversation capture of a folder that is gone:** a `conversation` job whose terminal started in a folder that was later moved or deleted would fall back to the global store (and write the conversation's learnings there). It is now skipped (the mark moves on, so the chunk is not read again) and never fails. A job whose transcript no longer exists already ended `.ok`; a test pins it.
+- **Memory curator, `failed/` no longer grows forever:** jobs parked after 3 failed attempts (or unreadable) are deleted after 7 days (`Curator.failedKeep`), at daemon start and whenever another job is parked. The "Curador falhando" alert counted every parked file, so a day of environment failures kept it on for good, even after the curator worked again.
+
+## [0.2.3] — 2026-11-25
+
+### Changed
+- **Updates install through Sparkle:** the app checks `appcast.xml` on the release, downloads the dmg, verifies its EdDSA signature and the Apple team, installs (macOS asks for the admin password, or "Install with privilege management", when `/Applications` needs it) and relaunches, with no dmg to download by hand. While an agent is working the relaunch waits for you ("Atualizar mesmo assim" / "Depois"). Local builds (not signed by the team) never update themselves. Preferências › Atualizações now shows "Procurar agora" and the automatic-check switch. `CFBundleVersion` now grows with the tag (0.2.2 is `2002`). The `update.json` is still published so 0.2.x installs reach the first Sparkle version the old way, once.
+
+### Fixed
+- **Memory curator with Cursor, name resolution:** every call failed with `getaddrinfo ENOTFOUND api2.cursor.sh`, because the sandbox of the Cursor call did not open the system name resolver (the Claude one did). It does now.
+
+## [0.2.2] — 2026-11-25
+
+### Fixed
+- **Memory curator with Cursor:** every call failed with `Workspace directory does not exist: /var/folders/…`. The call runs under a sandbox that allows the real path (`/private/var/…`) but not the `/var` link, so the CLI could not see its own workspace. It now gets the real path.
+
+## [0.2.1] — 2026-11-25
+
+### Fixed
+- **"Memória" panel on a fresh install:** the global scope showed `repo '…/Application Support/Collie/memory' does not exist`, because the global store folder is only created by the first write and the daemon refused the path. It is now accepted before the folder exists.
+
 ## [0.2.0] — 2026-11-25
 
 > The factory below is a **preview**. The auto-land was validated end to end in a throwaway repository

@@ -40,6 +40,8 @@ struct NewPaddockForm: Equatable {
     var slug: String? { PaddockName.slug(name) }
     var canCreate: Bool { slug != nil && folder != nil }
     var worktree: Bool { isGit && isolate }
+    /// Why "Cercado fábrica" is disabled (r3): only when a folder was chosen and it isn't git; nil when the box is enabled.
+    var factoryHint: String? { folder != nil && !isGit ? "Precisa de um repositório git." : nil }
     /// `path` or an ancestor below `home` holds a `.git` (as the daemon's ProjectRoot: a dotfiles repo at home doesn't count).
     static func isGit(_ path: String, home: String = NSHomeDirectory()) -> Bool {
         let ceiling = URL(fileURLWithPath: home).resolvingSymlinksInPath().pathComponents
@@ -276,8 +278,13 @@ private struct PaddockDialogs: ViewModifier {
             if form.folder != nil {
                 Toggle("Isolar numa branch (worktree)", isOn: Binding(get: { form.worktree }, set: { actions.newForm?.isolate = $0 }))
                     .disabled(!form.isGit)
-                Toggle("Cercado fábrica", isOn: Binding(get: { form.factory }, set: { actions.newForm?.factory = $0 }))
-                    .disabled(!form.isGit)
+                HStack(spacing: 8) {
+                    Toggle("Cercado fábrica", isOn: Binding(get: { form.factory }, set: { actions.newForm?.factory = $0 }))
+                        .disabled(!form.isGit)
+                    if let hint = form.factoryHint {
+                        Text(hint).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    }
+                }
                 if !form.isGit {
                     Text("A pasta não é um repositório git: o cercado trabalha nela direto.")
                         .font(.collieMono(12)).foregroundStyle(Color.collieMuted)

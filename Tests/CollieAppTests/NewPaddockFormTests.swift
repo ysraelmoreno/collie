@@ -30,4 +30,12 @@ struct NewPaddockFormTests {
         f.folder = d.plain.path
         #expect(!f.factory && f.canCreate)   // moved off git: unchecked, still creatable
     }
+
+    /// r3: a disabled "Cercado fábrica" says why, only when the folder isn't git.
+    @Test func factoryHintOnlyOffGit() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.home) }
+        #expect(NewPaddockForm(folder: d.plain.path).factoryHint == "Precisa de um repositório git.")
+        #expect(NewPaddockForm(folder: d.repo.path).factoryHint == nil)
+        #expect(NewPaddockForm().factoryHint == nil)   // no folder: the box isn't shown
+    }
 }

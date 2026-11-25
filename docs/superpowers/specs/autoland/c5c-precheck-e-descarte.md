@@ -24,3 +24,9 @@ Um `work run` cujo cliente desistiu (timeout) durante o pré-check deixou `loopP
 ## Segunda tentativa (vetos das tentativas anteriores)
 1. Teste de cancelamento (veto de testes): inicie `work run` numa Task, cancele a Task DURANTE o pré-check (check lento, host falso) e espere `loopPaddocks` esvaziar e o laço terminar SEM `work stop`. Tem de FALHAR sem a correção do `defer`/reserva.
 2. `startHead` obsoleto (veto de simplicidade, `WorkLoopCommands.swift` ~162): o commit inicial do trabalho (`startHead`) só pode ser herdado do laço anterior quando aquele laço NÃO integrou. Zere/recalcule `startHead` quando o land integra (stopReason `landed`), e ao iniciar um `work run` use o HEAD atual se o laço anterior terminou em `landed`. Sem isso o próximo `reset --hard` volta a um commit que já está na base e desfaz trabalho integrado. Teste (git real): land integra, novo trabalho para sem integrar, o descarte volta ao HEAD pós-land e nunca a um commit anterior; falha sem a correção.
+
+## Terceira tentativa (vetos da tentativa 2, só de teste)
+O código já passa na revisão (startHead corrigido). Falta só deixar os testes determinísticos, sem tempo real:
+1. `PreCheckTests.atMostFourChecksRunAtOnce`: sem `sleep` e sem limite de parede. Use um host/runner falso que conta checks simultâneos e bloqueia cada check numa continuação controlada pelo teste; afirme que o máximo simultâneo == 4 com 6 checks.
+2. Teto (`aSlowCheckPastTheCeilingCountsRed`) e demais testes de pré-check: remova `sleep 20/30` em shell e asserções `< 15s`/`< 10s`. Use runner falso que espera uma continuação e relógio injetado que avança até o teto; o check estoura e conta vermelho. Nada de parede.
+3. Mantenha o teste de cancelamento da tentativa anterior (cancela a Task do comando enquanto segura a reserva, host falso bloqueando num ponto controlado); ele tem de falhar sem o `defer`.

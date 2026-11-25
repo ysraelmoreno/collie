@@ -280,7 +280,7 @@ actor WorkLoop {
         let token = UUID(), grace = stopGrace, clock = stopClock
         stopTokens[id] = token
         Task { [weak self] in
-            try? await clock.sleep(for: grace)
+            await Self.nap(grace, on: clock)
             await self?.graceOver(id, token)
         }
     }
@@ -1110,7 +1110,7 @@ actor WorkLoop {
     }
 
     /// The loop's one wait on the clock: its polls (a commit, another terminal, the agent's screen) have no event.
-    private static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
+    private static func nap(_ d: Duration, on clock: any Clock<Duration> = ContinuousClock()) async { try? await clock.sleep(for: d) }
 
     /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
     /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.

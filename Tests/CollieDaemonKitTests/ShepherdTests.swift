@@ -41,7 +41,8 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             let a = try await term(d, p, "A")
             for cmd in ["summon", "dismiss", "leash", "unleash", "notify"] {
                 let r = try await call(p, a, cmd, ["name": "W", "preset": "shell", "target": "A", "a": "A", "b": "A", "message": "x"])
-                #expect(r.error?.code == .notShepherd && r.error?.message == "'\(cmd)' is Shepherd-only", "\(r)")
+                let hint = cmd == "summon" ? "; peça a quem te convocou (collie ask <nome> --no-wait) ou ao usuário para te marcar como Pastor no app" : ""
+                #expect(r.error?.code == .notShepherd && r.error?.message == "'\(cmd)' is Shepherd-only\(hint)", "\(r)")
             }
             #expect(try await snapshot(d, p).terminals.map(\.name) == ["A"])
         }
@@ -58,6 +59,15 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             #expect(!w.isShepherd && w.cwd == "/private/tmp" && w.paddockId == nil)   // the resolved cwd that was checked
             #expect(try await call(p, m, "summon", ["name": "w", "preset": "shell"]).error?.code == .invalidArgs)
             #expect(try await call(p, m, "summon", ["name": "X", "preset": "shell", "paddock": "nope"]).error?.code == .notFound)
+        }
+    }
+
+    @Test func summonModelStillRefusedForCodex() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let r = try await call(p, m, "summon", ["name": "X", "preset": "codex", "model": "y"])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("--model is for claude") == true, "\(r)")
+            #expect(try await names(p, m) == [])
         }
     }
 
@@ -322,6 +332,141 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             #expect(try await admin(d, p, "leash", ["a": .string("M1"), "b": .string("M2")]).ok)
             #expect(try await call(p, m1, "dismiss", ["target": "M2"]).error?.code == .invalidArgs)
         }
+    }
+
+    // MARK: sub-Shepherd (PRD B1)
+
+    private func sub(_ d: Daemon, _ p: Paths, by t: Term, _ name: String) async throws -> Term {
+        let r = try await call(p, t, "summon", ["name": name, "preset": "shell", "shepherd": "true"])
+        guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+        return Term(id: id, token: try await tokenOf(d, id))
+    }
+
+    @Test func subShepherdReachesItsWorkersAndTheTopDoesNot() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            #expect(try await call(p, s, "summon", ["name": "w1", "preset": "shell"]).ok)
+            #expect(try await names(p, s) == ["M", "w1"])
+            #expect(try await names(p, m) == ["sub"])   // the grandchild is not on the top Shepherd's leashes
+            #expect(try await call(p, m, "dismiss", ["target": "w1"]).error?.code == .notConnected)
+            let snap = try await snapshot(d, p)
+            let id = { (n: String) in snap.terminals.first { $0.name == n }! }
+            #expect(id("sub").isShepherd && id("sub").summonedBy == id("M").id && id("w1").summonedBy == id("sub").id && id("M").summonedBy == nil)
+        }
+    }
+
+    @Test func subShepherdDepthStopsAtTwo() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s1 = try await sub(d, p, by: m, "s1")
+            let s2 = try await sub(d, p, by: s1, "s2")   // third level: allowed
+            let r = try await call(p, s2, "summon", ["name": "s3", "preset": "shell", "shepherd": "true"])   // fourth: refused
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("depth 2") == true, "\(r)")
+            #expect(try await call(p, s2, "summon", ["name": "w", "preset": "shell"]).ok)   // a worker is no depth
+            #expect(try await names(p, s2) == ["s1", "w"])
+        }
+    }
+
+    @Test func subShepherdHasNoPaddockOfItsOwn() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            let a = try await call(p, s, "summon", ["name": "w", "preset": "shell", "paddock": "nope"])
+            #expect(a.error?.code == .notShepherd && a.error?.message.contains("sub-Shepherd") == true, "\(a)")   // before the lookup
+            let b = try await call(p, s, "paddock.create", ["name": "x"])
+            #expect(b.error?.code == .notShepherd && b.error?.message.contains("sub-Shepherd") == true, "\(b)")
+            #expect(try await names(p, s) == ["M"])
+        }
+    }
+
+    @Test func subShepherdHasCeilingOfSix() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            for i in 1...6 { #expect(try await call(p, s, "summon", ["name": "w\(i)", "preset": "shell"]).ok, "w\(i)") }
+            let r = try await call(p, s, "summon", ["name": "w7", "preset": "shell"])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("6") == true, "\(r)")
+            for i in 1...7 { _ = try await call(p, m, "summon", ["name": "t\(i)", "preset": "shell"]) }   // the top is not capped
+            #expect(try await names(p, m).count == 8)
+        }
+    }
+
+    @Test func dismissingSubShepherdCascadesWorkersFirst() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            let s2 = try await sub(d, p, by: s, "sub2")
+            #expect(try await call(p, s, "summon", ["name": "w1", "preset": "shell"]).ok)
+            #expect(try await call(p, s2, "summon", ["name": "w2", "preset": "shell"]).ok)
+            let ids = try await snapshot(d, p).terminals.reduce(into: [String: UUID]()) { $0[$1.name] = $1.id }
+            let ev = try await StreamClient.open(Request(id: "e", token: d.adminToken, command: "ui.events"), path: p.socket)
+            defer { ev.close() }
+            #expect(try await call(p, m, "dismiss", ["target": "sub"]).ok)
+            var order: [UUID] = []
+            while order.count < 4, case .event(let e)? = try await ev.next(timeoutSeconds: 30) { if case .removed(let u) = e { order.append(u) } }
+            let at = { (n: String) in order.firstIndex(of: ids[n]!) ?? -1 }
+            #expect(order.count == 4 && at("w2") < at("sub2") && at("sub2") < at("sub") && at("w1") < at("sub"), "\(order)")
+            #expect(try await snapshot(d, p).terminals.map(\.name) == ["M"])
+        }
+    }
+
+    @Test func appMarkingASummonedWorkerAsShepherdMakesItARoot() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            #expect(try await call(p, m, "summon", ["name": "w", "preset": "shell"]).ok)
+            // a sub-Shepherd edited without flipping the switch keeps its summoner (rename, or the switch sent as already is)
+            #expect(try await admin(d, p, "update", ["name": .string("sub"), "shepherd": .bool(true), "newName": .string("sub2")]).ok)
+            var snap = try await snapshot(d, p)
+            #expect(snap.terminals.first { $0.name == "sub2" }?.summonedBy == snap.terminals.first { $0.name == "M" }?.id)
+            // the user marks the summoned worker: a root Shepherd (it may take --paddock, it is no longer M's to cascade)
+            #expect(try await admin(d, p, "update", ["name": .string("w"), "shepherd": .bool(true)]).ok)
+            snap = try await snapshot(d, p)
+            let w = snap.terminals.first { $0.name == "w" }!
+            #expect(w.isShepherd && w.summonedBy == nil)
+            #expect(try await call(p, m, "dismiss", ["target": "w"]).error?.code == .invalidArgs)   // an app-marked one: never
+            _ = s
+        }
+    }
+
+    @Test func killBranchRemovesTheSummonedTreeLeavesFirstAndPlainKillDoesNot() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            let s = try await sub(d, p, by: m, "sub")
+            #expect(try await call(p, s, "summon", ["name": "w1", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "w0", "preset": "shell"]).ok)
+            let ids = try await snapshot(d, p).terminals.reduce(into: [String: UUID]()) { $0[$1.name] = $1.id }
+            let ev = try await StreamClient.open(Request(id: "e", token: d.adminToken, command: "ui.events"), path: p.socket)
+            defer { ev.close() }
+            #expect(try await admin(d, p, "kill", ["target": .string("sub"), "branch": .bool(true)]).ok)
+            var order: [UUID] = []
+            while order.count < 2, case .event(let e)? = try await ev.next(timeoutSeconds: 30) { if case .removed(let u) = e { order.append(u) } }
+            #expect(order == [ids["w1"]!, ids["sub"]!], "\(order)")
+            #expect(try await snapshot(d, p).terminals.map(\.name).sorted() == ["M", "w0"])
+            // without branch, only the target goes: the summoned stay
+            let s2 = try await sub(d, p, by: m, "sub2")
+            #expect(try await call(p, s2, "summon", ["name": "w2", "preset": "shell"]).ok)
+            #expect(try await admin(d, p, "kill", ["target": .string("sub2")]).ok)
+            #expect(try await snapshot(d, p).terminals.map(\.name).sorted() == ["M", "w0", "w2"])
+        }
+    }
+
+    @Test func shepherdDoesNotDismissAnotherOnesSub() async throws {
+        try await withDaemon { d, p in
+            let m1 = try await shepherd(d, p, "M1"), m2 = try await shepherd(d, p, "M2")
+            _ = try await sub(d, p, by: m1, "sub")
+            #expect(try await admin(d, p, "leash", ["a": .string("M2"), "b": .string("sub")]).ok)
+            #expect(try await call(p, m2, "dismiss", ["target": "sub"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m2, "dismiss", ["target": "M1"]).error?.code == .notConnected)   // an app-marked one: never
+            #expect(try await snapshot(d, p).terminals.count == 3)
+        }
+    }
+
+    @Test func recordWithoutSummonedByDecodes() throws {
+        let json = #"{"id":"\#(UUID().uuidString)","name":"old","preset":"shell","cwd":"/tmp","isShepherd":true}"#
+        let t = try JSONDecoder().decode(TerminalRecord.self, from: Data(json.utf8))
+        #expect(t.summonedBy == nil && t.isShepherd)
     }
 
     @Test func parallelShepherdsAreIsolated() async throws {

@@ -32,10 +32,15 @@ struct AttentionDetector {
     private var tail = ""
     private(set) var lastReason = ""
 
-    init(preset: Preset) {
-        isClaude = preset == .claude
-        patterns = (isClaude ? Self.claude : []) + (preset == .cursor ? Self.cursorApprovals + [Self.cursorLogin, Self.cursorTrust] : []) + Self.generic
+    /// `agent`: `CommandRouter.agentName` (claude|cursor|codex|other), so a custom command that runs an agent counts as it.
+    init(agent: String) {
+        isClaude = agent == "claude"
+        patterns = (isClaude ? Self.claude : []) + (agent == "cursor" ? Self.cursorApprovals + [Self.cursorLogin, Self.cursorTrust] : []) + Self.generic
     }
+
+    /// The agent a bare preset stands for (no command to look at).
+    static func agent(of preset: Preset) -> String { preset == .claude ? "claude" : preset == .cursor ? "cursor" : preset == .codex ? "codex" : "other" }
+    init(preset: Preset) { self.init(agent: Self.agent(of: preset)) }
 
     /// The reason (the matched pattern, or Claude's question as printed) when `text` completes a prompt; the buffer is
     /// cleared then, so one prompt fires once.
@@ -76,6 +81,7 @@ struct QuietDetector {
     static let overflowReason = "saída demais para conferir"
     static let heldCap = 64 * 1024
     private let preset: Preset
+    private let agent: String
     private let now: @Sendable () -> ContinuousClock.Instant
     private var detector: AttentionDetector
     private var lastInput: ContinuousClock.Instant
@@ -88,8 +94,11 @@ struct QuietDetector {
     /// An overflowed window ended with output stopped and nothing found in what was kept: `overflowCheck` decides.
     private(set) var overflowArmed = false
     /// `now`: tests drive the clock.
-    init(preset: Preset, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
-        self.preset = preset; self.now = now; detector = AttentionDetector(preset: preset); lastInput = now() - .seconds(60)
+    init(preset: Preset, agent: String? = nil, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
+        // nil or "other" (a command nobody recognizes): the preset's patterns, so a claude preset with a fake command keeps Claude's;
+        // a custom Cursor is already "cursor"
+        let agent = agent.flatMap { $0 == "other" ? nil : $0 } ?? AttentionDetector.agent(of: preset)
+        self.preset = preset; self.agent = agent; self.now = now; detector = AttentionDetector(agent: agent); lastInput = now() - .seconds(60)
     }
     var inWindow: Bool { now() - lastInput < Fanout.inputQuiet }
     /// A window is open, or over but not scanned yet: what the terminal shows is not known.
@@ -99,7 +108,7 @@ struct QuietDetector {
 
     /// `echo`: the text this input wrote (an injected prompt), which the terminal may print back.
     mutating func input(echo: String? = nil) {
-        lastInput = now(); detector = AttentionDetector(preset: preset); held = ""; overflowed = false; overflowArmed = false
+        lastInput = now(); detector = AttentionDetector(agent: agent); held = ""; overflowed = false; overflowArmed = false
         self.echo = echo
     }
 

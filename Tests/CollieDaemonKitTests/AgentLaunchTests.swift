@@ -176,11 +176,33 @@ import CollieProtocol
         let s = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh")
         #expect(s.arguments == ["-lc", "exec cursor-agent --plugin-dir \(plugin(r))"])
         let sb = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
-        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --plugin-dir \(plugin(r))"])
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --trust --plugin-dir \(plugin(r))"])
         // its own command (no PATH check: the command picks its program): the plugin right after the program
         let c = rec(.cursor, "env A=1 cursor-agent --model x")
         let cs = try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
         #expect(cs.arguments == ["-lc", "env A=1 cursor-agent --plugin-dir \(plugin(c)) --model x"])
+    }
+    /// A2: the preset takes `--model`; `--trust` only under the Collie sandbox (free terminal keeps the dialog); no duplicate flags.
+    @Test func cursorModelAndTrust() throws {
+        let path = try cursorPath()
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        func plugin(_ r: TerminalRecord) -> String { AgentLaunch.quote(AgentLaunch.cursorPluginDir(r.id, in: dir).path) }
+        var r = rec(.cursor); r.model = "composer-2.5"
+        let sb = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --trust --plugin-dir \(plugin(r)) --model 'composer-2.5'"])
+        let free = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(free.arguments == ["-lc", "exec cursor-agent --plugin-dir \(plugin(r)) --model 'composer-2.5'"])
+        #expect(!free.arguments.joined().contains("--trust"))
+        // a custom cursor-agent: --trust added under the sandbox, but never a second --model/--trust
+        var c = rec(.custom, "cursor-agent --model a --trust"); c.model = "b"
+        let cs = try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        let line = cs.arguments[1]
+        #expect(line.components(separatedBy: "--trust").count == 2 && line.components(separatedBy: "--model").count == 2, "\(line)")
+        let c2 = rec(.custom, "cursor-agent")
+        #expect(try AgentLaunch.launchSpec(for: c2, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+            .arguments[1].contains(" --trust"))
+        #expect(CommandRouter.agentName(rec(.cursor)) == "cursor" && CommandRouter.agentName(rec(.custom, "env A=1 cursor-agent -x")) == "cursor")
+        #expect(CommandRouter.agentName(rec(.codex)) != "cursor" && CommandRouter.agentName(rec(.custom, "codex")) != "cursor")
     }
     /// Cursor gets Collie's orientation (sessionStart → additional_context) and the collie MCP server through a
     /// per-terminal `--plugin-dir` in Collie's data; the MCP env carries names only (cursor gives a stdio MCP child
@@ -197,6 +219,10 @@ import CollieProtocol
         let hooks = try json("hooks/hooks.json")
         let start = ((hooks["hooks"] as! [String: Any])["sessionStart"] as! [[String: Any]])[0]
         #expect(hooks["version"] as? Int == 1 && start["command"] as? String == "'/opt/o rq/collie' hook cursor-session-start")
+        // D1: the tool hooks that feed the plug-in contract (`edit`) and the in-turn mark
+        let events = try #require(hooks["hooks"] as? [String: [[String: Any]]])
+        #expect(Set(events.keys) == ["sessionStart", "preToolUse", "postToolUse"])
+        for e in ["preToolUse", "postToolUse"] { #expect(events[e]?.first?["command"] as? String == "'/opt/o rq/collie' hook cursor-tool", "\(e)") }
         let server = (try json(".mcp.json")["mcpServers"] as! [String: Any])["collie"] as! [String: Any]
         #expect(server["command"] as? String == collie.path && server["args"] as? [String] == ["mcp"])
         let env = try #require(server["env"] as? [String: String])
@@ -215,7 +241,7 @@ import CollieProtocol
             #expect(try String(contentsOf: cmd, encoding: .utf8) == LoopCommand.markdown(arguments: false))
             #expect(try FileManager.default.attributesOfItem(atPath: cmd.path)[.posixPermissions] as? Int == 0o600)
             let hooks = try JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("hooks/hooks.json"))) as! [String: Any]
-            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["sessionStart"])
+            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["postToolUse", "preToolUse", "sessionStart"])
         }
     }
     /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
@@ -224,7 +250,7 @@ import CollieProtocol
         #expect(AgentLaunch.hookSubcommands == ["claude-session-start", "claude-prompt", "cursor-session-start", "claude-tool",
                                                 "claude-subagent-stop", "claude-precompact", "claude-session-end",
                                                 "claude-notification", "claude-statusline", "claude-stop", "codex-notify",
-                                                "generic-stop"])
+                                                "generic-stop", "cursor-tool"])
     }
     @Test func hooksUseFrozenNames() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }

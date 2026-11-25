@@ -171,13 +171,14 @@ struct ContextPanel: View {
                             .padding(.horizontal, 5).padding(.vertical, 1).background(Color.collieAttention, in: .capsule)
                             .accessibilityLabel(r.pending == 1 ? "1 cartão pendente" : "\(r.pending) cartões pendentes")
                     }
+                    if r.summonedByName != nil { CollieTag("Pastor", tone: .accent) }
                     CollieTag(r.preset.rawValue, tone: .neutral)
                 }
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .simultaneousGesture(TapGesture(count: 2).onEnded { ctx.edit(r.id) })
-            .help([r.name, status.text].compactMap { $0 }.joined(separator: " · "))
+            .help([r.name, r.summonedByName.map { "convocado por \($0)" }, status.text].compactMap { $0 }.joined(separator: " · "))
             .accessibilityValue(status.text ?? "ocioso")
             .accessibilityAddTraits(selected ? .isSelected : [])
         }

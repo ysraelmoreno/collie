@@ -31,6 +31,8 @@ struct LoopScript: Sendable {
 actor LoopFakeHost: LoopHost {
     nonisolated let dir: URL, patches: URL
     var scripts: [String: LoopScript] = [:]
+    /// C3: `preset:model` the loop asked for, one per summon, in order.
+    var summonedAs: [String] = []
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
     /// Every command `check` ran (the tasks' checks and the gate), in order.
     var commands: [String] = []
@@ -153,7 +155,7 @@ actor LoopFakeHost: LoopHost {
     func setOwner(_ o: String) { owner = o }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = UUID(); names[id] = name; summoned.append(name); agentIds.append(id); return id
+        let id = UUID(); names[id] = name; summoned.append(name); summonedAs.append((loop.preset ?? "-") + ":" + (loop.model ?? "-")); agentIds.append(id); return id
     }
     /// F2 R4 (WorkLoopReviewTests): reviewers. `reviewAnswers[<reviewer's name> or <persona>]`: the text it answers (absent: approves;
     /// `.some(nil)`: mute, its ask throws). A reviewer not yet dismissed is a terminal of the paddock in a turn: the fake's
@@ -396,7 +398,7 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
 struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
-    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil, precheck: String? = nil,
+    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil, precheck: String? = nil, escalate: [String]? = nil,
          checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
@@ -404,7 +406,7 @@ struct LoopRig {
         let w = try await store.start(title: "W", terminal: UUID(), paddockId: UUID(), branch: "main")
         try await store.update(w.id) {
             $0.tasks = tasks
-            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate, precheck: precheck)
+            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate, precheck: precheck, escalate: escalate)
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
@@ -472,6 +474,36 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(w.tasks[1].state == .done)
         #expect(await r.host.summoned == ["w-task-a-t1", "w-task-a-t2", "w-task-b-t1"])
         #expect(await r.host.dismissed == ["w-task-a-t1", "w-task-a-t2", "w-task-b-t1"])   // finding 5: every agent goes, the last failed one too
+    }
+
+    /// C3: attempt n of a task takes entry min(n, k); the journal and the status say which.
+    @Test func escalatesTheModelByAttempt() async throws {
+        let r = try await Rig([task("a", "false")], tries: 3, escalate: ["cursor:m1", "cursor:m2", "claude:m3"]); defer { r.cleanup() }
+        for n in ["w-task-a-t1", "w-task-a-t2", "w-task-a-t3"] { await r.host.set(n, Script(act: { try await commit("\(n).txt", "x\n", in: $0) })) }
+        #expect(await r.run() == .finished)
+        #expect(await r.host.summonedAs == ["cursor:m1", "cursor:m2", "claude:m3"])
+        let w = try await r.get()
+        #expect(w.loop?.events?.contains { $0.kind == .agentSummoned && $0.detail?.hasSuffix("[claude:m3]") == true } == true)
+    }
+
+    @Test func escalationStaysOnTheLastEntry() async throws {
+        let r = try await Rig([task("a", "false")], tries: 5, escalate: ["cursor:m1", "claude:m2"]); defer { r.cleanup() }
+        for n in 1...5 { await r.host.set("w-task-a-t\(n)", Script(act: { try await commit("f\(n).txt", "x\n", in: $0) })) }
+        #expect(await r.run() == .finished)
+        #expect(await r.host.summonedAs == ["cursor:m1", "claude:m2", "claude:m2", "claude:m2", "claude:m2"])
+    }
+
+    @Test func escalationParsesAndShowsTheAttemptsModel() throws {
+        #expect(try CommandRouter.parseEscalate("cursor:composer-2.5, claude:sonnet", excludes: []) == ["cursor:composer-2.5", "claude:sonnet"])
+        #expect(try CommandRouter.parseEscalate(nil, excludes: []) == nil)
+        for bad in ["codex:x", "cursor", "cursor:", "claude:a b", "cursor:a,,claude:b"] {
+            #expect(throws: ProtocolError.self) { try CommandRouter.parseEscalate(bad, excludes: []) }
+        }
+        #expect(throws: ProtocolError.self) { try CommandRouter.parseEscalate("cursor:a", excludes: ["model"]) }
+        let l = WorkLoopState(attempt: 2, escalate: ["cursor:a", "claude:b"])
+        #expect(l.escalation(attempt: 2)?.model == "b" && l.escalation(attempt: 9)?.preset == "claude")
+        var w = Work(title: "W", terminalId: UUID()); w.loop = l
+        #expect(WorkStatusText.modelLine(w)?.hasPrefix("modelo dos agentes: claude:b (tentativa 2") == true)
     }
 
     @Test func noCommitFailsEvenWithGreenCheck() async throws {

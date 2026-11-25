@@ -114,4 +114,28 @@ private let continued = Data(#"{"stop_hook_active":true}"#.utf8)
         #expect(await PluginHookClient.toolOutput(hook: "claude-tool", payload: editPayload, env: env) == nil)
         #expect(await PluginHookClient.stopOutput(stdin: plain, env: env) == nil)
     }
+
+    @Test func cursorToolPrintsAdditionalContextAndSendsOnlyPluginHook() async throws {
+        let f = try Fake(plugin: ["guide": .string("follow Foo")])
+        let post = try PluginHooksTests.fixture("postToolUse-write")
+        let out = await PluginHookClient.cursorToolOutput(payload: post, env: f.env)
+        #expect(json(out)?["additional_context"] as? String == "follow Foo")
+        #expect(f.commands == ["plugin.hook"] && f.args("plugin.hook")?["event"] == .string("edit"))
+    }
+
+    @Test func cursorToolBlockBecomesContextAndErrorsFailOpen() async throws {
+        let b = try Fake(plugin: ["block": .string("no")])
+        let post = try PluginHooksTests.fixture("postToolUse-write")
+        #expect(json(await PluginHookClient.cursorToolOutput(payload: post, env: b.env))?["additional_context"] as? String == "no")
+        let bad = try Fake(pluginOK: false)
+        var errors: [String] = []
+        #expect(await PluginHookClient.cursorToolOutput(payload: post, env: bad.env, onError: { errors.append($0) }) == nil && errors.count == 1)
+        #expect(await PluginHookClient.cursorToolOutput(payload: post, env: [:]) == nil)
+    }
+
+    @Test func cursorPreToolUsePrintsNothingEvenWhenAPluginSpeaks() async throws {
+        let f = try Fake(plugin: ["block": .string("no")])
+        #expect(await PluginHookClient.cursorToolOutput(payload: try PluginHooksTests.fixture("preToolUse-read"), env: f.env) == nil)
+        #expect(f.commands == ["plugin.hook"])   // still sent: it is the in-turn mark
+    }
 }

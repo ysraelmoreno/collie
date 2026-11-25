@@ -1,0 +1,28 @@
+
+
+  Cursor Agent
+  v2026.11.22-e9042b2
+  Tip: Use subagents to parallelize work and preserve context.
+
+                                                                                                                       
+  Reply with a markdown table of 3 rows: fruit, color. Nothing else.                                                   
+                                                                                                                       
+
+  ┌────────┬────────┐
+  │ Fruit  │ Color  │
+  ├────────┼────────┤
+  │ Apple  │ Red    │
+  ├────────┼────────┤
+  │ Banana │ Yellow │
+  ├────────┼────────┤
+  │ Grape  │ Purple │
+  └────────┴────────┘
+
+
+
+                                                                                                                       
+  → Add a follow-up                                                                                                    
+                                                                                                                       
+
+  Composer 2.5 · 6.9%                                                                                   Run Everything
+  /private/tmp

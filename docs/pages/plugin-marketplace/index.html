@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marketplace de plug-ins</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+  --color-warn-text: #A14A06;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+    --color-warn-text: #FFB86B;
+  }
+}
+
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+:root, [data-theme] { --line: var(--color-border); --win: var(--color-bg); --panel: var(--color-surface); --warn: var(--color-warn-text, var(--color-warn)); --ok: var(--color-success); --danger: #FF8A80; }
+[data-theme="light"] { --danger: #B3261E; --warn: var(--color-warn); }
+body { background: var(--bg); color: var(--text); font-family: "Space Grotesk", system-ui, sans-serif; font-size: 15px; line-height: 1.45; padding: 24px 16px 64px; }
+code, .mono { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+.wrap { max-width: 980px; margin: 0 auto; }
+h1 { font-size: 28px; margin: 0 0 4px; } p { margin: 0 0 8px; } .muted { color: var(--muted); } .small { font-size: 12px; }
+.top { display: flex; gap: 12px; justify-content: space-between; flex-wrap: wrap; margin-bottom: 16px; }
+.ctl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.chip { font: inherit; font-size: 13px; background: var(--surface); border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 5px 12px; }
+.chip.on { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); font-weight: 700; }
+.stage { display: flex; justify-content: center; }
+.win { position: relative; width: 100%; max-width: 780px; height: 640px; background: var(--win); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 24px 60px rgba(0,0,0,.28); }
+.tb { height: 38px; background: var(--color-memory); display: flex; align-items: center; padding: 0 14px; gap: 7px; flex: none; }
+.tb i { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); opacity: .45; } .tb b { margin: 0 auto; font-size: 13px; padding-right: 40px; }
+.body { flex: 1; min-height: 0; display: flex; }
+.side { width: 170px; flex: none; background: var(--color-memory); border-right: 1px solid var(--line); padding: 12px 10px; font-size: 14px; }
+.side div { padding: 6px 8px; border-radius: 8px; color: var(--muted); } .side div.on { background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
+.main { flex: 1; min-width: 0; overflow: auto; padding: 18px 20px 24px; }
+.hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 2px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; background: none; border: 0; border-radius: 7px; padding: 4px 12px; color: var(--text); }
+.seg button.on { background: var(--color-accent); color: var(--color-on-accent); font-weight: 700; }
+.hd .sp { flex: 1; }
+.btn { font: inherit; font-size: 13px; border-radius: 8px; padding: 6px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--text); white-space: nowrap; }
+.btn.p { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); font-weight: 700; }
+.btn.ok { color: var(--ok); border-color: transparent; background: none; cursor: default; }
+.btn.q { background: none; }
+.lead { font-size: 12px; color: var(--muted); font-family: "DM Mono", monospace; margin: 0 0 12px; }
+.pc { display: grid; grid-template-columns: 34px 1fr auto; gap: 4px 12px; background: var(--panel); border-radius: 8px; padding: 12px; margin-bottom: 8px; border: 1px solid transparent; }
+.pc.third { border-color: var(--color-accent); }
+.ic { width: 34px; height: 34px; border-radius: 9px; background: var(--color-memory-2); display: grid; place-items: center; font-weight: 700; color: var(--color-accent-text); }
+.pc h3 { margin: 0; font-size: 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.pc .meta { font-family: "DM Mono", monospace; font-size: 12px; color: var(--muted); }
+.pc .sum { grid-column: 2; font-size: 13px; }
+.pc .perm { grid-column: 2; font-family: "DM Mono", monospace; font-size: 12px; color: var(--warn); }
+.pc .perm.none { color: var(--muted); }
+.pc .act { grid-row: 1 / span 2; grid-column: 3; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.pc .why { grid-column: 2 / 4; font-family: "DM Mono", monospace; font-size: 12px; color: var(--danger); }
+.pc.recall { opacity: .92; border-color: var(--danger); }
+.tag { font-family: "DM Mono", monospace; font-size: 11px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); white-space: nowrap; }
+.tag.g { border-color: var(--ok); color: var(--ok); } .tag.w { border-color: var(--warn); color: var(--warn); } .tag.d { border-color: var(--danger); color: var(--danger); } .tag.a { border-color: var(--color-accent); color: var(--color-accent-text); }
+.sw { width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; display: inline-block; } .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); } .sw.on { background: var(--color-accent); } .sw.on::after { left: 18px; } .sw.off { opacity: .4; cursor: not-allowed; }
+.empty { border: 1px dashed var(--line); border-radius: 12px; padding: 28px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+.empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+.scrim { position: absolute; inset: 38px 0 0 0; background: color-mix(in srgb, var(--bg) 60%, transparent); display: grid; place-items: center; padding: 16px; z-index: 5; }
+.scrim[hidden] { display: none; }
+.sheet { width: 100%; max-width: 480px; max-height: 100%; overflow: auto; background: var(--color-surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 20px 50px rgba(0,0,0,.35); }
+.sheet h2 { font-size: 15px; margin: 0 0 10px; }
+.sheet .l { font-size: 13px; margin: 0 0 8px; } .sheet .m { font-family: "DM Mono", monospace; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+.sheet .w { font-family: "DM Mono", monospace; font-size: 12px; color: var(--warn); margin: 0 0 4px; }
+.sheet .src { border-left: 3px solid var(--color-accent); padding: 2px 10px; font-size: 13px; margin: 0 0 10px; }
+.sheet .third { border: 1px solid var(--warn); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin: 0 0 10px; }
+.sheet .cmds { max-height: 130px; overflow: auto; margin: 4px 0 10px; font-family: "DM Mono", monospace; font-size: 12px; }
+.sheet .bt { display: flex; justify-content: flex-end; gap: 8px; margin: 14px 0 -20px; padding: 10px 0 20px; position: sticky; bottom: -20px; background: var(--color-surface); }
+.dev { border: 1px dashed var(--color-accent); border-radius: 10px; padding: 10px 14px; margin: 16px auto 0; max-width: 780px; font-size: 13px; background: color-mix(in srgb, var(--color-accent) 7%, transparent); }
+.dev b { font-family: "DM Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--color-accent-text); }
+.dev p { margin: 4px 0 0; }
+@media (max-width: 640px) { .side { display: none; } .win { height: 720px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Marketplace de plug-ins</h1><p class="muted">Prévia da aba <b>Descobrir</b> em Preferências → Plug-ins. Clique nos estados, nos filtros e nos botões.</p></div>
+    <div class="ctl"><span class="lbl">Tema</span><span class="chips" id="themes"></span></div>
+  </div>
+  <div class="ctl"><span class="lbl">Estado</span><span class="chips" id="states"></span></div>
+  <div class="stage">
+    <div class="win">
+      <div class="tb"><i></i><i></i><i></i><b>Preferências</b></div>
+      <div class="body">
+        <nav class="side"><div>Aparência</div><div>Terminal</div><div>Memória</div><div class="on">Plug-ins</div><div>Celular</div></nav>
+        <main class="main" id="main"></main>
+      </div>
+      <div class="scrim" id="scrim" hidden><section class="sheet" id="sheet" role="dialog" aria-modal="true"></section></div>
+    </div>
+  </div>
+  <div class="dev" id="dev"></div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+/* catálogo de exemplo; p = permissões (linhas de PluginManifest.permissionLines) */
+const CAT = [
+  { id: 'vizinho', n: 'Vizinho', k: 'agent', by: 'Collie', ver: '0.1.0', mb: '0,8 MB', lic: 'MIT', sum: 'Ao editar, o agente recebe a forma dos arquivos irmãos.',
+    p: ['Roda um programa a cada arquivo que um agente edita', 'Pode ler os arquivos do projeto'], cmds: ['collie vizinho forma — a forma que os irmãos seguem', 'collie vizinho ligar — liga o gancho no projeto'] },
+  { id: 'cercas', n: 'Cercas', k: 'agent', by: 'Collie', ver: '0.2.0', mb: '0,4 MB', lic: 'MIT', sum: 'Regras do projeto que o agente confere antes de agir.',
+    p: ['Pode ler os arquivos do projeto', 'Roda um programa antes de cada comando do agente'], oldP: ['Pode ler os arquivos do projeto'], cmds: ['collie cercas listar — as cercas do projeto', 'collie cercas propor — propõe uma cerca'] },
+  { id: 'treinador', n: 'Treinador', k: 'agent', by: 'Collie', ver: '0.1.0', mb: '0,3 MB', lic: 'MIT', sum: 'Dicas curtas de prompt para o agente Cursor.',
+    p: [], cmds: ['collie treinador dica — uma dica para o próximo prompt'] },
+  { id: 'notas', n: 'Notas', k: 'panel', by: 'Collie', ver: '0.3.1', mb: '0,2 MB', lic: 'MIT', sum: 'Um painel de notas por paddock, em Markdown.',
+    p: [], cmds: ['collie notas abrir — abre o painel', 'collie notas add — acrescenta uma nota'] },
+  { id: 'figcraft', n: 'FigCraft', k: 'engine', by: 'Collie', ver: '0.1.1', mb: '48 MB', lic: 'MIT', sum: 'Motor de desenho local, baixado à parte do app.',
+    p: ['Baixa e instala um programa (48 MB)'], eng: true, cmds: ['collie design … — usa o motor para desenhar'] },
+  { id: 'ritmo', n: 'Ritmo', k: 'panel', by: 'Lia Duarte', ver: '1.0.0', mb: '1,1 MB', lic: 'Apache-2.0', third: true, sum: 'Painel de ritmo de trabalho: foco, pausas e o dia em barras.',
+    p: ['Roda um programa do autor (assinado por Lia Duarte)', 'Pode ler os arquivos do projeto'], cmds: ['collie ritmo hoje — o dia até agora'] },
+];
+const KIND = { all: 'Todos', panel: 'Painéis', agent: 'Agentes', engine: 'Motores' }, KN = { panel: 'Painel', agent: 'Agente', engine: 'Motor' };
+/* estado da página */
+const S = { st: 'descobrir', filter: 'all', tab: 'descobrir', sheet: null, theme: null,
+  inst: { treinador: '0.1.0', cercas: '0.1.0', notas: '0.3.0' }, net: true, ph2: false };
+const STATES = [['descobrir', '1 · Descobrir'], ['confirmar', '2 · Confirmar instalação'], ['instalados', '3 · Instalados'], ['semrede', '4 · Sem rede'], ['fase2', '5 · Fase 2: terceiro']];
+const NOTE = {
+  descobrir: 'Lista do catálogo com filtro por tipo. Cada cartão: autor, “revisado”, versão, tamanho, o que pode fazer (em laranja) e Instalar, Atualizar ou Instalado.',
+  confirmar: 'A confirmação de hoje, com a linha “do catálogo, publicado por Collie”. Sem escolher pasta. O daemon confere tudo de novo.',
+  instalados: 'A tela de hoje, mais “do catálogo” e “atualização disponível”. Atualizar sem permissão nova é um clique, sem confirmação (Notas); com permissão nova (Cercas), abre a confirmação. Versão recolhida: bloqueada, interruptor que não religa, motivo e botão para a versão boa.',
+  semrede: 'O catálogo não carregou: a aba diz isso e nada mais quebra. Os instalados seguem funcionando e abrem sem rede.',
+  fase2: 'Cartão de autor de fora: nome do autor e “revisado pelo Collie”. A confirmação diz que o autor não é o Collie e que o programa é assinado por ele.',
+};
+const newPerms = c => c.oldP ? c.p.filter(x => !c.oldP.includes(x)) : [];
+const find = id => CAT.find(c => c.id === id);
+const btnFor = c => {
+  const i = S.inst[c.id];
+  if (c.id === 'notas' && i && i !== c.ver || c.id === 'cercas' && i && i !== c.ver) return `<button class="btn p" data-open="${c.id}">Atualizar</button>`;
+  if (i) return `<span class="btn ok">Instalado ✓</span>`;
+  return `<button class="btn p" data-open="${c.id}">Instalar</button>`;
+};
+const permHtml = c => c.p.length ? c.p.map(x => `<div class="perm">⚠ ${x}</div>`).join('') : `<div class="perm none">Sem rede e sem acesso ao projeto</div>`;
+const card = c => `<article class="pc ${c.third ? 'third' : ''}"><div class="ic">${c.n[0]}</div>
+  <h3>${c.n}<span class="tag">${KN[c.k]}</span><span class="meta">${c.by} · ${c.third ? 'revisado pelo Collie' : 'revisado'}</span></h3>
+  <div class="act"><span class="meta">${c.ver} · ${c.mb}</span>${btnFor(c)}</div>
+  <div class="sum">${c.sum}</div>${permHtml(c)}</article>`;
+const noNet = `<div class="empty"><b>O catálogo não carregou.</b>Os plug-ins instalados seguem funcionando. Confira a conexão e tente de novo.<br><br><button class="btn" data-go="descobrir">Tentar de novo</button></div>`;
+function descobrir() {
+  const list = CAT.filter(c => (S.ph2 || !c.third) && (S.filter === 'all' || c.k === S.filter));
+  return `<div class="lead">Plug-ins publicados no catálogo do Collie. Só você instala; confirme o que cada um pode fazer.</div>
+  <div class="chips" style="margin-bottom:12px">${Object.entries(KIND).map(([k, v]) => `<button class="chip ${S.filter === k ? 'on' : ''}" data-f="${k}">${v}</button>`).join('')}</div>
+  ${S.net ? (list.length ? list.map(card).join('') : '<div class="empty">Nada neste filtro.</div>') : noNet}`;
+}
+function instRow(id) {
+  const c = find(id), v = S.inst[id], upd = v !== c.ver, recall = id === 'notas' && v === '0.3.0';
+  return `<article class="pc ${recall ? 'recall' : ''}"><div class="ic">${c.n[0]}</div>
+  <h3>${c.n} ${v}<span class="tag a">do catálogo</span>${upd && !recall ? '<span class="tag w">atualização disponível: ' + c.ver + '</span>' : ''}${recall ? '<span class="tag d">recolhido</span>' : ''}</h3>
+  <div class="act">${recall ? `<span class="sw off" title="Versão recolhida: não religa. Atualize ou remova." aria-disabled="true"></span>` : `<span class="sw on"></span>`}
+    ${upd ? `<button class="btn p" data-open="${id}">${recall ? 'Instalar ' + c.ver : 'Atualizar'}</button>` : ''}<button class="btn q">Remover</button></div>
+  <div class="meta" style="grid-column:2">de ${c.by} · ${c.lic} · ${c.cmds.length} ${c.cmds.length > 1 ? 'comandos' : 'comando'}</div>
+  ${recall ? '<div class="why">recolhido: gravava notas fora da pasta do projeto. Só atualizar ou remover.</div>' : (c.p.length ? c.p.map(x => `<div class="perm">${x}</div>`).join('') : '')}
+  <div class="meta" style="grid-column:2">${recall ? 'Bloqueado: versão recolhida' : 'Ativo'}</div></article>`;
+}
+function instalados() {
+  const rows = Object.keys(S.inst).map(instRow).join('');
+  const local = `<article class="pc"><div class="ic">R</div><h3>Rascunhos 0.0.3</h3><div class="act"><span class="sw on"></span><button class="btn q">Remover</button></div>
+    <div class="meta" style="grid-column:2">de você · instalado de uma pasta · 1 comando</div><div class="meta" style="grid-column:2">Ativo</div></article>`;
+  return `<div class="lead">Painéis e comandos de terceiros. Só você instala; os agentes usam os comandos pela guia, como os do Collie.</div>${rows}${local}
+  <div style="margin-top:10px"><button class="btn q">Instalar de uma pasta…</button></div>`;
+}
+function render() {
+  const showTabs = true, tab = S.tab;
+  $('#main').innerHTML = `<div class="hd"><div class="seg"><button class="${tab === 'instalados' ? 'on' : ''}" data-tab="instalados">Instalados</button><button class="${tab === 'descobrir' ? 'on' : ''}" data-tab="descobrir">Descobrir</button></div><span class="sp"></span>${tab === 'instalados' ? '' : ''}</div>${tab === 'descobrir' ? descobrir() : instalados()}`;
+  $('#states').innerHTML = STATES.map(([k, v]) => `<button class="chip ${S.st === k ? 'on' : ''}" data-st="${k}">${v}</button>`).join('');
+  $('#themes').innerHTML = [['light', 'Claro'], ['dark', 'Escuro']].map(([k, v]) => `<button class="chip ${S.theme === k ? 'on' : ''}" data-th="${k}">${v}</button>`).join('');
+  $('#dev').innerHTML = `<b>O que este estado mostra</b><p>${NOTE[S.st]}</p>`;
+  const sh = S.sheet;
+  $('#scrim').hidden = !sh;
+  if (sh) $('#sheet').innerHTML = sheetHtml(find(sh));
+}
+function sheetHtml(c) {
+  const i = S.inst[c.id], upd = !!i;
+  const title = upd ? `Substituir ${c.n}?` : `Instalar ${c.n} ${c.ver}?`;
+  const newP = c.oldP ? c.p.filter(x => !c.oldP.includes(x)) : [];
+  return `<h2>${title}</h2>
+  <div class="src">Do catálogo, publicado por ${c.by === 'Collie' ? 'Collie' : c.by}${c.third ? ' · revisado pelo Collie' : ' · revisado'}</div>
+  ${c.third ? `<div class="third">O autor é ${c.by}, não o Collie. O Collie leu o código, mas ${c.by} responde por ele e pelo programa que ele roda.</div>` : ''}
+  ${upd ? `<p class="l" style="color:var(--warn)">Substitui ${c.n} ${i} (de ${c.by}) por ${c.n} ${c.ver} (de ${c.by}).</p>` : ''}
+  <p class="m">Autor: ${c.by} · Licença: ${c.lic}</p><p class="m">${c.cmds.length} ${c.cmds.length > 1 ? 'comandos' : 'comando'} · ${c.mb}</p>
+  <p class="l">Comandos que os agentes ligados a um painel dele poderão usar:</p><div class="cmds">${c.cmds.map(x => `<div>${x}</div>`).join('')}</div>
+  ${c.p.length ? `<p class="l" style="color:var(--warn);font-weight:700">${upd ? 'Esta versão pode:' : 'Este plug-in pode:'}</p>${c.p.map(x => `<p class="w">• ${x}${newP.includes(x) ? ' (novo)' : ''}</p>`).join('')}<p class="m">Sem rede. O programa roda isolado e vê só caminhos, nunca a conversa.</p>`
+    : `<p class="m">Sem rede, sem acesso ao projeto: a página vê só os argumentos de cada comando.</p>`}
+  <div class="bt"><button class="btn" data-x>Cancelar</button><button class="btn p" data-ok="${c.id}">${upd ? 'Substituir' : 'Instalar'}</button></div>`;
+}
+function setState(k) {
+  S.st = k; S.sheet = null; S.net = true; S.ph2 = false; S.filter = 'all';
+  if (k === 'descobrir') S.tab = 'descobrir';
+  if (k === 'confirmar') { S.tab = 'descobrir'; S.sheet = 'vizinho'; }
+  if (k === 'instalados') S.tab = 'instalados';
+  if (k === 'semrede') { S.tab = 'descobrir'; S.net = false; }
+  if (k === 'fase2') { S.tab = 'descobrir'; S.ph2 = true; S.filter = 'panel'; S.sheet = 'ritmo'; }
+  render();
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  const d = t.dataset;
+  if (d.st) setState(d.st);
+  else if (d.th) { S.theme = d.th; document.documentElement.dataset.theme = d.th; render(); }
+  else if (d.f) { S.filter = d.f; render(); }
+  else if (d.tab) { S.tab = d.tab; S.st = d.tab; render(); }
+  else if (d.open && S.inst[d.open] && !newPerms(find(d.open)).length) { S.inst[d.open] = find(d.open).ver; render(); }
+  else if (d.open) { S.sheet = d.open; if (d.open === 'ritmo') S.st = 'fase2'; else if (S.st !== 'instalados') S.st = 'confirmar'; render(); }
+  else if ('x' in d) { S.sheet = null; render(); }
+  else if (d.ok) { S.inst[d.ok] = find(d.ok).ver; S.sheet = null; render(); }
+  else if (d.go) setState(d.go);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.sheet) { S.sheet = null; render(); } });
+S.theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+document.documentElement.dataset.theme = S.theme;
+render();
+</script>
+</body>
+</html>

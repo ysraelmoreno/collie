@@ -47,6 +47,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
     public var needs: [String]?; public var scope: [String]?
+    /// C2: `--green-ok`: the check may already pass before the task (a refactoring): `work run` does not refuse it for that. nil: it may not.
+    public var greenOk: Bool?
     /// M5.4: the token counts of every attempt of the loop on this task, summed (nil: none read). Counts only.
     public var tokens: TokenCount?
     /// F2 R1, `work task add --agent --model`: the agent (claude|cursor|codex) and model of WHO WORKS on the task (nil:
@@ -86,7 +88,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public mutating func clearVerdicts() { reviewClean = nil; reviewedHead = nil; acceptPassed = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
-                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil) {
+                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil, greenOk: Bool? = nil) {
+        self.greenOk = greenOk
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
         self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
         self.evidenceGlob = evidenceGlob; self.needs = needs; self.scope = scope
@@ -108,6 +111,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
         resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
         needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
         scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
+        greenOk = (try? c.decodeIfPresent(Bool.self, forKey: .greenOk)) ?? nil
         tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
         agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? nil   // F2 R1: tolerant too
         model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
@@ -220,6 +224,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
     /// agent is told its output's tail once (nil: none, the loop as before).
     public var precheck: String?
+    /// C3, `work run --escalate agent:model,…`: the agent of attempt `n` of a task is entry `min(n, count) - 1`; with it
+    /// set, `preset`/`model`/`command` are nil. nil: every attempt runs the same agent, as before.
+    public var escalate: [String]?
+    /// The preset and model of the task's attempt `n` (1-based) under `escalate`; nil without it.
+    public func escalation(attempt n: Int) -> (preset: String, model: String)? {
+        guard let list = escalate, !list.isEmpty else { return nil }
+        let parts = list[Swift.min(Swift.max(n, 1), list.count) - 1].split(separator: ":", maxSplits: 1).map(String.init)
+        return parts.count == 2 ? (parts[0], parts[1]) : nil
+    }
     /// F2 R1, `work run --review`: the review by personas is on (nil/false: off, the loop as before); `personas` the
     /// names chosen (nil: auto, R5's router picks); `reviewerModel` the model that overrides every persona's (nil: each
     /// persona's own, else the loop's). Only recorded and shown for now.
@@ -421,7 +434,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
                 startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil,
-                review: Bool? = nil, personas: [String]? = nil, reviewerModel: String? = nil) {
+                review: Bool? = nil, personas: [String]? = nil, reviewerModel: String? = nil, escalate: [String]? = nil) {
+        self.escalate = escalate
         self.parallel = parallel; self.notify = notify; self.precheck = precheck
         self.review = review; self.personas = personas; self.reviewerModel = reviewerModel
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
@@ -451,6 +465,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
         precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
+        escalate = (try? c.decodeIfPresent([String].self, forKey: .escalate)) ?? nil
         review = (try? c.decodeIfPresent(Bool.self, forKey: .review)) ?? nil   // F2 R1: tolerant, like the newer ones
         personas = (try? c.decodeIfPresent([String].self, forKey: .personas)) ?? nil
         reviewerModel = (try? c.decodeIfPresent(String.self, forKey: .reviewerModel)) ?? nil

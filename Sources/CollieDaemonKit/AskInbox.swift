@@ -15,6 +15,10 @@ actor AskInbox {
         var askedAt = Date(), deliveredAt: Date?, completedAt: Date?
         /// The target was in a turn when asked: the prompt waited in its queue (optional: older files lack it).
         var targetBusy: Bool?
+        /// The asker read the reply with `ask result <id>` (optional: older files lack it); no `[collie] Reply from` after that.
+        var readAt: Date?
+        /// C1: how its check ended (`ask --check`; optional: older files lack it).
+        var check: AskCheckReport?
     }
     static let keep = 20, inlineMax = 300, previewMax = 120
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
@@ -60,10 +64,11 @@ actor AskInbox {
     }
 
     @discardableResult
-    func close(id: String, _ r: Result<AskResult, ProtocolError>) -> Entry? {
+    func close(id: String, _ r: Result<AskResult, ProtocolError>, check: AskCheckReport? = nil) -> Entry? {
         for (from, list) in byAsker {
             guard let i = list.firstIndex(where: { $0.id == id }) else { continue }
             byAsker[from]![i].completedAt = Date()
+            byAsker[from]![i].check = check
             switch r {
             case .success(let a): byAsker[from]![i].status = .done; byAsker[from]![i].output = a.output; byAsker[from]![i].source = a.source
             case .failure(let e): byAsker[from]![i].status = .failed; byAsker[from]![i].error = e.message
@@ -74,6 +79,13 @@ actor AskInbox {
         return nil
     }
 
+    /// `ask result <id>` of a finished ask: marks it read (the first time). Returns the entry as it stands, nil when gone.
+    func markRead(id: String, from: UUID) -> Entry? {
+        guard let i = byAsker[from]?.firstIndex(where: { $0.id == id }) else { return nil }
+        if byAsker[from]![i].status != .pending, byAsker[from]![i].readAt == nil { byAsker[from]![i].readAt = Date(); save() }
+        return byAsker[from]![i]
+    }
+
     func get(id: String, from: UUID) -> Entry? { byAsker[from]?.first { $0.id == id } }
     /// Newest first.
     func recent(from: UUID) -> [Entry] { (byAsker[from] ?? []).reversed() }
@@ -82,7 +94,9 @@ actor AskInbox {
     /// The line typed into the asker's terminal: never a pasted block (Claude shows one as "[Pasted text]", easy to leave
     /// unsent). A short reply inline, whitespace folded; a long one as its first line and where to read it all.
     static func message(_ e: Entry) -> String {
-        guard e.status == .done else { return "[collie] Ask \(e.id) to \(e.target) failed: \(e.error ?? "no reply")" }
+        guard e.status == .done else {
+            return "[collie] Ask \(e.id) to \(e.target) failed: \(e.error ?? "no reply")" + (e.check == nil ? "" : " — output's tail: collie ask result \(e.id)")
+        }
         let out = e.output ?? ""
         let flat = out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let ask = "ask \(e.id)" + (e.targetBusy == true ? ", queued behind a turn" : "")
@@ -99,10 +113,12 @@ actor AskInbox {
         if let err = e.error { o["error"] = .string(err) }
         if let s = e.source { o["source"] = .string(s.rawValue) }
         o["targetBusy"] = .bool(e.targetBusy == true)
+        if let c = e.check { o["check"] = c.json }
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         o["askedAt"] = .string(f.string(from: e.askedAt))
         if let d = e.deliveredAt { o["deliveredAt"] = .string(f.string(from: d)) }
         if let d = e.completedAt { o["completedAt"] = .string(f.string(from: d)) }
+        if let d = e.readAt { o["readAt"] = .string(f.string(from: d)) }
         return .object(o)
     }
 }

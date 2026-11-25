@@ -107,9 +107,10 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         let w = try #require(try await d.router.work.active(terminal: s.uuid))
         return Pad(repo: repo, dir: repo.appendingPathComponent(".collie/paddocks/feat"), s: s, work: w.id)
     }
-    private func addTask(_ d: Daemon, _ p: Paths, _ t: Term, _ title: String, check: String?) async throws {
+    private func addTask(_ d: Daemon, _ p: Paths, _ t: Term, _ title: String, check: String?, greenOk: Bool = false) async throws {
         var a: [String: JSONValue] = ["title": .string(title)]
         if let check { a["check"] = .string(check) }
+        if greenOk { a["green-ok"] = .bool(true) }
         let r = try await work(d, p, t, "work.task.add", a)
         #expect(r.ok, "\(r)")
     }
@@ -209,6 +210,79 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")
         }
+    }
+
+    /// C2: a check that already passes at the cercado's HEAD does not measure the task: `work run` refuses, nothing reaches the card.
+    @Test func runRefusesACheckThatAlreadyPasses() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Trivial", check: "true")
+            try await addTask(d, p, x.s, "Real", check: "false")
+            let r = try await run(d, p, x.s, ["command": .string("cat")], approve: false)
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("o check já passa antes da tarefa: não mede o que ela muda") == true
+                    && r.error?.message.contains("Trivial") == true && r.error?.message.contains("Real") == false, "\(r)")
+            #expect(await d.router.appCards.isEmpty, "a card was raised for a refused run")
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+            // and the paddock is free again: a corrected run starts
+            let fixed = try await work(d, p, x.s, "work.task.drop", ["task": .string("Trivial"), "reason": .string("trivial")])
+            #expect(fixed.ok, "\(fixed)")
+            #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)
+            #expect(await loopEnded(d, x.work))
+        }
+    }
+
+    /// C3: `--escalate` replaces --preset/--model/--command, and takes only claude|cursor entries; refused before the card.
+    @Test func runRefusesABadEscalate() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Real", check: "false")
+            for a: [String: JSONValue] in [["escalate": .string("cursor:a"), "model": .string("sonnet")],
+                                            ["escalate": .string("cursor:a"), "command": .string("cat")],
+                                            ["escalate": .string("codex:x")]] {
+                let r = try await run(d, p, x.s, a, approve: false)
+                #expect(r.error?.code == .invalidArgs && r.error?.message.contains("escalate") == true, "\(r)")
+            }
+            #expect(await d.router.appCards.isEmpty)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
+    @Test func cardShowsTheEscalation() {
+        let w = Work(title: "W", terminalId: UUID())
+        let l = WorkLoopState(escalate: ["cursor:a", "claude:b"])
+        #expect(CommandRouter.loopCardText(w, [], l, paddock: "p")?.contains("escalada de modelo por tentativa: «cursor:a, claude:b»") == true)
+    }
+
+    /// C2: `--green-ok` on the task: it goes to the card, marked.
+    @Test func runAcceptsAGreenCheckMarkedGreenOk() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            let a = try await work(d, p, x.s, "work.task.add", ["title": .string("Refactor"), "check": .string("true"), "green-ok": .bool(true)])
+            #expect(a.ok, "\(a)")
+            #expect(try await d.router.work.get(x.work)?.tasks.first?.greenOk == true)
+            let r = try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)], approve: false)
+            #expect(r.ok, "\(r)")
+            let card = try #require(try await answerCard(d, p, allow: false))
+            #expect(card.call?.contains("check «true» --green-ok") == true, "\(String(describing: card.call))")
+        }
+    }
+
+    /// C2: red at the start (the check fails, or cannot run) is what a check should be: the run goes on.
+    @Test func runGoesOnWhenTheCheckIsRedAtTheStart() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Red", check: "false")
+            try await addTask(d, p, x.s, "Missing", check: "python3 -c 'import nope_slug'")
+            let r = try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)], approve: false)
+            #expect(r.ok, "\(r)")
+            #expect(try await answerCard(d, p, allow: false) != nil)
+        }
+    }
+
+    @Test func cardMarksGreenOkBesideTheCheck() {
+        let tasks = [WorkTask(id: "a", title: "A", check: "true", greenOk: true), WorkTask(id: "b", title: "B", check: "false")]
+        let card = CommandRouter.loopCardText(Work(title: "W", terminalId: UUID()), tasks, WorkLoopState(max: 3), paddock: "feat") ?? ""
+        #expect(card.contains("#1 «A» check «true» --green-ok") && !card.contains("check «false» --green-ok"), "\(card)")
     }
 
     @Test func runPassesATaskEndToEnd() async throws {
@@ -385,7 +459,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     @Test func stopWithdrawsAPendingCard() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try await addTask(d, p, x.s, "A", check: "true")
+            try await addTask(d, p, x.s, "A", check: "true", greenOk: true)
             #expect(try await run(d, p, x.s, approve: false).ok)
             #expect(await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } })
             let s = try await work(d, p, x.s, "work.stop")
@@ -617,7 +691,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let w = try #require(try await d.router.work.get(x.work))
             #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop))")
 
-            try await addTask(d, p, x.s, "Again", check: "true")
+            try await addTask(d, p, x.s, "Again", check: "true", greenOk: true)
             let r = try await run(d, p, x.s, args, approve: false)
             guard case .object(let ran)? = r.result else { Issue.record("\(r)"); return }
             #expect(ran["state"] == .string("running"), "\(ran)")
@@ -630,7 +704,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     @Test func alwaysWithoutAllowTrustsNothing() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try await addTask(d, p, x.s, "A", check: "true")
+            try await addTask(d, p, x.s, "A", check: "true", greenOk: true)
             #expect(try await run(d, p, x.s, approve: false).ok)
             #expect(try await answerCard(d, p, allow: false, always: true) != nil)
             #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("não aprovou o laço") })

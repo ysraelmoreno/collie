@@ -100,6 +100,59 @@ import CollieTerminal
         #expect(enters(w) == 1 && retries(events).isEmpty)
     }
 
+    // MARK: - Cursor (A3)
+
+    /// A Cursor TUI in raw mode: draws its bar, counts the Enters it gets and shows the working footer from the
+    /// `accepting`-th one on (the ones before are lost, as when Ink is still mounting).
+    private static func cursorScript(accepting: Int) -> String {
+        "stty raw -echo; printf '> '; n=0; while :; do "
+        + "c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' '); "
+        + "if [ \"$c\" = 0d ]; then n=$((n+1)); [ $n -ge \(accepting) ] && printf '\\nctrl+c to stop\\n'; fi; done"
+    }
+
+    private func startCursor(accepting: Int) async throws -> (asks: AskCoordinator, id: UUID, writes: Log<Data>, events: Log<MemoryEvent>) {
+        let asks = AskCoordinator(idleQuietSeconds: 1, submitConfirmSeconds: 0.2)
+        let events = Log<MemoryEvent>()
+        asks.askEvents.set { events.add($0) }
+        let rec = TerminalRecord(id: UUID(), name: "c", preset: .cursor, command: nil, cwd: "/tmp", isShepherd: false, paddockId: nil, projectRoot: nil)
+        let sb = ScrollbackBuffer(spillURL: nil)
+        let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", Self.cursorScript(accepting: accepting)], environment: [:], cwd: "/tmp"), scrollback: sb)
+        await asks.attach(rec, process: p, scrollback: sb)
+        let writes = Log<Data>(), prev = p.onWrite
+        p.onWrite = { o, d in writes.add(d); prev?(o, d) }
+        return (asks, rec.id, writes, events)
+    }
+
+    /// A Cursor that loses the first Enter: no footer after the write, so the Enter is sent again, once; the retry is
+    /// an event, and the prompt is written once.
+    @Test func cursorThatLosesTheFirstEnterGetsOneMore() async throws {
+        let (asks, id, w, events) = try await startCursor(accepting: 2)
+        try await asks.inject(to: id, prompt: "hi")
+        #expect(enters(w) == 2 && w.items.count == 3, "\(w.items.map { String(decoding: $0, as: UTF8.self) })")
+        #expect(await asks.submitRetried(id) && retries(events).count == 1)
+        #expect(!(await asks.cursorUnsent(id)))
+    }
+
+    /// A Cursor that takes the first Enter: its working footer confirms the prompt, nothing is sent again.
+    @Test func cursorThatTakesTheFirstEnterGetsNoRetry() async throws {
+        let (asks, id, w, events) = try await startCursor(accepting: 1)
+        try await asks.inject(to: id, prompt: "hi")
+        try await Task.sleep(for: .seconds(1))
+        #expect(enters(w) == 1 && retries(events).isEmpty)
+        #expect(!(await asks.submitRetried(id)))
+    }
+
+    /// `wait` must not read a Cursor as idle while its prompt is queued or written and not yet confirmed.
+    @Test func cursorWithAnUnconfirmedPromptIsUnsent() async throws {
+        let (asks, id, w, _) = try await startCursor(accepting: 2)
+        #expect(!(await asks.cursorUnsent(id)))
+        let t = Task { try await asks.inject(to: id, prompt: "hi") }
+        #expect(await waitFor(10) { enters(w) >= 1 })
+        #expect(await asks.cursorUnsent(id))   // the Enter was lost: nothing confirmed yet
+        try await t.value
+        #expect(!(await asks.cursorUnsent(id)))
+    }
+
     // MARK: - the loop's journal
 
     private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, title: "Task \(id)", check: check) }

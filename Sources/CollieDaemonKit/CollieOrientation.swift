@@ -49,7 +49,7 @@ enum CollieOrientation {
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
                      sharedFolder: [String] = [], figcraftAvailable: Bool = true, memoryTask: Bool = false,
-                     candidates: Int = 0) -> String {
+                     candidates: Int = 0, parent: String? = nil) -> String {
         // no engine (absent or out of date): the FigCraft and ask preferences fall back to a page, with a note
         let note = !figcraftAvailable && designFirst != .artifact
         let designFirst = figcraftAvailable ? designFirst : .artifact
@@ -69,12 +69,15 @@ enum CollieOrientation {
         for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {
             for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
                 for (lc, wait) in loopLines {
-                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, loopWait: wait, candidates: cands)
+                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, loopWait: wait, candidates: cands, parent: parent)
                     if t.count <= limit { return t }
                 }
             }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask)
+        func last(_ parent: String?) -> String { build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask, parent: parent) }
+        // ponytail: the cap outranks the line: where not even the tight form has room for it, a sub-Shepherd loses it
+        let withParent = last(parent)
+        return withParent.count <= limit ? withParent : last(nil)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
@@ -82,7 +85,7 @@ enum CollieOrientation {
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
                               _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false,
-                              loopCommand: Bool = false, loopWait: String = "", candidates: Int = 0) -> String {
+                              loopCommand: Bool = false, loopWait: String = "", candidates: Int = 0, parent: String? = nil) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -100,8 +103,13 @@ enum CollieOrientation {
         // ponytail: no warning line for a Shepherd: at the 1500 cap already, its ask line teaches --no-wait
         if !peers.isEmpty && !isShepherd && !tight { lines[1] += " Don't block-ask one who may wait on you: --no-wait or lot post." }
         if agent == "cursor" {
+            // A6: Cursor's MCP client drops a blocking call near 60 s, so the detached form comes first
+            lines[1] = "- Leashed agents (\(peers.isEmpty ? "none yet" : names(peers))): collie list / check <name> / ask <name> \"<prompt>\" --no-wait"
+                + (tight ? "." : " (reply comes back as a message; collie ask result <id>); a blocking ask can time out.")
             if tight { lines[1] += " Asked: collie reply." } else { lines.insert("- Asked by an agent? End with collie reply \"<short answer>\".", at: 2) }
         }
+        // PRD B1: a sub-Shepherd answers the one above, never waits on it with a blocking ask
+        if isShepherd, let parent { lines.append(tight ? "- Above: \(quote(parent)): collie reply / lot post, never a blocking ask." : "- Shepherd above: \(quote(parent)); answer it with collie reply / lot post, never a blocking ask.") }
         if let lot {
             // the goal is the user's text: one line, short (a long one only loses its tail)
             let goal = tight ? "" : LotBoards.clean(lot.goal, max: k > 0 ? 80 : 30)

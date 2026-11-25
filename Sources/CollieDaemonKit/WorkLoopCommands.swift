@@ -73,6 +73,7 @@ extension CommandRouter {
         // the summon's own checks run again per attempt; these only save three failed attempts
         if let p = str(r, "preset") { _ = try Preset.parse(p) }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
+        let escalate = try Self.parseEscalate(str(r, "escalate"), excludes: ["preset", "model", "command"].filter { str(r, $0) != nil })
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
         let gateFlag = str(r, "gate")
         if let gateFlag, gateFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -114,12 +115,13 @@ extension CommandRouter {
         var loop = WorkLoopState(state: .running, tries: Int(triesFlag ?? factory?.maxTries.map(Double.init) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
-                                 model: Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
+                                 model: escalate != nil ? nil : Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
                                  max: max, used: 0, budget: Int(budgetFlag ?? profileBudget ?? Self.loopBudgetDefault),
                                  spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck,
-                                 review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel)
+                                 review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel,
+                                 escalate: escalate)
         var warning = file.warning
         // B1: the profile asks for a review the flag turned off: the card and the trusted notice say so
         let profileReviewOff = factory != nil && file.reviewPresent && noReview
@@ -161,6 +163,8 @@ extension CommandRouter {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
+        // C2: a check that already passes at the cercado's HEAD measures nothing: refused before anything reaches the card
+        if let why = await alreadyGreen(open, work: w.id, paddock: paddock, starter: t.id, dir: dir) { throw invalid(why) }
         let id = w.id, starter = t.id, title = w.title
         // a paddock the owner trusts for loops (read now, after the awaits): no card. Everything above held all the same
         // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
@@ -208,6 +212,27 @@ extension CommandRouter {
                                       max: max, perDay: config?.factory?.autoLandPerDay)
     }
 
+    /// C2: the open tasks (not `--green-ok`) whose check exits 0 at the paddock's HEAD as it is now (the tree is clean: `work run`
+    /// refused a dirty one), run as the loop runs it (its sandbox, its env, its timeout). nil: none; else the refusal naming them.
+    /// A check that fails, times out or cannot run counts as red: it goes on.
+    private func alreadyGreen(_ tasks: [WorkTask], work id: UUID, paddock: Paddock, starter: UUID, dir: URL) async -> String? {
+        let todo = tasks.filter { $0.greenOk != true }
+        guard !todo.isEmpty else { return nil }
+        // the loop's own profile (made again by `startLoop`); removed when done, so a refusal leaves nothing behind
+        if config.sandboxHome != nil { _ = try? prepareLoopSandbox(id, paddock: paddock) }
+        defer { if config.sandboxHome != nil { SandboxLaunch.remove(id, root: config.paths.root) } }
+        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
+                                  sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
+        var green: [WorkTask] = []
+        for task in todo {
+            // ponytail: serial, the loop's own check timeout; a slow suite of checks delays `work run`, add parallelism if it bites
+            if let res = try? await host.check(task.check ?? "false", in: dir, timeout: WorkLoop.defaultCheckTimeout), res.status == 0 { green.append(task) }
+        }
+        guard !green.isEmpty else { return nil }
+        return "\(GreenCheck.reason): " + green.map { "\"\(RerailText.clean($0.title))\" [\($0.id)] check «\(RerailText.clean($0.check ?? "", max: 200))»" }.joined(separator: ", ")
+            + ". \(GreenCheck.hint.prefix(1).uppercased() + GreenCheck.hint.dropFirst()) (collie work task add … \(GreenCheck.flag))"
+    }
+
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
     /// invalid one nil with its one-line warning (B1: always, flags or not). M13.3: read from the commit at
     /// HEAD (by its sha), never from the working tree. A1: read always; an invalid `factory` is `refusal` (the strict
@@ -241,6 +266,24 @@ extension CommandRouter {
         var o = o
         if let warning { o["warning"] = .string(warning) }
         return .object(o)
+    }
+
+    /// C3: `--escalate a:m,b:m`: each entry `claude|cursor` + `:` + a model name (as `summon --model`), at most 10; nil: not given.
+    /// `excludes`: the flags given beside it (`--preset/--model/--command`), which it replaces.
+    static func parseEscalate(_ s: String?, excludes: [String]) throws -> [String]? {
+        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard let s else { return nil }
+        guard excludes.isEmpty else { throw bad("--escalate replaces --\(excludes.joined(separator: "/--")): give the agent and model in each entry (cursor:composer-2.5,claude:sonnet)") }
+        let entries = s.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !entries.isEmpty, entries.count <= Int(loopTriesMax) else { throw bad("--escalate takes 1-\(Int(loopTriesMax)) entries agent:model") }
+        for e in entries {
+            let p = e.split(separator: ":", maxSplits: 1).map(String.init)
+            guard p.count == 2, ["claude", "cursor"].contains(p[0]) else {
+                throw bad("--escalate entry '\(e)' must be claude:<model> or cursor:<model>")
+            }
+            do { try ClaudeModel.validate(p[1]) } catch { throw bad(error.message) }
+        }
+        return entries
     }
 
     /// M5.6: `--model` given always wins; absent, the daemon's `loopModel`, but only for agents that run Claude (summon
@@ -459,6 +502,7 @@ extension CommandRouter {
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
             + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.escalate.map { "escalada de modelo por tentativa: \(quoted($0.joined(separator: ", "))). " } ?? "")
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + review
@@ -471,7 +515,7 @@ extension CommandRouter {
         func list(_ label: String, _ xs: [String]?) -> String {
             xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
         }
-        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))"
+        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (t.greenOk == true ? " \(GreenCheck.flag)" : "")
                 + (t.accept.map { " aceite \(quoted($0))" + (t.acceptTimeout.map { " até \($0) s" } ?? "") } ?? "")
                 + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
                 + (i < tasks.count - 1 ? ";" : ".")

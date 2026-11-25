@@ -40,13 +40,16 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     /// Claude's model: `summon --model`, `collie model`, or the transcript's last assistant message; passed as `--model`
     /// at its next launch. nil: unknown (Claude's default).
     public var model: String?
+    /// The Shepherd that summoned it (`summon`, the loop); nil: made by the app, or a record from before this field.
+    /// A sub-Shepherd is a Shepherd with this set: its depth and its ceiling are counted along it.
+    public var summonedBy: UUID?
     public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil,
                 sandbox: TerminalSandbox = .sandboxed, projectRoot: String? = nil) {
         self.id = id; self.name = name; self.preset = preset; self.command = command
         self.cwd = cwd; self.isShepherd = isShepherd; self.paddockId = paddockId
         self.sandbox = sandbox; self.projectRoot = projectRoot
     }
-    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode, model }
+    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode, model, summonedBy }
     private enum Legacy: String, CodingKey { case isMaestro, floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self), l = try d.container(keyedBy: Legacy.self)
@@ -59,6 +62,7 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
         projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
         startMode = try? c.decodeIfPresent(SandboxMode.self, forKey: .startMode)
         model = try? c.decodeIfPresent(String.self, forKey: .model)
+        summonedBy = try? c.decodeIfPresent(UUID.self, forKey: .summonedBy)
     }
 }
 

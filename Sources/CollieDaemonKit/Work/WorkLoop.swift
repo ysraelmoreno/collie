@@ -214,6 +214,8 @@ actor WorkLoop {
     static func precheckPrompt(_ tail: String) -> String { precheckPromptHead + "\n" + tail }
     /// M10.2: the pre-check's own limit (the budget's rest bounds it too) and its tail's size.
     static let precheckTimeout = 180, precheckLines = 40, precheckChars = 3000
+    /// A task's check limit (the loop's own, `init`'s default); `work run`'s start-state check (C2) uses the same.
+    static let defaultCheckTimeout: Duration = .seconds(1800)
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
@@ -237,7 +239,7 @@ actor WorkLoop {
     /// P2: the wait before an attempt whose prompt was not delivered starts over with a new agent (the tests' zero).
     let promptRetryWait: Duration
 
-    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
+    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
          lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20)) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
@@ -536,6 +538,8 @@ actor WorkLoop {
                 detail = "\(detail ?? "") \(secs)s \(busy ? "ocupado" : "ocioso")"
             }
             if kind != .attemptStarted {
+                var detail = detail
+                if kind == .agentSummoned, let m = r.loop.escalation(attempt: n) { detail = (detail ?? "") + " [\(m.preset):\(m.model)]" }   // C3
                 var e = entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
                 if kind == .agentDismissed { e.tokens = r.tokens; r.tokens = nil }
                 r.pending.append(e)
@@ -550,7 +554,9 @@ actor WorkLoop {
         case .summon:
             do {
                 // M3b.6: a name taken since `attempt` read the names gives way to the next one (the job keeps `name`)
-                let work = r.work, loop = r.loop, host = host
+                let work = r.work, host = host
+                var loop = r.loop
+                if let e = loop.escalation(attempt: n) { (loop.preset, loop.model, loop.command) = (e.preset, e.model, nil) }   // C3
                 let base = AgentNaming.name(work: work.title, task: task.title, taskId: task.id, attempt: n, lane: slot)
                 let agent = try await AgentNaming.summon(base, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
                     try await host.summon(name: x, for: work, loop: loop)

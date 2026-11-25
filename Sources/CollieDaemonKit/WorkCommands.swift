@@ -307,7 +307,8 @@ extension CommandRouter {
             if let agent, !Self.taskAgents.contains(agent) { throw invalid("--agent must be \(Self.taskAgents.joined(separator: "|"))") }
             if let model { try ClaudeModel.validate(model) }
             let w = try await implicitWork(t, now: now)
-            var task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
+            var task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope,
+                            greenOk: flag(r, "green-ok") ? true : nil)
             task.agent = agent; task.model = model
             task.accept = accept; task.acceptTimeout = acceptTimeout
             try await work.update(w.id) { $0.tasks.append(task) }

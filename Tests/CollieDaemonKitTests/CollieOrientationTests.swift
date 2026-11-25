@@ -283,6 +283,30 @@ import CollieProtocol
     }
 }
 
+/// A6: Cursor's MCP client drops a blocking call near 60 s: its agents line teaches `--no-wait` + `ask result` first.
+@Suite struct CollieOrientationCursorAskTests {
+    @Test func cursorAgentsLineTeachesNoWaitFirst() {
+        for shepherd in [false, true] {
+            let c = CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: nil, peers: ["Bob"], panels: [], agent: "cursor")
+            let line = c.split(separator: "\n").first { $0.hasPrefix("- Leashed agents") }.map(String.init) ?? ""
+            #expect(line.contains("ask <name> \"<prompt>\" --no-wait") && line.contains("collie ask result <id>") && !line.contains("to wait for the reply"), "\(line)")
+            #expect(c.count <= 1500, "\(c.count)")
+        }
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        let lot = (name: String(repeating: "L", count: 64), goal: String(repeating: "objetivo ", count: 60))
+        for shepherd in [false, true] {
+            let tight = CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
+                                               panels: ps, lot: lot, morePanels: true, agent: "cursor")
+            #expect(tight.count <= 1500 && tight.contains("ask <name> \"<prompt>\" --no-wait"), "\(tight.count) \(tight)")
+        }
+    }
+
+    @Test func otherAgentsKeepTheBlockingForm() {
+        let c = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: ["Bob"], panels: [], agent: "claude")
+        #expect(c.contains("to wait for the reply"))
+    }
+}
+
 /// Task 7 (spec 2026-11-17 cursor memory §4): Cursor's memory line asks for memory_task, at no cost in compaction.
 @Suite struct CollieOrientationMemoryTaskTests {
     @Test func cursorOrientationMemoryLine() {
@@ -341,6 +365,22 @@ import CollieProtocol
                                                morePanels: true, agent: "cursor", sharedFolder: ["x"], memoryTask: true, candidates: 12)
                 #expect(w.count <= 1500, "\(pref) \(w.count)")
             }
+        }
+    }
+
+    /// PRD B1: a sub-Shepherd is told who summoned it and not to block-ask it; the line costs no form its place under the cap.
+    @Test func subShepherdLineNamesTheShepherdAbove() {
+        let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Boss", "w1"], panels: [], parent: "Boss")
+        #expect(t.contains("Shepherd above: \"Boss\"") && t.contains("collie reply") && t.contains("lot post") && t.contains("never a blocking ask"), "\(t)")
+        #expect(!CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Boss"], panels: []).contains("Shepherd above"))
+        let long = (1...20).map { (name: String(repeating: "p", count: 60) + "\($0)", pluginId: "design") }
+        for agent in ["claude", "cursor"] {
+            let w = CollieOrientation.text(terminal: String(repeating: "t", count: 80), isShepherd: true, paddock: String(repeating: "f", count: 80),
+                                           peers: (1...20).map { "peer\($0)" }, panels: long, paddockPanels: long, designFirst: .figcraft,
+                                           lot: (name: String(repeating: "l", count: 80), goal: String(repeating: "g", count: 300)),
+                                           morePanels: true, agent: agent, sharedFolder: ["x"], memoryTask: true, candidates: 12,
+                                           parent: String(repeating: "b", count: 80))
+            #expect(w.count <= 1500, "\(agent) \(w.count)")
         }
     }
 

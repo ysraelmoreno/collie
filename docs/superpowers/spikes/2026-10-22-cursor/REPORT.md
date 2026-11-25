@@ -192,3 +192,38 @@ typed `/colli` in a TUI running it: the menu listed `/collie:loop` with the desc
 - Print mode (`-p "/collie:loop …"`) returned nothing in 70 s, and `collie ask` refuses to send a slash command, so only
   a person in the TUI can check it.
 - The probe (`.collie/loop-probe`, terminal `cur-probe`) is gone.
+
+## 10. MCP tool-call timeout (2026-11-24, `cursor-agent` 2026.11.22-e9042b2)
+
+Test MCP (stdio, one tool `sleep(seconds)`, in a scratch folder outside the repo, via `.cursor/mcp.json`), run with
+`cursor-agent -p --force --approve-mcps --trust` and the prompt "call sleep once with seconds=N":
+
+| N | result |
+|---|---|
+| 30 s | returns `slept 30 done` |
+| 50 s | returns `slept 50 done` |
+| 60 s | `MCP error -32001: Request timed out` |
+| 120 s | `MCP error -32001: Request timed out` |
+
+Measured timeout: **60 s** (50 s passes, 60 s fails; the MCP server keeps sleeping after the client gives up). A6 uses
+`callTimeoutSeconds = 60` and caps `wait` at 60 − 10 = **50 s** (`CursorMCPPolicy`); a blocking `ask` through the MCP of
+a Cursor terminal becomes `ask --no-wait`.
+
+## 11. Tool hooks for the plug-in contract (2026-11-24, `cursor-agent` 2026.11.22-e9042b2, D1)
+
+Probe plugin (`--plugin-dir`, a recorder script per event), run with `cursor-agent -p --trust --force --model
+composer-2.5` in a scratch folder. Fixtures: `Tests/CollieDaemonKitTests/Fixtures/cursor/` (path and e-mail scrubbed).
+
+- **`postToolUse` of a write:** `tool_name: "Write"`, `tool_input.file_path` (**absolute**) and `tool_input.content`;
+  also `tool_output` (a JSON string), `tool_use_id`, `session_id`, `workspace_roots: [<project>]`, `hook_event_name`.
+  Creating a file and replacing a line of an existing one are both `Write` (whole content). No `StrReplace`/`Edit` seen;
+  other tools carry `file_path` too (`Read`, `Grep`, `Delete`), so the tool name decides, never the key.
+- **`afterFileEdit` fires** (once per write, before `postToolUse`), payload `file_path` (absolute) + `edits: [{old_string,
+  new_string}]`. Not used: `postToolUse` already carries the same path (one source, no double event).
+- **`preToolUse`** fires for every tool (`Read`, `Write`, …) with `tool_name` + `tool_input`, before it runs.
+- **Deny in `preToolUse`:** stdout `{"permission":"deny","user_message":"…"}` stops the tool. The agent sees
+  `Rejected: <user_message>` plus a fixed Cursor note; `agent_message` is **not** shown. The reason goes in `user_message`.
+- **Context in `postToolUse`:** stdout `{"additional_context":"…"}` reaches the agent as a `<system_reminder>` block.
+- **No block after the tool:** a tool that already ran can't be blocked; `postToolUse` accepts context only. A plug-in
+  `block` on `edit` for Cursor therefore becomes `guide` (D1).
+- Still not fired: `stop`, `afterAgentResponse`, `beforeSubmitPrompt` (as in §8); the end of a Cursor turn stays idle.

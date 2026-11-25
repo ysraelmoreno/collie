@@ -19,6 +19,15 @@ public enum PluginHookClient {
         return await verdict(creds, event: "edit", payload: body, timeout: timeout, onError: onError).flatMap(PluginHooks.claudeToolOutput)
     }
 
+    /// `collie hook cursor-tool`: one `plugin.hook` (`edit`; the daemon marks the terminal mid-turn and, for a write, asks the
+    /// plug-ins). Prints Cursor's postToolUse reply (context) only; a preToolUse prints nothing.
+    public static func cursorToolOutput(payload: Data, env: [String: String], timeout: Double = 5,
+                                        onError: (String) -> Void = { _ in }) async -> String? {
+        guard let creds = Creds(env) else { onError("COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN missing"); return nil }
+        let v = await verdict(creds, event: "edit", payload: .string(String(decoding: payload, as: UTF8.self)), timeout: timeout, onError: onError)
+        return PluginHooks.cursorToolPhase(payload) == .post ? v.flatMap(PluginHooks.cursorToolOutput) : nil
+    }
+
     /// `collie hook claude-stop`: the memory flow first (`turn.completed` always goes out), then `plugin.hook` (`stop`).
     /// One block with the plug-in's reason first and the memory ask after it; a continued Stop never blocks.
     public static func stopOutput(stdin: Data, env: [String: String], timeout: Double = 5,

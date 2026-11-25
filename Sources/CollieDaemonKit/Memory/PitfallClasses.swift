@@ -113,7 +113,7 @@ extension CommandRouter {
 
     /// Its store's classes and scope, pitfalls only (never a feedback: R19); a review may name a few findings.
     static func pitfallScope(_ p: PitfallPayload) -> CuratorScope {
-        CuratorScope(ids: Set(p.classes.map(\.id)), scopes: [p.scope], kinds: [.pitfall], maxOps: p.review != nil ? 12 : 2)
+        CuratorScope(ids: Set(p.classes.map(\.id)), scopes: p.scope == .lot ? [.lot, .project] : [p.scope], kinds: [.pitfall], maxOps: p.review != nil ? 12 : 2)
     }
     static let bumpsMax = 10
 
@@ -215,7 +215,7 @@ extension CommandRouter {
             switch op {
             case .bump(let id, let ex):
                 bump = (id, ex, "nova ocorrência: \(ex)")
-            case .create(let n) where n.kind == .pitfall && n.scope == p.scope:
+            case .create(let n) where n.kind == .pitfall && (n.scope == p.scope || p.scope == .lot && n.scope == .project):   // a lot's `project` is the lot's
                 let ex = caseText ?? ""
                 let subject = MemoryRecord.normalize(n.subject)
                 if let c = await PitfallClasses.active(store).first(where: { $0.subject == subject }) {
@@ -236,8 +236,10 @@ extension CommandRouter {
                 var fresh = MemoryRecord(id: id, kind: .pitfall, scope: p.scope, lotId: store.lotId, subject: subject, title: n.title,
                                          body: PitfallClasses.withExamples(body, ex.isEmpty ? [] : [ex]), hits: 1, origin: "curador")
                 fresh.curatedBy = curatedBy
+                // A7: a class citing only scratch under `.collie/` (a batch's throwaway file) is the user's to decide, as is a limited curator's
+                let scratch = MemoryLearning.onlyScratchPaths([n.title, body, ex])
                 // Task 10: a limited curator's class is a proposal, and absorbs nothing until the user approves it
-                if curatedBy?.trust == .limited { fresh.status = .proposed; inst = nil }
+                if curatedBy?.trust == .limited || scratch { fresh.status = .proposed; inst = nil }
                 let rec = fresh
                 try await store.run { try $0.store.write(rec) }
                 var before: [MemoryRecord] = []
@@ -250,6 +252,11 @@ extension CommandRouter {
                 }
                 out.append(DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: rec.title, reason: "nova classe de armadilha",
                                        store: store.key, created: [rec.id], before: before, undone: false, resolved: false))
+                if scratch || n.scope != p.scope {
+                    out.append(DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: rec.title,
+                                           reason: scratch ? "só cita arquivos de .collie/: proposta, não ativa" : "escopo do lote, não do projeto",
+                                           store: store.key, created: [rec.id], before: [], undone: false, resolved: false))
+                }
             default: continue
             }
             guard let b = bump, !bumped.contains(b.id), bumped.count < Self.bumpsMax else { continue }

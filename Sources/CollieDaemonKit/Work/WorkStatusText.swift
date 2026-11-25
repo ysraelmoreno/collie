@@ -137,7 +137,13 @@ public enum WorkStatusText {
 
     /// M3c.4: a loop run with `--notify end`: "avisos: só no fim". nil: no loop, or one that notifies every task.
     /// M5.6: the model the loop's agents run on, when it has one (`--model` or the daemon's `loopModel`).
-    public static func modelLine(_ w: Work) -> String? { w.loop?.model.map { "modelo dos agentes: " + RerailText.clean($0, max: 64) } }
+    public static func modelLine(_ w: Work) -> String? {
+        // C3: with --escalate, the model of the attempt in course (the first until one starts)
+        if let l = w.loop, let e = l.escalation(attempt: l.attempt), l.escalate != nil {
+            return "modelo dos agentes: " + RerailText.clean("\(e.preset):\(e.model)", max: 64) + " (tentativa \(Swift.max(l.attempt, 1)); escalada: " + RerailText.clean(l.escalate?.joined(separator: ",") ?? "", max: 200) + ")"
+        }
+        return w.loop?.model.map { "modelo dos agentes: " + RerailText.clean($0, max: 64) }
+    }
     /// F2 R1: "revisão: ligada, personas auto" (+ ", revisor <model>"); nil: review off.
     public static func reviewLine(_ w: Work) -> String? {
         guard let l = w.loop, l.review == true else { return nil }

@@ -79,6 +79,24 @@ public enum PluginHooks {
         return String(data: d, encoding: .utf8)
     }
 
+    /// Cursor's `preToolUse` / `postToolUse` (spike REPORT §11); any other payload, `afterFileEdit` included, is nil.
+    public enum ToolPhase: Equatable, Sendable { case pre, post }
+    public static func cursorToolPhase(_ payload: Data) -> ToolPhase? {
+        switch ((try? JSONSerialization.jsonObject(with: payload)) as? [String: Any])?["hook_event_name"] as? String {
+        case "preToolUse": return .pre
+        case "postToolUse": return .post
+        default: return nil
+        }
+    }
+
+    /// stdout of Cursor's postToolUse hook: context only (a tool that already ran cannot be denied), so a block is a guide.
+    public static func cursorToolOutput(_ v: Verdict) -> String? {
+        guard let text = v.block ?? v.guide,
+              let d = try? JSONSerialization.data(withJSONObject: ["additional_context": text], options: [.sortedKeys, .withoutEscapingSlashes])
+        else { return nil }
+        return String(data: d, encoding: .utf8)
+    }
+
     /// The reason text that blocks the end of a `stop` turn.
     public static func claudeStopReason(_ v: Verdict) -> String? { v.block }
 

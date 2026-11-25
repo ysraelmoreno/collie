@@ -160,7 +160,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let ida = Set(ja.candidates.map(\.id)), idc = Set(jc.candidates.map(\.id))
             #expect(ida.contains(x1.id) && ida.contains(g.id) && !ida.contains(pr.id) && !ida.contains(x2.id), "\(ja.candidates)")
             #expect(idc.contains(pr.id) && idc.contains(g.id) && !idc.contains(x1.id) && !idc.contains(x2.id))
-            #expect(CommandRouter.correctionScope(ja).scopes == [.lot, .global])
+            #expect(CommandRouter.correctionScope(ja).scopes == [.lot, .project, .global])
             #expect(CommandRouter.correctionScope(jc).scopes == [.project, .global])
             _ = b
         }

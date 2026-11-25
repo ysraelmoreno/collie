@@ -37,6 +37,33 @@ import CollieTerminal
         #expect(AskCoordinator.keys(.yesNoKey, allow: true) == Data("y".utf8) && AskCoordinator.keys(.yesNoKey, allow: false) == Data("n".utf8))
     }
 
+    /// A1: a Cursor launched by a custom command raises the same cards; a shell or a plain custom command does not.
+    @Test func customCursorRaisesAttention() {
+        for s in ["Run this command?\n › Run (once) (y)", "Workspace Trust Required\n[a] Trust this workspace [q] Quit"] {
+            var d = AttentionDetector(agent: "cursor")
+            #expect(d.feed(s) != nil, "\(s)")
+            var o = AttentionDetector(agent: "other")
+            #expect(o.feed(s) == nil, "\(s)")
+        }
+        var c = AttentionDetector(agent: "claude")
+        #expect(c.feed("Do you trust the files in this folder?") != nil)
+        var x = AttentionDetector(agent: "cursor")
+        #expect(x.feed("Do you trust the files in this folder?") == nil)
+    }
+
+    /// A1 regression: "other" (a fake command on the claude preset) keeps the preset's patterns; a Cursor custom stays Cursor.
+    @Test func otherAgentKeepsThePresetPatterns() {
+        let trust = "Do you trust the files in this folder?"
+        var q = QuietDetector(preset: .claude, agent: "other")
+        #expect(q.feed(trust) != nil)
+        var n = QuietDetector(preset: .claude, agent: nil)
+        #expect(n.feed(trust) != nil)
+        var c = QuietDetector(preset: .custom, agent: "cursor")
+        #expect(c.feed("Workspace Trust Required\n[a] Trust this workspace [q] Quit") != nil)
+        var o = QuietDetector(preset: .custom, agent: "other")
+        #expect(o.feed(trust) == nil)
+    }
+
     @Test func noFalsePositiveOnNormalOutput() {
         var d = AttentionDetector(preset: .claude)
         for i in 0..<100 { #expect(d.feed("2026-10-19 INFO request \(i) handled in 12ms status=200\n") == nil) }

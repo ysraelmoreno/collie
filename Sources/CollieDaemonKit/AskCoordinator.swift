@@ -8,8 +8,10 @@ public struct AskResult: Sendable, Equatable {
     public var output: String
     public var source: Source
     public var truncated: Bool
-    public init(output: String, source: Source, truncated: Bool) {
-        self.output = output; self.source = source; self.truncated = truncated
+    /// C1: how the ask's check ended (`ask --check`); nil: no check was asked.
+    public var check: AskCheckReport?
+    public init(output: String, source: Source, truncated: Bool, check: AskCheckReport? = nil) {
+        self.output = output; self.source = source; self.truncated = truncated; self.check = check
     }
 }
 
@@ -57,10 +59,10 @@ final class ApprovalTracker: @unchecked Sendable {
     private var restorable: Approval?   // cleared by input: back if the keys drew no reaction (window end)
     private var inputs = 0         // counts inputs: a re-raise only if none came since the answer
     /// `now`: tests drive the clock.
-    init(terminalId: UUID, name: String, preset: Preset, scrollback: ScrollbackBuffer,
+    init(terminalId: UUID, name: String, preset: Preset, agent: String? = nil, scrollback: ScrollbackBuffer,
          now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }, onEvent: @escaping @Sendable (ApprovalEvent) -> Void) {
         self.terminalId = terminalId; self.name = name; self.scrollback = scrollback; self.onEvent = onEvent
-        quiet = QuietDetector(preset: preset, now: now)
+        quiet = QuietDetector(preset: preset, agent: agent, now: now)
     }
     var pending: Approval? { lock.withLock { _pending } }
     /// Output since the last input is not scanned yet (its window is open, or over and not scanned): a prompt may be
@@ -353,6 +355,14 @@ public actor AskCoordinator {
         var timer: Task<Void, Never>?
     }
 
+    /// D1: Cursor's `preToolUse` seen, its `postToolUse` not yet (since when): the terminal is mid-turn even with a quiet screen.
+    /// Capped by `heldMax`, so a tool whose post never came (cancelled) does not hold an ask for ever.
+    private var toolSince: [UUID: ContinuousClock.Instant] = [:]
+    func cursorTool(_ t: UUID, running: Bool) { toolSince[t] = running ? .now : nil }
+    /// A Cursor turn ended by idle (its ask just closed): the router asks the plug-ins' `stop` (D1). nil: dropped.
+    nonisolated let cursorTurnEnds: AsyncStream<UUID>
+    private nonisolated let cursorTurnSink: AsyncStream<UUID>.Continuation
+
     /// Injection readiness: a fresh terminal (login shell, agent TUI) can drop typeahead while it initialises.
     /// Ready once it printed something and then stayed quiet `limits.readyQuiet`, or `limits.readyMax` after attach.
     static let readyPoll: Duration = .milliseconds(50)
@@ -381,24 +391,27 @@ public actor AskCoordinator {
     private let submitConfirm: Duration
     /// Every time limit of this coordinator (M11.1): the daemon passes `AskLimits.production`, tests short ones.
     nonisolated let limits: AskLimits
-    public init(limits: AskLimits) {
-        self.limits = limits
+    /// A4: renders a terminal's output into its screen (the daemon's `screenRenderer`); nil: Cursor's idle answer is the scrollback.
+    private let screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)?
+    public init(limits: AskLimits, screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)? = nil) {
+        self.limits = limits; self.screenRenderer = screenRenderer
         idleQuiet = limits.idleQuiet; heldMax = limits.heldMax; captureHoldMax = limits.captureHold
         submitConfirm = limits.submitConfirm
         (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
+        (cursorTurnEnds, cursorTurnSink) = AsyncStream.makeStream(of: UUID.self, bufferingPolicy: .bufferingNewest(100))
     }
     public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120,
-                submitConfirmSeconds: Double? = nil) {
+                submitConfirmSeconds: Double? = nil, screenRenderer: (@Sendable (Data, Int, Int) -> String)? = nil) {
         var l = AskLimits.production
         l.idleQuiet = .seconds(idleQuietSeconds); l.heldMax = .seconds(heldMaxSeconds); l.captureHold = .seconds(captureHoldSeconds)
         if let submitConfirmSeconds { l.submitConfirm = .seconds(submitConfirmSeconds) }
-        self.init(limits: l)
+        self.init(limits: l, screenRenderer: screenRenderer)
     }
 
     /// Registers a spawned terminal. Wires output (paste-mode tracking) and exit (fails its asks).
     public func attach(_ rec: TerminalRecord, process: PTYProcess, scrollback: ScrollbackBuffer) {
         let sink = approvalSink, paste = PasteModeTracker()
-        let approval = ApprovalTracker(terminalId: rec.id, name: rec.name, preset: rec.preset, scrollback: scrollback) { sink.yield($0) }
+        let approval = ApprovalTracker(terminalId: rec.id, name: rec.name, preset: rec.preset, agent: CommandRouter.agentName(rec), scrollback: scrollback) { sink.yield($0) }
         // ponytail: output read between spawn and this assignment isn't scanned; an agent enabling
         // bracketed paste within those microseconds would get plain input. Hook it in PTYProcess.init if seen.
         process.onOutput = { paste.feed($0); approval.feed($0) }
@@ -409,7 +422,7 @@ public actor AskCoordinator {
         targets[rec.id] = Target(name: rec.name, preset: rec.preset, process: process, scrollback: scrollback, paste: paste,
                                  approval: approval)
         targets[rec.id]?.claudeTUI = rec.command == nil && rec.preset == .claude
-        targets[rec.id]?.cursorTUI = rec.preset == .cursor || rec.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent"
+        targets[rec.id]?.cursorTUI = CommandRouter.agentName(rec) == "cursor"
         let id = rec.id, me = ObjectIdentifier(process)
         // replays if already exited; ignored once the terminal was replaced by a new launch with the same id
         let prevExit = process.onExit
@@ -438,7 +451,7 @@ public actor AskCoordinator {
         // the name is the registry's, never the asker's text; --raw and a dialog's answer (`ask B y`) stay exact
         let sender = !raw && from != to && prompt.count > Self.dialogAnswerMax ? targets[from]?.name : nil
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
-                                  senderName: sender, askId: askId, replyHint: sender != nil && t.preset == .cursor,
+                                  senderName: sender, askId: askId, replyHint: sender != nil && t.cursorTUI,
                                   onDelivered: onDelivered, cont: nil), timeout: timeout)
     }
 
@@ -821,7 +834,8 @@ public actor AskCoordinator {
         targets[to]?.swallowedFor = nil
         targets[to]?.typed = true
         // a dialog's answer and these never raise UserPromptSubmit
-        let confirm = t.claudeTUI && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
+        // A3: Cursor too (no hook: its working footer is the confirmation)
+        let confirm = (t.claudeTUI || t.cursorTUI) && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
         let submits = t.submits, raw = w.raw, busy = t.inTurn, ends = t.turnEnds
         if confirm { targets[to]?.awaitingSubmit = id }
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
@@ -976,6 +990,12 @@ public actor AskCoordinator {
         delivered(id)
     }
 
+    /// A3: a Cursor's prompt is queued, or written and not yet confirmed by its working footer: `wait` is not idle.
+    func cursorUnsent(_ terminal: UUID) -> Bool {
+        guard let t = targets[terminal], t.cursorTUI else { return false }
+        return !t.queue.isEmpty || t.inflight.map { t.awaitingSubmit == $0.id } == true
+    }
+
     /// M2.0: a prompt written to `terminal` had its Enter sent again (the loop's journal).
     func submitRetried(_ terminal: UUID) -> Bool { targets[terminal]?.submitRetried ?? false }
 
@@ -1003,13 +1023,15 @@ public actor AskCoordinator {
         while true {
             try? await Task.sleep(for: .milliseconds(100))
             guard let t = targets[to], t.inflight?.id == id else { return }   // its turn ended, or it failed
-            if t.submits > submits { submitted(id, to); return }
+            if t.cursorTUI ? Self.cursorIsWorking(t.scrollback) : t.submits > submits { submitted(id, to); return }
             let now = ContinuousClock.now
             if busy && t.turnEnds == ends { start = now; continue }   // ponytail: bounded by the waiter's own timeout
-            guard now - start >= submitConfirm else { continue }
+            // Cursor's footer shows within about a second of a taken Enter: no reason to wait the Claude hook's time
+            guard now - start >= (t.cursorTUI ? min(submitConfirm, .seconds(3)) : submitConfirm) else { continue }
             let printing = t.process.lastOutputAt.map { now - $0 < StreamHub.workingWindow } ?? false
             if printing && now - start < Self.submitConfirmMax { continue }
-            if printing || !t.sessionHooked || t.approval.pending != nil { submitted(id, to); return }
+            // Cursor has no SessionStart to wait for: its footer (above) is the only proof
+            if printing || (!t.cursorTUI && !t.sessionHooked) || t.approval.pending != nil { submitted(id, to); return }
             if !resent {
                 // counted as input in one step with the check, as the prompt's own write: an Enter into a dialog
                 // would answer it. Output not scanned yet may hold one: looked at again on the next poll.
@@ -1033,6 +1055,8 @@ public actor AskCoordinator {
                 start = .now
                 continue
             }
+            // Cursor: no footer is no proof (a fast turn ends before a poll sees it): idle/reply decide from here
+            if t.cursorTUI { submitted(id, to); return }
             finish(id, .failure(ProtocolError(code: .unavailable, message:
                 "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
             return
@@ -1042,6 +1066,10 @@ public actor AskCoordinator {
     /// Idle fallback; returns false once `id` is no longer in flight (stops the poller).
     /// cursor-agent's right footer placeholder while it works (spike REPORT §4).
     static let cursorWorking = "ctrl+c to stop"
+    /// ponytail: "latest frame" = last 10 non-empty lines, since scrollback appends every repaint (spike REPORT §4).
+    static func cursorIsWorking(_ sb: ScrollbackBuffer) -> Bool {
+        ApprovalTracker.lines(sb, 10).contains { $0.contains(cursorWorking) }
+    }
 
     private func pollIdle(_ to: UUID, _ id: UUID) -> Bool {
         guard let t = targets[to], let (cur, mark) = t.inflight, cur == id, !t.hookCapable else { return false }
@@ -1050,11 +1078,26 @@ public actor AskCoordinator {
         // Cursor has no turn hook: its working footer on the latest frame means the turn is still running (the
         // waiter's timeout still caps it). ponytail: "latest frame" = last 10 non-empty lines, since scrollback
         // appends every repaint; a taller footer redraw would need a screen grid (spike REPORT §4).
-        if t.cursorTUI, ApprovalTracker.lines(t.scrollback, 10).contains(where: { $0.contains(Self.cursorWorking) }) { return true }
+        if t.cursorTUI, Self.cursorIsWorking(t.scrollback) { return true }
+        if t.cursorTUI, let s = toolSince[to], ContinuousClock.now - s < heldMax { return true }   // D1: a tool is running
+        if t.cursorTUI, t.awaitingSubmit == id { return true }   // A3: written, not confirmed: its echo is not a finished turn
         let s = t.scrollback.text(since: mark)
         targets[to]?.idleOwed = true   // never consumed if the target really has no hook
         targets[to]?.owedText = String(s.text.suffix(64 * 1024))
-        finish(id, .success(AskResult(output: s.text, source: .idle, truncated: s.truncated)))
+        var result = AskResult(output: s.text, source: .idle, truncated: s.truncated)
+        // A4: Ink repaints the whole frame on every spinner tick; the answer is the rendered screen, minus its frame
+        if t.cursorTUI, let render = screenRenderer {
+            let size = t.process.size ?? (120, 40)
+            let screen = render(t.scrollback.snapshot().data, size.cols, size.rows)
+            let answer = CursorScreen.answer(screen)
+            if !answer.isEmpty {
+                let cut = CursorScreen.isCut(screen)
+                result = AskResult(output: cut ? answer + "\n(resposta cortada na altura da tela: collie check \(t.name) --screen)" : answer,
+                                   source: .idle, truncated: cut)
+            }
+        }
+        finish(id, .success(result))
+        if t.cursorTUI { cursorTurnSink.yield(to) }
         return false
     }
 }

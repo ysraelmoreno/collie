@@ -635,13 +635,66 @@ bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda cons
   de abrir).
 - **Cursor** (`cursor-agent`): instale e faça login pelo próprio CLI (`curl https://cursor.com/install -fsS | bash`,
   `cursor-agent login`); usa o plano do Cursor do usuário, e o Collie não vê nem guarda credencial. Sem `cursor-agent` no
-  `PATH`, criar ou convocar falha na hora, sem terminal criado. Não há hook de fim de turno por terminal (o `--plugin-dir`
-  só dispara `sessionStart` na versão 2026.10.22), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
+  `PATH`, criar ou convocar falha na hora, sem terminal criado. `summon --model <m>` vale também para o Cursor (preset ou
+  comando `cursor-agent`) e vira `--model '<m>'` no comando, sem duplicar um `--model` que o comando já tenha. Sob o sandbox
+  do Collie o preset (e um `cursor-agent` custom) leva `--trust`, para o Cursor não parar em "Workspace Trust Required"; num
+  terminal livre o diálogo continua aparecendo: confiar no repositório ali é decisão do usuário. Não há hook de fim de turno por terminal (o `--plugin-dir`
+  não dispara `stop`), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
   chegar, o terminal passa a esperar só hook. Pedidos de permissão (`Run this command?`, `Write to this file?`…) viram
   atenção e são respondidos com `y`/`n`; a tela de login (`Press any key to log in`) também vira atenção, mas o Collie nunca
   digita nela. Sem orientação no início da sessão, sem painel de uso. O cursor-agent também roda os hooks do
   `~/.claude/settings.json` do usuário (um `PreToolUse` de Bash vale para o Shell do Cursor). O Collie não desliga isso.
+  **Hooks do Cursor** (medidos na 2026.11.22, spike §11): `sessionStart` entrega a orientação; `preToolUse` e `postToolUse`
+  (`collie hook cursor-tool`) marcam o terminal como em turno, e o `ask` não fecha por ociosidade enquanto uma ferramenta
+  roda (limite: 10 min). Um `postToolUse` de `Write` vira o evento `edit` dos plug-ins (`agent: "cursor"`); o `guide` volta ao
+  agente como contexto e o `block` também (depois que a ferramenta rodou só cabe contexto). Quando o `ask` fecha por
+  ociosidade, o Collie gera o `stop` dos plug-ins com os arquivos escritos no turno: um `block` vira **um** prompt de
+  continuação por turno; `guide` é ignorado. Não suportado: `afterFileEdit` (o `postToolUse` já traz o caminho), edições que
+  não passem por `Write`, `stop` de turnos que não vieram de um `ask`.
   Detalhes: `docs/superpowers/spikes/2026-10-22-cursor/REPORT.md`.
+
+### Sub-Pastor (`summon --shepherd`)
+
+Um Pastor pode convocar outro Pastor com `collie summon <nome> --shepherd` (CLI e MCP), para dividir o trabalho em árvore:
+um Pastor forte reparte, um sub-Pastor coordena a sua parte com workers baratos. Não muda o modelo de permissão.
+
+- **Alcance:** só por guias. O sub-Pastor alcança o que ele convoca e o Pastor que o convocou; o Pastor de cima **não**
+  alcança os netos. Quem convoca grava `summonedBy` no terminal convocado (também o laço `work run`).
+- **Profundidade:** no máximo 2 abaixo de um Pastor marcado pelo app (Pastor do app → sub-Pastor → sub-sub-Pastor); um
+  `--shepherd` além disso é recusado, com a profundidade na mensagem.
+- **Cercado:** fica no de quem o convocou; `summon --paddock` e `paddock create` são recusados para ele. Os demais comandos
+  de Pastor valem, inclusive `work run`, que continua exigindo o cartão do dono.
+- **Teto:** um sub-Pastor tem no máximo 6 terminais convocados por ele; o sétimo é recusado com o número.
+- **Dispensa:** `collie dismiss <sub>` vale só para o Pastor que o convocou e é em cascata: primeiro tudo o que o
+  sub-Pastor convocou (recursivo), depois ele. Um Pastor marcado pelo app não é dispensado por agente.
+- **Sandbox:** só com sandbox, como todo `summon`.
+- **Orientação:** o sub-Pastor recebe uma linha com o nome do Pastor de cima: responde a ele com `collie reply` /
+  `lot post`, nunca com `ask` bloqueante. Quem não é Pastor e tenta `summon` lê como pedir a marca (a quem o convocou ou ao
+  usuário, no app).
+
+### `ask` com portão (`--check`)
+
+```
+collie ask <alvo> "<pedido>" --check "<comando>" [--spec <arquivo.md>] [--tries 3] [--check-timeout 600] [--no-wait]
+```
+
+O juiz é um comando, nunca o alvo. Ao fim do turno do alvo (hook, `collie reply` ou ociosidade, como no `ask` de sempre) o
+**daemon** roda o check na pasta do alvo, sob o sandbox do alvo e com o ambiente da lista do laço (`checkEnv`: sem
+`COLLIE_*`, sem token), o mesmo `runCheck` do laço.
+
+- **Prompt:** o pedido, o caminho do spec (se houver) e a linha `O Collie roda este check quando você terminar e só aceita a
+  resposta se ele passar: <comando>`.
+- **Passou:** o ask termina com a resposta do alvo e `check: {status: "passed", tries, tail}`.
+- **Falhou:** o mesmo alvo recebe `O check falhou. Corrija e encerre o turno. Fim da saída:` e as últimas 40 linhas (até
+  3 KB, segredos escondidos, como o pré-check do laço). Conta uma tentativa.
+- **Sem tentativas** (`--tries`, padrão 3, até 10): o ask termina `failed`, `error: "check failed after N tries"`; no
+  `--no-wait` o fim da saída está em `check.tail` de `collie ask result <id>`, no síncrono vem na mensagem do erro.
+- **Não se auto-aprova:** uma tentativa que muda ou apaga um arquivo que o texto do check nomeia (já existente antes do ask)
+  é reprovada sem rodar o check, com o motivo no fim da saída. Um arquivo que o spec nomeia (lido antes do primeiro turno)
+  pode ser mudado.
+- O check e o spec ficam só no daemon (no registro do ask), nunca no repositório. `--spec`, `--tries` e `--check-timeout`
+  sem `--check` são recusados. Sem `--check`, o `ask` não muda.
+- ponytail: o nome do arquivo é achado por texto (palavras do comando); um script que o check alcança por outro não é visto.
 
 ## Sandbox dos terminais
 
@@ -848,7 +901,7 @@ dono aprovou a lista de tarefas e os checks.
   e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
   na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
   arquivo não rastreado criado pelo check ou pelo portão já foi removido.
-- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …] [--escalate agente:modelo,…]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
@@ -856,6 +909,10 @@ dono aprovou a lista de tarefas e os checks.
   Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: … · estado: collie work status`: o aviso digitado no terminal é
   só uma dica e pode não chegar; quem espera um laço usa `collie work wait` e lê o `collie work status`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
+- Escalada (`--escalate cursor:composer-2.5,cursor:gpt-5.6-luna-high,claude:sonnet`): a tentativa `n` de uma tarefa roda a entrada
+  `min(n, k)` (k = tamanho da lista, até 10; agente `claude|cursor`, modelo validado como no `summon --model`); `--tries` segue o teto.
+  Exclui `--preset/--model/--command`. O cartão mostra a lista, o diário marca `[agente:modelo]` em `agentSummoned` e `work status`
+  mostra o modelo da tentativa em curso. A nota de falha anterior vai ao próximo agente como sempre.
 - Pré-check (`--precheck`): um comando rápido (ex.: `swift build --build-tests`) que roda no fim de cada turno com commit,
   antes do check e com o agente ainda aberto (até 180 s, ou o resto do orçamento). Se falhar, o mesmo agente recebe uma vez por
   tentativa as últimas 40 linhas da saída (até 3 KB) e o laço espera o turno de novo; se falhar outra vez, segue para o check.

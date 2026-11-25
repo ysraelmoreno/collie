@@ -646,6 +646,30 @@ um Pastor forte reparte, um sub-Pastor coordena a sua parte com workers baratos.
   `lot post`, nunca com `ask` bloqueante. Quem não é Pastor e tenta `summon` lê como pedir a marca (a quem o convocou ou ao
   usuário, no app).
 
+### `ask` com portão (`--check`)
+
+```
+collie ask <alvo> "<pedido>" --check "<comando>" [--spec <arquivo.md>] [--tries 3] [--check-timeout 600] [--no-wait]
+```
+
+O juiz é um comando, nunca o alvo. Ao fim do turno do alvo (hook, `collie reply` ou ociosidade, como no `ask` de sempre) o
+**daemon** roda o check na pasta do alvo, sob o sandbox do alvo e com o ambiente da lista do laço (`checkEnv`: sem
+`COLLIE_*`, sem token), o mesmo `runCheck` do laço.
+
+- **Prompt:** o pedido, o caminho do spec (se houver) e a linha `O Collie roda este check quando você terminar e só aceita a
+  resposta se ele passar: <comando>`.
+- **Passou:** o ask termina com a resposta do alvo e `check: {status: "passed", tries, tail}`.
+- **Falhou:** o mesmo alvo recebe `O check falhou. Corrija e encerre o turno. Fim da saída:` e as últimas 40 linhas (até
+  3 KB, segredos escondidos, como o pré-check do laço). Conta uma tentativa.
+- **Sem tentativas** (`--tries`, padrão 3, até 10): o ask termina `failed`, `error: "check failed after N tries"`; no
+  `--no-wait` o fim da saída está em `check.tail` de `collie ask result <id>`, no síncrono vem na mensagem do erro.
+- **Não se auto-aprova:** uma tentativa que muda ou apaga um arquivo que o texto do check nomeia (já existente antes do ask)
+  é reprovada sem rodar o check, com o motivo no fim da saída. Um arquivo que o spec nomeia (lido antes do primeiro turno)
+  pode ser mudado.
+- O check e o spec ficam só no daemon (no registro do ask), nunca no repositório. `--spec`, `--tries` e `--check-timeout`
+  sem `--check` são recusados. Sem `--check`, o `ask` não muda.
+- ponytail: o nome do arquivo é achado por texto (palavras do comando); um script que o check alcança por outro não é visto.
+
 ## Sandbox dos terminais
 
 Todo terminal do Collie (agentes e shells) roda dentro de um sandbox do macOS (Seatbelt, `sandbox-exec`): um perfil por

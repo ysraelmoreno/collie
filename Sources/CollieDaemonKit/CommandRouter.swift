@@ -480,12 +480,19 @@ actor CommandRouter {
                 }
                 let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
-                if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
+                let gate = try askGate(req, target: t)
+                if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout, gate: gate)) }
                 let busy = await targetBusy(t.id)
-                let r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout)
-                return Response(id: req.id, ok: true, result: .object([
-                    "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated),
-                    "targetBusy": .bool(busy)]))
+                let r: AskResult
+                if let gate { r = try await asks.askGated(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: askCheckRunner(for: t)) }
+                else { r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout) }
+                if let c = r.check, c.status == .failed {
+                    throw ProtocolError(code: .conflict, message: "\(c.failure). Fim da saída:\n\(c.tail)")
+                }
+                var o: [String: JSONValue] = ["output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated),
+                                              "targetBusy": .bool(busy)]
+                if let c = r.check { o["check"] = c.json }
+                return Response(id: req.id, ok: true, result: .object(o))
             case "ask.result":   // the asker's own asks only: another terminal's id is notFound
                 guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
                 guard let e = await inbox.markRead(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
@@ -558,26 +565,63 @@ actor CommandRouter {
 
     /// `ask --no-wait`: the same ask, detached; its reply is kept in the inbox and typed into the asker once it is idle
     /// (claude/codex/cursor only: a shell would run it).
-    private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration) async -> JSONValue {
+    private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration, gate: AskGate? = nil) async -> JSONValue {
         let busy = await targetBusy(t.id)
         let id = await inbox.open(from: from, target: t.name, targetBusy: busy)
         let asks = asks, inbox = inbox, target = t.id
         let typed = ws.terminals.first { $0.id == from }.map { Self.isAgent($0) } ?? false
+        let run = gate == nil ? nil : askCheckRunner(for: t)
         askNotices[id] = Task {
-            let r: Result<AskResult, ProtocolError>
-            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id,
-                                                                onDelivered: { Task { await inbox.delivered(id: id) } })) }
-            catch { r = .failure(error) }
+            var r: Result<AskResult, ProtocolError>
+            let delivered: @Sendable () -> Void = { Task { await inbox.delivered(id: id) } }
+            do throws(ProtocolError) {
+                if let gate, let run {
+                    r = .success(try await asks.askGated(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, gate: gate, run: run,
+                                                         detached: true, askId: id, onDelivered: delivered))
+                } else {
+                    r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id, onDelivered: delivered))
+                }
+            } catch { r = .failure(error) }
+            // C1: out of tries is the ask's failure, its output's tail kept in `check`
+            let check = (try? r.get())?.check
+            if let c = check, c.status == .failed { r = .failure(ProtocolError(code: .conflict, message: c.failure)) }
             // nil: the asker was removed meanwhile — nothing to type
             // an approval prompt on the asker holds the reply until it is resolved; after 30 min it stays only in the inbox
             defer { Task { await self.noticeDone(id) } }
-            guard let e = await inbox.close(id: id, r), typed, e.readAt == nil, !Task.isCancelled else { return }
+            guard let e = await inbox.close(id: id, r, check: check), typed, e.readAt == nil, !Task.isCancelled else { return }
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
         return .object(["askId": .string(id), "target": .string(t.name), "targetBusy": .bool(busy)])
     }
 
     private func noticeDone(_ id: String) { askNotices[id] = nil }
+
+    /// C1: `ask --check`'s gate: nil without `--check`. The check runs in the target's own folder.
+    private func askGate(_ req: Request, target t: TerminalRecord) throws(ProtocolError) -> AskGate? {
+        guard let command = str(req, "check"), !command.isEmpty else {
+            guard str(req, "spec") == nil, req.args["tries"] == nil, req.args["check-timeout"] == nil else {
+                throw ProtocolError(code: .invalidArgs, message: "--spec, --tries and --check-timeout need --check")
+            }
+            return nil
+        }
+        return AskGate(command: command, spec: str(req, "spec"), tries: Int(try num(req, "tries", max: 10) ?? 3),
+                       checkTimeout: .seconds(try num(req, "check-timeout", max: 3600) ?? 600), dir: URL(fileURLWithPath: t.cwd))
+    }
+
+    /// C1: the judge: the loop's own `runCheck`, under the target's sandbox profile and `checkEnv` (no COLLIE_*). A sandboxed
+    /// target whose profile is gone runs nothing: the check never runs unsandboxed.
+    private func askCheckRunner(for t: TerminalRecord) -> AskCheckRun {
+        let sandboxed = sandboxed(t), root = config.paths.root, home = config.sandboxHome, shell = config.shell
+        let profile = sandboxed ? SandboxLaunch.profileFile(t.id, root: root) : nil
+        let id = t.id
+        return { [self] (command: String, dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult in
+            if let profile, !FileManager.default.fileExists(atPath: profile.path) {
+                throw ProtocolError(code: .unavailable, message: "the target's sandbox profile is gone; the check does not run unsandboxed")
+            }
+            let env = RouterLoopHost.checkEnv(await loopUserEnv(), sandbox: home.flatMap { h in sandboxed ? (id, root, shell, h) : nil })
+            return try await RouterLoopHost.runCheck(command, in: dir, profile: profile, env: env, timeout: timeout)
+        }
+    }
 
     /// The target is in a turn (its badge `working`, or an ask, capture or Claude turn holds it): a prompt waits in its queue.
     func targetBusy(_ id: UUID) async -> Bool {

@@ -8,8 +8,10 @@ public struct AskResult: Sendable, Equatable {
     public var output: String
     public var source: Source
     public var truncated: Bool
-    public init(output: String, source: Source, truncated: Bool) {
-        self.output = output; self.source = source; self.truncated = truncated
+    /// C1: how the ask's check ended (`ask --check`); nil: no check was asked.
+    public var check: AskCheckReport?
+    public init(output: String, source: Source, truncated: Bool, check: AskCheckReport? = nil) {
+        self.output = output; self.source = source; self.truncated = truncated; self.check = check
     }
 }
 

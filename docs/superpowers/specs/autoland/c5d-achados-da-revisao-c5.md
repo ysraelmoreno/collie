@@ -1,0 +1,10 @@
+# C5d: achados da revisão independente de C5a–c (7ad25cd2..2a408a62)
+
+Sem blocker. Cada ponto com teste que FALHE sem a correção; sem relógio real nem sleep nos testes novos.
+
+1. **Major: descarte deixa tarefa `done` sem os commits.** `Sources/CollieDaemonKit/Work/WorkLoopPreCheck.swift` (`discardLand`): quando o laço para com `landTasksNotDone` (ou outro stop de land) e o `reset --hard` descarta commits de tarefas já `done` (ex.: tarefa 1 done, tarefa 2 adiada), essas tarefas continuam `done` mas o trabalho delas só existe no patch. Corrija: depois de um descarte bem-sucedido, REABRA (`reopen`, volta à fila) cada tarefa `done` cujos commits foram descartados (use a lista de commits por tarefa que o laço já guarda; se não houver mapeamento confiável, reabra todas as `done` desta rodada do laço), e diga na nota quais foram reabertas. Se o descarte NÃO rodou (árvore suja, base movida etc.), não reabra nada. Teste (git real): 2 tarefas, a 1 done com commit, a 2 adiada, `landTasksNotDone`: após o descarte a tarefa 1 está aberta e o `work run` seguinte a pega; sem descarte, nada reaberto.
+2. **Minor: cancelamento do pré-check.** `greenPreCheck` (~21) usa `Task {}` não estruturada: se a Task do laço for cancelada por outro caminho que não `work stop`, `await run.value` espera os checks. Envolva em `withTaskCancellationHandler { run.cancel() }`. Teste: cancelar a Task do laço durante o pré-check cancela os checks e termina sem esperar o teto.
+3. **Minor: notify duplicado.** Com `--auto-land`, stop `checkAlreadyGreen` notifica o dono duas vezes (`greenPreCheck` e `autoLandSummary`). Notifique uma vez. Teste: contar notificações == 1.
+4. **Minor: `git am` sem aspas.** Em `WorkLoopPreCheck.swift` (~100/111) o caminho do patch vive em `Application Support/...` (tem espaço): cite com aspas simples seguras na nota. Teste: a nota contém o caminho entre aspas.
+
+Check: `scripts/check-autoland-loop.sh c5d`. Commit ao final, só os arquivos da tarefa. Não rode `SandboxGrantTests` nem `WorkLoopSandboxTests`.

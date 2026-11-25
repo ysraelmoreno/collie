@@ -6,6 +6,11 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-11-25
+
+### Fixed
+- **"Memória" panel on a fresh install:** the global scope showed `repo '…/Application Support/Collie/memory' does not exist`, because the global store folder is only created by the first write and the daemon refused the path. It is now accepted before the folder exists.
+
 ## [0.2.0] — 2026-11-25
 
 > The factory below is a **preview**. The auto-land was validated end to end in a throwaway repository

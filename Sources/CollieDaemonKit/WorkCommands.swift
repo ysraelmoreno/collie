@@ -538,7 +538,12 @@ extension CommandRouter {
             let t: TerminalRecord? = caller != nil || str(r, "terminal") != nil ? try target() : nil
             let dir = try await planDir(r, t, confined: caller != nil)
             // C4a: a terminal's lint reads only inside its project (links, special files and `..` refused)
-            let root: URL? = if let t { try? await projectRoot(of: t) } else { nil }
+            // C5b: no root found is a refusal, never the package's own folder as the fence (that read anything it links to)
+            var root: URL?
+            if let t {
+                do { root = try await projectRoot(of: t) }
+                catch { throw ProtocolError(code: .internal, message: "não achei a raiz do projeto de '\(t.name)' (\(error)): o lint não lê o pacote sem ela") }
+            }
             return PlanLint.json(PlanLint.lint(dir, root: root))
         case "work.plan.apply":
             guard caller == nil else {

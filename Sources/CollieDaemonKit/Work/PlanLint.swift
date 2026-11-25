@@ -225,17 +225,21 @@ enum PlanLint {
     }
 
     /// C4a: why a check passes without running the code; nil: some piece of it runs something (a build, a test, a
-    /// script, a project command). Cut at `&&`, `||`, `;`, `|`: one ending in `|| true`, `|| :` or `; true` is always
-    /// green; one whose every piece is an inspector (`inspectors`) or always passes (`trivial`) judges no code. The
+    /// script, a project command). Cut at `&&`, `||`, `;`, `|`: one that `swallows` its failure is always green; one whose
+    /// every piece is an inspector (`inspectors`), always passes (`trivial`) or is a `cd` judges no code. The
     /// message names the task's own file it inspects (in `scope`, or named in `body`; `./` dropped) when there is one.
     // ponytail: a heuristic on the words, no shell parsing: `bash -c 'grep x f'` or a script that only greps passes.
     // The linter refuses the plain shapes; the review and the gate stay the real judges.
     static func trivialCheck(_ c: String, scope: [String], body: String) -> String? {
         let t = c.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.range(of: #"(\|\||;)\s*(true|:)\s*($|[;&|)])"#, options: .regularExpression) != nil {
-            return "o check engole a falha («|| true», «|| :» ou «; true»): ele fica verde sempre; rode o teste sem isso"
+        if swallows(t) {
+            return "o check engole a falha (termina em «|| true», «|| echo», «; exit 0», «| true»…): ele fica verde sempre; rode o teste sem isso"
         }
-        let cmds = commands(t).map { Array($0.drop { $0 == "!" }) }.filter { !$0.isEmpty }
+        // C5b: `diff <(swift run a) golden` runs code in its substitution
+        let inner = t.matches(of: /[<>$]\(\s*([^\s()]+)/).map { String($0.1) }
+        if inner.contains(where: { !inspectors.contains($0) && !trivial.contains($0) }) { return nil }
+        // C5b: a `cd` is neutral: `cd x && grep -q y f` only inspects
+        let cmds = commands(t).map { Array($0.drop { $0 == "!" }) }.filter { !$0.isEmpty && $0[0] != "cd" }
         guard !cmds.isEmpty, cmds.allSatisfy({ inspectors.contains($0[0]) || trivial.contains($0[0]) }) else { return nil }
         func norm(_ p: String) -> String { var s = p[...]; while s.hasPrefix("./") { s = s.dropFirst(2) }; return String(s) }
         var files: [String] = []
@@ -248,6 +252,36 @@ enum PlanLint {
         let own = files.first { f in scope.contains { TaskScheduler.globsOverlap(f, $0) } || body.contains(f) }
         return own.map { "o check só inspeciona o arquivo que a tarefa cria (\($0)): ele passa sem o código funcionar; rode o teste" }
             ?? "o check só inspeciona arquivos (grep, test, cat, diff…) e não roda código: ele passa sem o código funcionar; rode o teste ou o script do projeto"
+    }
+
+    /// C5b: the check ends in a command that always passes (`true`, `:`, `echo`, `printf`, `exit 0`) after `||`, `;`, `|`
+    /// or a newline: whatever ran before it, the check is green. Only the LAST top-level piece counts (`swift build;
+    /// echo ---; swift test` is a check); a `( … )` group ending the check is judged by its own last piece
+    /// (`swift test || (echo falhou; exit 1)` fails). Comments (`# …`) dropped first.
+    // ponytail: no quoting rules, like `commands`.
+    static func swallows(_ s: String) -> Bool {
+        func last(_ s: String) -> (sep: String?, piece: String) {
+            let c = Array(s.trimmingCharacters(in: .whitespacesAndNewlines))
+            var depth = 0, i = 0, cut = 0, sep: String?
+            while i < c.count {
+                let two = i + 1 < c.count ? String(c[i...i + 1]) : ""
+                if c[i] == "(" { depth += 1 } else if c[i] == ")" { depth -= 1 }
+                else if depth == 0, two == "&&" || two == "||" { sep = two; i += 2; cut = i; continue }
+                else if depth == 0, c[i] == ";" || c[i] == "|" || c[i] == "\n" { sep = String(c[i]); cut = i + 1 }
+                i += 1
+            }
+            let piece = String(c[cut...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            // a trailing `;` or newline closes the piece before it
+            if piece.isEmpty, cut > 0, sep == ";" || sep == "\n" { return last(String(c[..<(cut - 1)])) }
+            if piece.hasPrefix("("), piece.hasSuffix(")") {
+                let g = last(String(piece.dropFirst().dropLast()))
+                return (g.sep ?? sep, g.piece)
+            }
+            return (sep, piece)
+        }
+        let (sep, piece) = last(s.replacingOccurrences(of: #"(?m)(^|\s)#.*$"#, with: "", options: .regularExpression))
+        guard let sep, ["||", ";", "|", "\n"].contains(sep), let w = commands(piece).first, let cmd = w.first else { return false }
+        return cmd == "exit" ? w.dropFirst().elementsEqual(["0"]) : ["true", ":", "echo", "printf"].contains(cmd)
     }
 
     /// A shell line cut at `&&`, `||`, `;`, `|` and newlines, each piece its words, leading `VAR=value`s dropped.

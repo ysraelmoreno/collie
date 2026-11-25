@@ -136,4 +136,79 @@ import CollieProtocol
         try f.write("tasks/api.md", "# API\n\nSem check. Prova: ApiTests.\n")
         #expect(CommandRouter.prdPlanRefusal(w)?.contains("não passa mais no linter") == true)
     }
+
+    /// C5b: a card that is a link and a `tasks` that is a link are refused by `plan apply` itself (not only the lint),
+    /// and nothing is created.
+    @Test func linksAreRefusedByApply() async throws {
+        let out = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { out.cleanup() }
+        let fm = FileManager.default
+        let card = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { card.cleanup() }
+        try fm.removeItem(at: card.dir.appendingPathComponent("tasks/api.md"))
+        try fm.createSymbolicLink(at: card.dir.appendingPathComponent("tasks/api.md"), withDestinationURL: out.dir.appendingPathComponent("tasks/api.md"))
+        let tasks = try PlanFixture(waves: PlanFixture.waves, tasks: [:]); defer { tasks.cleanup() }
+        try fm.removeItem(at: tasks.dir.appendingPathComponent("tasks"))
+        try fm.createSymbolicLink(at: tasks.dir.appendingPathComponent("tasks"), withDestinationURL: out.dir.appendingPathComponent("tasks"))
+        for f in [card, tasks] {
+            let (s, id, dir) = try await store(); defer { try? fm.removeItem(at: dir) }
+            let hash = PlanLint.lint(f.dir).hash
+            await #expect(throws: ProtocolError.self) {
+                _ = try await PlanApply.apply(dir: f.dir, root: f.dir, approve: hash, work: id, store: s, now: now, areaCheck: noArea)
+            }
+            #expect(try await s.get(id)?.tasks.isEmpty == true && s.get(id)?.plan == nil)
+        }
+    }
+
+    /// C5b: `apply` lints with the `root` it is given: a package out of it is refused, inside it is applied.
+    @Test func theRootReachesApply() async throws {
+        let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
+        let (s, id, dir) = try await store(); defer { try? FileManager.default.removeItem(at: dir) }
+        let hash = PlanLint.lint(f.dir).hash
+        await #expect(throws: ProtocolError.self) {
+            _ = try await PlanApply.apply(dir: f.dir, root: f.dir.appendingPathComponent("tasks"), approve: hash, work: id, store: s, now: now, areaCheck: noArea)
+        }
+        #expect(try await s.get(id)?.tasks.isEmpty == true)
+        let (_, built) = try await PlanApply.apply(dir: f.dir, root: f.dir, approve: hash, work: id, store: s, now: now, areaCheck: noArea)
+        #expect(built.count == 3)
+    }
+
+    /// C5b: the router's `planApply` (the terminal's project as the root) refuses a linked card and a linked `tasks`.
+    @Test func theRoutersApplyRefusesLinks() async throws {
+        let out = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { out.cleanup() }
+        let fm = FileManager.default
+        try await withDaemon { d, _ in
+            for linked in ["tasks/api.md", "tasks"] {
+                let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
+                try fm.removeItem(at: f.dir.appendingPathComponent(linked))
+                try fm.createSymbolicLink(at: f.dir.appendingPathComponent(linked), withDestinationURL: out.dir.appendingPathComponent(linked))
+                let real = SignedAppCheck.realPath(f.dir)
+                let t = TerminalRecord(id: UUID(), name: "T", preset: .shell, command: nil, cwd: real, isShepherd: false, paddockId: nil, projectRoot: real)
+                let w = try await d.router.work.start(title: "W", terminal: t.id, paddockId: nil, branch: nil)
+                let r = Request(id: "a", command: "work.plan.apply", args: ["dir": .string(real), "approve": .string(PlanLint.lint(f.dir).hash)])
+                await #expect(throws: ProtocolError.self, "\(linked)") { _ = try await d.router.planApply(r, t, w, now: now) }
+                #expect(try await d.router.work.get(w.id)?.tasks.isEmpty == true, "\(linked)")
+            }
+        }
+    }
+
+    /// C5b: `work plan lint` of a terminal whose project root cannot be found refuses, never fencing at the package.
+    @Test func lintWithoutAProjectRootRefuses() async throws {
+        let f = try PlanFixture(waves: PlanFixture.waves, tasks: PlanFixture.good); defer { f.cleanup() }
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-lintroot-\(UUID().uuidString.prefix(8))")), wsId = UUID()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        // a record from before the sandbox (no projectRoot) and a workspace that cannot be saved: the root is not found
+        let ws = Workspace(id: wsId, name: "default", terminals: [
+            TerminalRecord(id: UUID(), name: "M", preset: .shell, command: nil, cwd: f.dir.path, isShepherd: false)], paddocks: [])
+        let wsDir = paths.workspaceDir(wsId)
+        try FileManager.default.createDirectory(at: wsDir, withIntermediateDirectories: true)
+        try JSONEncoder().encode(ws).write(to: wsDir.appendingPathComponent("workspace.json"))
+        let d = try Daemon(config: testConfig(paths, wsId))
+        try await d.start()
+        chmod(wsDir.path, 0o555)
+        defer { chmod(wsDir.path, 0o755) }
+        let r = try await send(paths, Request(id: "l", token: d.adminToken, command: "work.plan.lint",
+                                               args: ["dir": .string(f.dir.path), "terminal": .string("M")]))
+        chmod(wsDir.path, 0o755)
+        await d.stop()
+        #expect(!r.ok && r.error?.message.contains("raiz do projeto") == true, "\(r)")
+    }
 }

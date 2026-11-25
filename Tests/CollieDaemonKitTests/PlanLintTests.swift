@@ -100,6 +100,31 @@ struct PlanFixture {
         }
     }
 
+    /// C5b: a command that always passes (true, :, echo, printf, exit 0) after `||`, `;`, `|` or a newline, ending the
+    /// check, makes it always green whatever ran before; a real check that does not end so stays valid. A `cd` is
+    /// neutral when judging a check that only inspects; a substitution that runs code (`diff <(swift run a) golden`) runs code.
+    @Test func aTrivialCommandEndingTheCheckSwallowsItsFailure() throws {
+        for c in ["swift test --filter ApiTests || echo ok", "swift test --filter ApiTests || exit 0", "swift test --filter ApiTests; exit 0",
+                  "swift test --filter ApiTests | true", "swift test --filter ApiTests || true # comentário",
+                  "swift test --filter ApiTests || printf 'falhou\\n'",
+                  "swift test --filter ApiTests || (echo falhou)", "swift test --filter ApiTests || true;",
+                  "cd Sources && grep -q rota Api.swift"] {
+            var t = PlanFixture.good; t["api"] = PlanFixture.card("API", check: c, extra: "scope: Sources/Api.swift")
+            let f = try PlanFixture(waves: PlanFixture.waves, tasks: t); defer { f.cleanup() }
+            #expect(rules(PlanLint.lint(f.dir)) == ["tasks/api.md:3:check-trivial"], "\(c)")
+        }
+        for c in ["swift test --filter ApiTests || scripts/check.sh", "swift build; echo ---; swift test --filter ApiTests",
+                  "swift test --filter ApiTests || (echo falhou; exit 1)", "swift test --filter ApiTests && echo ok",
+                  "swift test --filter ApiTests || exit 1", "diff <(swift run a) golden.txt", "cd Sources && swift test --filter ApiTests",
+                  "grep -q \"#x\" a.txt && swift test --filter ApiTests"] {
+            var t = PlanFixture.good; t["api"] = PlanFixture.card("API", check: c, extra: "scope: Sources/Api.swift")
+            let f = try PlanFixture(waves: PlanFixture.waves, tasks: t); defer { f.cleanup() }
+            #expect(PlanLint.lint(f.dir).passed, "\(c)")
+        }
+        // a newline cuts like `;` (a card's check is one line; a `collie-work.json` one may not be)
+        #expect(PlanLint.swallows("swift test\necho fim") && !PlanLint.swallows("echo inicio\nswift test"))
+    }
+
     /// C4a: `<x>` and `...` are placeholders only as whole words: `grep "<div>"` and `diff <(a) <(b)` are commands.
     @Test func aPlaceholderIsAWholeWord() {
         for c in ["grep \"<div>\" index.html", "diff <(a) <(b)", "echo a...b && make", "grep -q '<a href>' x"] {

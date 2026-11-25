@@ -158,6 +158,9 @@ extension CommandRouter {
             loop.autoLand = try Self.loopAutoLand(factory: paddock.factory, config: fileConfig, review: review.on, noReview: noReview, max: landMax)
             // C3b: the base the work's last attempt began on stays the reference until a new attempt takes its own
             loop.autoLand?.baseHead = w.loop?.autoLand?.baseHead
+            // C5c: the commit the work began on carries over only from a loop that did not land (after a land, the paddock's
+            // HEAD now is where this work begins: the engine takes it)
+            loop.autoLand?.startHead = Self.loopStartHead(after: w.loop)
         }
         if queue { loop.state = .queued }
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
@@ -165,8 +168,12 @@ extension CommandRouter {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
-        // C2: a check that already passes at the cercado's HEAD measures nothing: refused before anything reaches the card
-        if let why = await alreadyGreen(open, work: w.id, paddock: paddock, starter: t.id, dir: dir) { throw invalid(why) }
+        // C2/C5c: a check that already passes at the cercado's HEAD measures nothing: the loop's first phase finds it
+        // (`WorkLoop.greenPreCheck`), never `work run`, which a slow check would hold past the client's wait
+        loop.greenPreCheck = true
+        if let held = workRunHeld { await held() }
+        // C5c: a client that gave up (the command's `Task` cancelled) starts nothing; the `defer` above frees the paddock
+        try Task.checkCancellation()
         let id = w.id, starter = t.id, title = w.title
         // a paddock the owner trusts for loops (read now, after the awaits): no card. Everything above held all the same
         // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
@@ -182,7 +189,7 @@ extension CommandRouter {
             started = true   // the reservation now belongs to the loop
             let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate, profileReviewOff: profileReviewOff)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
-            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], warning)
+            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("starting")], warning)
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
@@ -203,6 +210,11 @@ extension CommandRouter {
         return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], warning)
     }
 
+    /// C5c: the commit the work began on, from its previous loop: only one that did not land (nil: the engine takes HEAD).
+    static func loopStartHead(after previous: WorkLoopState?) -> String? {
+        previous?.stopReason?.code == .landed ? nil : previous?.autoLand?.startHead
+    }
+
     /// A4: `--auto-land`'s settings from the profile committed at the base (`config`), or why it is refused.
     static func loopAutoLand(factory: Bool, config: ProjectWorkConfig?, review: Bool, noReview: Bool, max: Int? = nil) throws(ProtocolError) -> WorkLoopState.AutoLand {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -212,27 +224,6 @@ extension CommandRouter {
         return WorkLoopState.AutoLand(gate: gate, ci: config?.factory?.autolandCI ?? WorkLoopState.AutoLand.defaultCI,
                                       timeout: config?.factory?.autolandTimeout ?? WorkLoopState.AutoLand.defaultTimeout,
                                       max: max, perDay: config?.factory?.autoLandPerDay)
-    }
-
-    /// C2: the open tasks (not `--green-ok`) whose check exits 0 at the paddock's HEAD as it is now (the tree is clean: `work run`
-    /// refused a dirty one), run as the loop runs it (its sandbox, its env, its timeout). nil: none; else the refusal naming them.
-    /// A check that fails, times out or cannot run counts as red: it goes on.
-    private func alreadyGreen(_ tasks: [WorkTask], work id: UUID, paddock: Paddock, starter: UUID, dir: URL) async -> String? {
-        let todo = tasks.filter { $0.greenOk != true }
-        guard !todo.isEmpty else { return nil }
-        // the loop's own profile (made again by `startLoop`); removed when done, so a refusal leaves nothing behind
-        if config.sandboxHome != nil { _ = try? prepareLoopSandbox(id, paddock: paddock) }
-        defer { if config.sandboxHome != nil { SandboxLaunch.remove(id, root: config.paths.root) } }
-        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
-                                  sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
-        var green: [WorkTask] = []
-        for task in todo {
-            // ponytail: serial, the loop's own check timeout; a slow suite of checks delays `work run`, add parallelism if it bites
-            if let res = try? await host.check(task.check ?? "false", in: dir, timeout: WorkLoop.defaultCheckTimeout), res.status == 0 { green.append(task) }
-        }
-        guard !green.isEmpty else { return nil }
-        return "\(GreenCheck.reason): " + green.map { "\"\(RerailText.clean($0.title))\" [\($0.id)] check «\(RerailText.clean($0.check ?? "", max: 200))»" }.joined(separator: ", ")
-            + ". \(GreenCheck.hint.prefix(1).uppercased() + GreenCheck.hint.dropFirst()) (collie work task add … \(GreenCheck.flag))"
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults. An absent file is nil with no warning, a refused or
@@ -576,11 +567,24 @@ extension CommandRouter {
             }
         }
         guard let id, let l = workLoops[id], !l.stopping || now else {
+            if await releaseOrphanReservation(of: t) { return .object(["state": .string("released")]) }
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }
         workLoops[id]?.stopping = true
         await l.engine.stop(work: id, now: now)
         return .object(["state": .string("stopped")])
+    }
+
+    /// C5c: the paddock of `t` reserved (`loopPaddocks`) with no loop of it running (`workLoops`) and no card of it
+    /// waiting (`loopCards`): a reservation nothing will free. Freed; true when it was.
+    /// ponytail: a `work run` still between its reservation and its card counts too; a second run then is refused by
+    /// the work's own checks (its loop running) or simply waits its turn
+    private func releaseOrphanReservation(of t: TerminalRecord) async -> Bool {
+        guard let pid = t.paddockId, loopPaddocks.contains(pid) else { return false }
+        for k in Array(workLoops.keys) + Array(loopCards.keys) where (try? await work.get(k))?.paddockId == pid { return false }
+        guard loopPaddocks.contains(pid), !workLoops.values.contains(where: { ($0.engine.host as? RouterLoopHost)?.paddock == pid }) else { return false }
+        loopPaddocks.remove(pid)
+        return true
     }
 
     /// M3.6: the lanes the engine left (it removes its own: none, but for a fall in between) go before the loop's profile does.

@@ -90,6 +90,8 @@ actor CommandRouter {
     var loopPaddocks: Set<UUID> = []
     /// Loops waiting for the owner's card: work id → card id (`work.stop` withdraws it).
     var loopCards: [UUID: UUID] = [:]
+    /// C5c, tests only: awaited by `work.run` while it holds the paddock's reservation, before anything starts (nil: none).
+    var workRunHeld: (@Sendable () async -> Void)?
     var consolidator: Task<Void, Never>?
     /// The work store failed and was logged; reset by the next good read.
     var workStoreBroken = false

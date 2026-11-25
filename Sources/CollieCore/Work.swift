@@ -190,6 +190,9 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         /// F3: the task's runtime acceptance (`--accept`) started / passed / failed or did not run (detail: `exit n`,
         /// `timeout` or `não rodou`).
         case acceptStarted, acceptPassed, acceptFailed
+        /// C5c: the loop's first phase, the open tasks' checks run once at the paddock's HEAD (`checkAlreadyGreen`)
+        /// started / finished (detail: how many passed).
+        case preCheckStarted, preCheckFinished
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
@@ -224,6 +227,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
     /// agent is told its output's tail once (nil: none, the loop as before).
     public var precheck: String?
+    /// C5c: set by `work run`: the loop's first phase runs every open task's check once (not `--green-ok`) and stops
+    /// with `checkAlreadyGreen` when one already passes. nil: none (a loop from before, or a test's).
+    public var greenPreCheck: Bool?
     /// C3, `work run --escalate agent:model,…`: the agent of attempt `n` of a task is entry `min(n, count) - 1`; with it
     /// set, `preset`/`model`/`command` are nil. nil: every attempt runs the same agent, as before.
     public var escalate: [String]?
@@ -253,8 +259,12 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
         /// F2 R3: `review`, the personas judging the attempt.
-        case agent, check, gate, review
-        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão" } }
+        /// C5c: `preCheck`, the loop's first phase (the open tasks' checks before any attempt).
+        case agent, check, gate, review, preCheck
+        public var label: String {
+            switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão"
+            case .preCheck: "verificando checks que já passam" }
+        }
     }
     public var phase: Phase?
     /// When `phase` last changed (`show`); nil: no phase, or a loop written before this existed.
@@ -298,6 +308,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
                 /// C5a: `--auto-land` and a task of the run not done (deferred by a red gate or acceptance, or still open):
                 /// nothing integrated (detail: the tasks' titles). Not a finish.
                 case landTasksNotDone
+                /// C5c: the loop's pre-check found an open task (not `--green-ok`) whose check already passes at the
+                /// paddock's HEAD: no attempt ran (detail: the tasks' titles). Not a finish.
+                case checkAlreadyGreen
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -333,6 +346,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .landRegistryFailed: "auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono"
             case .landTasksNotDone: "auto-land: tarefa(s) não feitas (\(detail ?? "alguma tarefa")); nada integrado"
             case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
+            case .checkAlreadyGreen: "o check já passa antes da tarefa (\(detail ?? "uma tarefa")); nenhuma tentativa; reescreva o check ou marque --green-ok"
             case .unknown: "motivo desconhecido"
             }
         }
@@ -378,6 +392,10 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// needs the base to be exactly this. Written only at an attempt's start (never with nil over a value), carried
         /// to the work's next `work run`, taken again when a chain activates the work. nil: unknown, the land fails closed.
         public var baseHead: String?
+        /// C5c: the paddock's HEAD when the work began (`work run`, or the engine's start when unknown): a land that does
+        /// not integrate resets the paddock back to it. Carried to the work's next `work run` only when that loop did not
+        /// land; cleared by a land that integrated. nil: unknown (the engine takes HEAD when it starts).
+        public var startHead: String?
         public init(gate: String, ci: String = defaultCI, timeout: Int = defaultTimeout, max: Int? = nil, perDay: Int? = nil) {
             self.gate = gate; self.ci = ci; self.timeout = timeout; self.max = max; self.perDay = perDay
         }
@@ -469,6 +487,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
         precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
+        greenPreCheck = (try? c.decodeIfPresent(Bool.self, forKey: .greenPreCheck)) ?? nil   // C5c: tolerant too
         escalate = (try? c.decodeIfPresent([String].self, forKey: .escalate)) ?? nil
         review = (try? c.decodeIfPresent(Bool.self, forKey: .review)) ?? nil   // F2 R1: tolerant, like the newer ones
         personas = (try? c.decodeIfPresent([String].self, forKey: .personas)) ?? nil

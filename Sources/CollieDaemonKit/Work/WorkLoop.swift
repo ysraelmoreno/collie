@@ -245,12 +245,16 @@ actor WorkLoop {
     let notices: LoopNotices
     /// P2: the wait before an attempt whose prompt was not delivered starts over with a new agent (the tests' zero).
     let promptRetryWait: Duration
+    /// C5c: each pre-check's own ceiling (past it: red) and the pre-checks running now, by work (`work stop` cancels them).
+    static let defaultPreCheckTimeout: Duration = .seconds(120)
+    let preCheckTimeout: Duration
+    var preChecks: [UUID: Task<[WorkTask], Never>] = [:]
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
          lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20),
-         stopGrace: Duration = WorkLoop.defaultStopGrace) {
-        self.stopGrace = stopGrace
+         stopGrace: Duration = WorkLoop.defaultStopGrace, preCheckTimeout: Duration = WorkLoop.defaultPreCheckTimeout) {
+        self.stopGrace = stopGrace; self.preCheckTimeout = preCheckTimeout
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
         self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
@@ -263,6 +267,7 @@ actor WorkLoop {
         let first = !stopping.contains(id)
         stopping.insert(id)
         lanes[id]?.signal.yield(.poke)   // M3.5: a parallel run waits on its lanes: it is told now
+        preChecks[id]?.cancel()   // C5c: the pre-check ends at once (its checks are killed)
         if first, (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
         if now { forcing.insert(id); return }
         guard first else { return }
@@ -293,6 +298,10 @@ actor WorkLoop {
         let first = try? await store.get(id)
         let review = first?.loop?.review == true
         let landing = first?.loop?.autoLand != nil   // C2: the end tells the owner even if the registry is unreadable then
+        // C5c: the commit the work began on (`work run` gave it, or HEAD now): a land that does not integrate goes back to it
+        if landing, first?.loop?.autoLand?.startHead == nil, let head = await out(["rev-parse", "HEAD"], dir) {
+            try? await store.update(id) { if $0.loop?.autoLand != nil, $0.loop?.autoLand?.startHead == nil { $0.loop?.autoLand?.startHead = head } }
+        }
         if review, let text = await host.trustReviewers() { await note(id, text) }
         let base = review ? await reviewLoopConfigBase() : nil
         try? await store.update(id) { w in
@@ -302,9 +311,12 @@ actor WorkLoop {
             for i in w.tasks.indices where w.tasks[i].reviewRejects != nil { w.tasks[i].reviewRejects = 0 }
         }
         // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
-        let parallel = (try? await store.get(id))?.loop?.parallel ?? 1
+        // C5c: the first phase, a check that already passes ends the loop before any attempt
+        let green = first?.loop?.greenPreCheck == true ? await greenPreCheck(id, dir) : nil
+        if let green { stop = green }
+        let parallel = green != nil ? 0 : (try? await store.get(id))?.loop?.parallel ?? 1
         if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
-        while parallel <= 1 {
+        while green == nil, parallel <= 1 {
             if stopping.contains(id) { stop = .init(.requested); break }
             if Task.isCancelled { stop = .init(.cancelled); break }
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
@@ -325,13 +337,16 @@ actor WorkLoop {
         }
         // A4: the run finished with `--auto-land`: the land's conditions, then the land, or a stop of its own
         if end == .finished, !stopping.contains(id), let al = (try? await store.get(id))?.loop?.autoLand { (end, stop) = await autoLand(work: id, al, dir: dir) }
+        // C5c: a land that did not integrate leaves no commit of this work on the paddock (`landed`: the next work starts here)
+        var discarded: String?
+        if let code = stop?.code, Self.discards.contains(code) { discarded = await discardLand(id, dir) }
         // A5: landed: the chain's next approved work, or why it ends here (a `work stop` meanwhile: `requested`)
         if stop?.code == .landed, let al = (try? await store.get(id))?.loop?.autoLand, let s = await afterLand(id, al) {
             stop = s; end = s.finishes ? .finished : .stopped
         }
         // A6: every `--auto-land` run, whatever stopped it, leaves its summary and tells the owner in one line (A5: a
         // work the chain goes on from tells nothing: the chain's last work tells once)
-        await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil, landing: landing)
+        await autoLandSummary(work: id, started: started, stop: stop, dir: dir, notify: chainNext[id] == nil, landing: landing, extra: discarded)
         stopping.remove(id); forcing.remove(id); stopTokens[id] = nil
         let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
@@ -1495,6 +1510,7 @@ extension WorkLoop {
             let at = host.now()
             try? await store.update(id) { x in
                 x.loop?.autoLand?.before = before; x.loop?.autoLand?.after = after
+                x.loop?.autoLand?.startHead = nil   // C5c: integrated: the work's next run begins at the HEAD after this land
                 x.record(LoopEvent(at: at, kind: .landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))"))
                 x.notes.append(WorkNote(at: at, text: "[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
                     + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))", decision: true))

@@ -171,7 +171,8 @@ extension WorkLoop {
     /// chain's last work tells, counting every land). A loop stopped from outside keeps the reason it was given.
     /// C2: `landing`, the run started with `--auto-land`: a registry that cannot be read at the end still tells the owner
     /// (`minimalOwnerLine`), since no summary can be written.
-    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL, notify: Bool = true, landing: Bool = false) async {
+    /// C5c: `extra`, what the discard did (or why it did not), at the end of the owner's line.
+    func autoLandSummary(work id: UUID, started: Date, stop: WorkLoopState.Stop?, dir: URL, notify: Bool = true, landing: Bool = false, extra: String? = nil) async {
         let read: Work?
         do { read = try await store.get(id) } catch {
             if notify && landing { await host.notifyOwner(AutoLandSummary.minimalOwnerLine(work: id, stop: stop, error: "\(error)", secrets: await host.secrets())) }
@@ -201,7 +202,8 @@ extension WorkLoop {
         guard notify else { return }
         let left = w.tasks.filter { $0.state != .done }.count
         let landed = (w.loop?.autoLand?.chained ?? 0) + (w.loop?.autoLand?.after != nil ? 1 : 0)
-        await host.notifyOwner(AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: why, left: left, path: path, error: failure,
-                                                         landed: landed, secrets: secrets))
+        let line = AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: why, left: left, path: path, error: failure,
+                                             landed: landed, secrets: secrets)
+        await host.notifyOwner(extra.map { line + " " + LotBoards.scrub($0, secrets: secrets) } ?? line)
     }
 }

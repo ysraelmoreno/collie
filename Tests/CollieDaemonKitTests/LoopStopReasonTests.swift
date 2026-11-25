@@ -150,10 +150,12 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func noPathProducesUnknown() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         var used: Set<String> = []
-        for f in ["Sources/CollieDaemonKit/Work/WorkLoop.swift", "Sources/CollieDaemonKit/WorkLoopCommands.swift"] {
+        for f in ["Sources/CollieDaemonKit/Work/WorkLoop.swift", "Sources/CollieDaemonKit/Work/WorkLoopPreCheck.swift", "Sources/CollieDaemonKit/WorkLoopCommands.swift"] {
             let src = try String(contentsOf: root.appendingPathComponent(f), encoding: .utf8)
-            #expect(!src.contains(".unknown"), "\(f)")
-            for c in Stop.Code.allCases where src.contains(".\(c.rawValue)") { used.insert(c.rawValue) }
+            // whole names: `.unknownPersonasLine` is no `.unknown`
+            func names(_ code: String) -> Bool { src.contains(try! Regex("\\.\(code)\\b")) }
+            #expect(!names("unknown"), "\(f)")
+            for c in Stop.Code.allCases where names(c.rawValue) { used.insert(c.rawValue) }
         }
         // every other code is produced by one of them
         #expect(used == Set(Stop.Code.allCases.map(\.rawValue)).subtracting(["unknown"]), "\(used.sorted())")

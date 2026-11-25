@@ -1,0 +1,187 @@
+# Publishes a plug-in package (release plugin-<id>-v<version>) and the signed catalog (release plugins-catalog:
+# plugins.json + plugins.json.sig), both --prerelease --latest=false so releases/latest stays the app's dmg.
+# Tag plugin-<id>-v<version> → build, sign the helper, package, add the version to the catalog.
+# workflow_dispatch → recall one version (the catalog only).
+# Spec: docs/superpowers/specs/2026-11-24-plugin-marketplace-design.md ("Fase 1", "Releases"). Never runs on pull requests.
+name: plugins-release
+
+on:
+  push:
+    tags: ["plugin-*"]
+  workflow_dispatch:
+    inputs:
+      recall_id:
+        description: "Plug-in id to recall, e.g. vizinho"
+        required: true
+      recall_version:
+        description: "Version to recall, e.g. 0.1.0"
+        required: true
+      reason:
+        description: "Motivo mostrado ao usuário (pt-BR)"
+        required: true
+
+permissions:
+  contents: write
+
+# one catalog writer at a time: sequence + 1 over the catalog the previous run uploaded
+concurrency:
+  group: plugins-catalog
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RECALL: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Read tag
+        id: tag
+        if: env.RECALL == ''
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^plugin-([a-z0-9][a-z0-9-]*)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] \
+            || { echo "::error::tag \"$TAG\" is not plugin-<id>-vX.Y.Z"; exit 1; }
+          ID="${BASH_REMATCH[1]}" VERSION="${BASH_REMATCH[2]}"
+          M="Examples/plugins/$ID/collie-plugin.json"
+          [ -f "$M" ] || { echo "::error::$M não existe"; exit 1; }
+          [ "$(jq -r .version "$M")" = "$VERSION" ] || { echo "::error::$M diz versão $(jq -r .version "$M"), a tag $VERSION"; exit 1; }
+          # a published version is never rebuilt
+          if gh release view "$TAG" >/dev/null 2>&1; then echo "::error::$TAG já existe: suba a versão"; exit 1; fi
+          { echo "id=$ID"; echo "version=$VERSION"; echo "tag=$TAG"; } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          ID: ${{ steps.tag.outputs.id }}
+        run: |
+          swift build -c release --product collie
+          if [ "$ID" = vizinho ]; then swift build -c release --product collie-vizinho; fi
+          echo "BIN=$(swift build -c release --show-bin-path)" >> "$GITHUB_ENV"
+
+      - name: Assemble
+        if: env.RECALL == ''
+        env:
+          ID: ${{ steps.tag.outputs.id }}
+        run: |
+          P="$RUNNER_TEMP/pkg/$ID"
+          mkdir -p "$RUNNER_TEMP/pkg"
+          cp -R "Examples/plugins/$ID" "$P"
+          if [ "$ID" = vizinho ]; then mkdir -p "$P/bin"; cp "$BIN/collie-vizinho" "$P/bin/vizinho"; fi
+          echo "PKG_DIR=$P" >> "$GITHUB_ENV"
+          if [ -d "$P/bin" ]; then echo "HAS_HELPER=1" >> "$GITHUB_ENV"; fi
+
+      - name: Signing keychain
+        if: env.RECALL == '' && env.HAS_HELPER == '1'
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        run: scripts/ci/signing-keychain.sh
+
+      # signing changes the bytes: tree-hash (in plugin-catalog.sh) only after this
+      - name: Sign helper
+        if: env.RECALL == '' && env.HAS_HELPER == '1'
+        env:
+          ID: ${{ steps.tag.outputs.id }}
+        run: |
+          SIGN="$(security find-identity -v -p codesigning | awk -F'"' '/"Developer ID Application:/ {print $2; exit}')"
+          [ -n "$SIGN" ] || { echo "::error::no Developer ID Application identity in the keychain"; exit 1; }
+          for b in "$PKG_DIR"/bin/*; do
+            codesign --force --options runtime --timestamp --identifier "dev.collie.plugin.$ID" -s "$SIGN" "$b"
+            codesign --verify --strict --verbose=2 "$b"
+          done
+
+      - name: Package
+        if: env.RECALL == ''
+        env:
+          ID: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          A="$RUNNER_TEMP/$ID-$VERSION.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$A" -C "$RUNNER_TEMP/pkg" "$ID"
+          echo "ASSET=$A" >> "$GITHUB_ENV"
+
+      - name: Current catalog
+        run: |
+          D="$RUNNER_TEMP/catalog"
+          mkdir -p "$D"
+          if gh release view plugins-catalog >/dev/null 2>&1; then
+            gh release download plugins-catalog -p plugins.json -p plugins.json.sig -D "$D"
+            echo "CURRENT=$D/plugins.json" >> "$GITHUB_ENV"
+          else
+            [ "$RECALL" = "" ] || { echo "::error::sem catálogo publicado: nada a recolher"; exit 1; }
+            echo "CURRENT=-" >> "$GITHUB_ENV"
+          fi
+
+      - name: Next catalog
+        env:
+          ID: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          RECALL_ID: ${{ inputs.recall_id }}
+          RECALL_VERSION: ${{ inputs.recall_version }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          export COLLIE="$BIN/collie"
+          OUT="$RUNNER_TEMP/plugins.json"
+          if [ -n "$RECALL" ]; then
+            scripts/ci/plugin-catalog.sh --recall "$CURRENT" "$RECALL_ID" "$RECALL_VERSION" "$REASON" "$OUT"
+          else
+            # summary of an item the catalog doesn't have yet (pt-BR, shown in Descobrir)
+            case "$ID" in
+              vizinho) export SUMMARY="Ao editar um arquivo, o agente recebe a forma que os arquivos irmãos seguem." ;;
+              notas) export SUMMARY="Notas rápidas num painel, que os agentes também leem e escrevem." ;;
+            esac
+            scripts/ci/plugin-catalog.sh "$CURRENT" "$ID" "$VERSION" "$ASSET" "$PKG_DIR" "$OUT"
+          fi
+          echo "NEXT=$OUT" >> "$GITHUB_ENV"
+
+      # the key only in env (never argv); the public key printed by catalog-sign must be one the app accepts, and the
+      # catalog built upon must carry a valid signature by it (else a tampered release would get re-signed)
+      - name: Sign and verify catalog
+        env:
+          PLUGIN_CATALOG_KEY: ${{ secrets.PLUGIN_CATALOG_KEY }}
+        run: |
+          [ -n "$PLUGIN_CATALOG_KEY" ] || { echo "::error::segredo PLUGIN_CATALOG_KEY ausente"; exit 1; }
+          PUB="$("$BIN/collie" plugin catalog-sign "$NEXT" --key-env PLUGIN_CATALOG_KEY)"
+          grep -qF "\"$PUB\"" Sources/CollieCore/PluginCatalog.swift \
+            || { echo "::error::a chave pública de PLUGIN_CATALOG_KEY ($PUB) não está em PluginCatalog.publicKeys: o app recusaria"; exit 1; }
+          if [ "$CURRENT" != - ]; then "$BIN/collie" plugin catalog-verify "$CURRENT" --public "$PUB"; fi
+          "$BIN/collie" plugin catalog-verify "$NEXT" --public "$PUB"
+
+      - name: Publish package
+        if: env.RECALL == ''
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          ID: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          printf '%s\n' \
+            "Plug-in $ID $VERSION do Collie. Não é para instalar à mão: o Collie baixa este pacote pelo catálogo" \
+            "assinado (Preferências › Plug-ins › Descobrir) e confere sha256 e hash da árvore." \
+            "" "sha256: $(shasum -a 256 "$ASSET" | cut -d' ' -f1)" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" "$ASSET" --verify-tag --prerelease --latest=false \
+            --title "Plug-in $ID $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+
+      - name: Publish catalog
+        run: |
+          if ! gh release view plugins-catalog >/dev/null 2>&1; then
+            gh release create plugins-catalog --prerelease --latest=false --target "$GITHUB_SHA" --title "Catálogo de plug-ins" \
+              --notes "Catálogo assinado dos plug-ins do Collie (plugins.json + plugins.json.sig), lido pelo app."
+          fi
+          gh release upload plugins-catalog "$NEXT" "$NEXT.sig" --clobber
+
+      - name: Remove keychain and keys
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/collie-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8"

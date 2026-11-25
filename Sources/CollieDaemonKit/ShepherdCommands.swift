@@ -7,7 +7,8 @@ import CollieProtocol
 extension CommandRouter {
     func shepherd(_ r: Request, from tid: UUID) async throws -> JSONValue {
         guard let me = ws.terminals.first(where: { $0.id == tid }), me.isShepherd else {
-            throw ProtocolError(code: .notShepherd, message: "'\(r.command)' is Shepherd-only")
+            throw ProtocolError(code: .notShepherd, message: "'\(r.command)' is Shepherd-only"
+                + (r.command == "summon" ? "; peça a quem te convocou (collie ask <nome> --no-wait) ou ao usuário para te marcar como Pastor no app" : ""))
         }
         func peer(_ k: String) throws -> TerminalRecord { try ConnectionGraph.resolve(name: try need(r, k), from: me.id, in: ws) }
         // same rule for panels: within the Shepherd's reach (canvas: leashed to it; dock: always)
@@ -22,7 +23,9 @@ extension CommandRouter {
         case "summon": return try await summon(r, by: me)
         case "dismiss":
             let t = try peer("target")
-            guard !t.isShepherd else { throw ProtocolError(code: .invalidArgs, message: "cannot dismiss Shepherd '\(t.name)'") }
+            // a sub-Shepherd only by the one that summoned it; its own summoned go first (the app's Shepherd never)
+            guard !t.isShepherd || t.summonedBy == me.id else { throw ProtocolError(code: .invalidArgs, message: "cannot dismiss Shepherd '\(t.name)'") }
+            for d in summonedTree(of: t.id) { try await remove(d) }
             try await remove(t)
         case "leash":
             // both ends already within reach: the Shepherd itself doesn't count, leashing it to a stranger would widen its reach
@@ -52,6 +55,22 @@ extension CommandRouter {
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
         return .object([:])
+    }
+
+    /// Most terminals a sub-Shepherd (one summoned by a Shepherd) keeps alive, and how deep a chain of them goes below an
+    /// app-marked Shepherd (app → sub → sub-sub). ponytail: constants; two concurrent summons may overshoot the ceiling by one.
+    static let subShepherdCeiling = 6, subShepherdDepth = 2
+
+    /// How many `summonedBy` steps lead from `rec` to a terminal nobody summoned (the app's Shepherd: 0).
+    func summonDepth(of rec: TerminalRecord) -> Int {
+        var n = 0, cur = rec
+        while n <= Self.subShepherdDepth + 8, let up = cur.summonedBy, let p = ws.terminals.first(where: { $0.id == up }) { n += 1; cur = p }
+        return n
+    }
+
+    /// Everything `id` summoned, deepest first (so a dismissal removes the leaves before the branch).
+    func summonedTree(of id: UUID) -> [TerminalRecord] {
+        ws.terminals.filter { $0.summonedBy == id }.flatMap { summonedTree(of: $0.id) + [$0] }
     }
 
     /// `--connect a,b`: terminals and canvas panels the Shepherd `me` already reaches (never a free terminal, a headless
@@ -88,6 +107,20 @@ extension CommandRouter {
         let name = try need(r, "name")
         try refuseFree(r)
         try refuseFreeSummoner(me)
+        let sub = me.summonedBy != nil   // a sub-Shepherd: summoned, not marked by the app
+        if sub {
+            guard str(r, "paddock") == nil else {
+                throw ProtocolError(code: .notShepherd, message: "a sub-Shepherd stays in its summoner's paddock: no --paddock")
+            }
+            let live = ws.terminals.filter { $0.summonedBy == me.id }.count
+            guard live < Self.subShepherdCeiling else {
+                throw ProtocolError(code: .invalidArgs, message: "a sub-Shepherd keeps at most \(Self.subShepherdCeiling) terminals ('\(me.name)' has \(live)): dismiss one first")
+            }
+        }
+        let asShepherd = flag(r, "shepherd")
+        if asShepherd, summonDepth(of: me) + 1 > Self.subShepherdDepth {
+            throw ProtocolError(code: .invalidArgs, message: "sub-Shepherds go at most depth \(Self.subShepherdDepth) below the app's Shepherd ('\(me.name)' is at depth \(summonDepth(of: me)))")
+        }
         try reserve(name); defer { launching.remove(name.lowercased()) }
         // no preset: the Shepherd's own (with its command, for a custom one); a shell only when asked for
         guard let preset = str(r, "preset").map({ Preset(rawValue: $0) }) ?? me.preset else {
@@ -149,6 +182,8 @@ extension CommandRouter {
         var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         rec.model = model
+        rec.isShepherd = asShepherd   // before the launch: COLLIE_SHEPHERD and the Shepherd orientation come with the first session
+        rec.summonedBy = me.id
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)
         do {

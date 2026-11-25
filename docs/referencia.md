@@ -627,6 +627,25 @@ bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda cons
   `~/.claude/settings.json` do usuário (um `PreToolUse` de Bash vale para o Shell do Cursor). O Collie não desliga isso.
   Detalhes: `docs/superpowers/spikes/2026-10-22-cursor/REPORT.md`.
 
+### Sub-Pastor (`summon --shepherd`)
+
+Um Pastor pode convocar outro Pastor com `collie summon <nome> --shepherd` (CLI e MCP), para dividir o trabalho em árvore:
+um Pastor forte reparte, um sub-Pastor coordena a sua parte com workers baratos. Não muda o modelo de permissão.
+
+- **Alcance:** só por guias. O sub-Pastor alcança o que ele convoca e o Pastor que o convocou; o Pastor de cima **não**
+  alcança os netos. Quem convoca grava `summonedBy` no terminal convocado (também o laço `work run`).
+- **Profundidade:** no máximo 2 abaixo de um Pastor marcado pelo app (Pastor do app → sub-Pastor → sub-sub-Pastor); um
+  `--shepherd` além disso é recusado, com a profundidade na mensagem.
+- **Cercado:** fica no de quem o convocou; `summon --paddock` e `paddock create` são recusados para ele. Os demais comandos
+  de Pastor valem, inclusive `work run`, que continua exigindo o cartão do dono.
+- **Teto:** um sub-Pastor tem no máximo 6 terminais convocados por ele; o sétimo é recusado com o número.
+- **Dispensa:** `collie dismiss <sub>` vale só para o Pastor que o convocou e é em cascata: primeiro tudo o que o
+  sub-Pastor convocou (recursivo), depois ele. Um Pastor marcado pelo app não é dispensado por agente.
+- **Sandbox:** só com sandbox, como todo `summon`.
+- **Orientação:** o sub-Pastor recebe uma linha com o nome do Pastor de cima: responde a ele com `collie reply` /
+  `lot post`, nunca com `ask` bloqueante. Quem não é Pastor e tenta `summon` lê como pedir a marca (a quem o convocou ou ao
+  usuário, no app).
+
 ## Sandbox dos terminais
 
 Todo terminal do Collie (agentes e shells) roda dentro de um sandbox do macOS (Seatbelt, `sandbox-exec`): um perfil por

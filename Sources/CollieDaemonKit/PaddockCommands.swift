@@ -31,6 +31,7 @@ extension CommandRouter {
             let name = try need(r, "name")
             try PaddockManager.validate(name: name)
             if let me = caller, !me.isShepherd { throw refuse("'paddock.create' is Shepherd-only") }
+            if let me = caller, me.summonedBy != nil { throw refuse("a sub-Shepherd stays in its summoner's paddock: no paddock create") }
             // --folder: a folder paddock there (relative to the CLI's cwd); else a worktree of the repo
             let base = (r.cwd ?? caller?.cwd).map { URL(fileURLWithPath: $0, isDirectory: true) }
             let folder = str(r, "folder").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, relativeTo: base).standardizedFileURL }

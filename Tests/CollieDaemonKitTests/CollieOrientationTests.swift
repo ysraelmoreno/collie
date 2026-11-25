@@ -357,6 +357,22 @@ import CollieProtocol
         }
     }
 
+    /// PRD B1: a sub-Shepherd is told who summoned it and not to block-ask it; the line costs no form its place under the cap.
+    @Test func subShepherdLineNamesTheShepherdAbove() {
+        let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Boss", "w1"], panels: [], parent: "Boss")
+        #expect(t.contains("Shepherd above: \"Boss\"") && t.contains("collie reply") && t.contains("lot post") && t.contains("never a blocking ask"), "\(t)")
+        #expect(!CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Boss"], panels: []).contains("Shepherd above"))
+        let long = (1...20).map { (name: String(repeating: "p", count: 60) + "\($0)", pluginId: "design") }
+        for agent in ["claude", "cursor"] {
+            let w = CollieOrientation.text(terminal: String(repeating: "t", count: 80), isShepherd: true, paddock: String(repeating: "f", count: 80),
+                                           peers: (1...20).map { "peer\($0)" }, panels: long, paddockPanels: long, designFirst: .figcraft,
+                                           lot: (name: String(repeating: "l", count: 80), goal: String(repeating: "g", count: 300)),
+                                           morePanels: true, agent: agent, sharedFolder: ["x"], memoryTask: true, candidates: 12,
+                                           parent: String(repeating: "b", count: 80))
+            #expect(w.count <= 1500, "\(agent) \(w.count)")
+        }
+    }
+
     /// `/collie:loop` (slice 2): Claude and Cursor carry the command (spike REPORT §9: outcome B), so their line names it;
     /// an agent without it (Codex) keeps the plain line.
     @Test func theLoopLineNamesTheCommandForClaude() {

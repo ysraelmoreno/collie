@@ -99,6 +99,7 @@ public enum Commands {
                              ParamSpec("cwd", .string, help: "Working directory (default: yours, or the paddock's). Outside your project: a card asks the user to release the folder (sandbox open mode: any folder)"),
                              ParamSpec("paddock", .string, help: "Paddock name (default: your paddock)"),
                              ParamSpec("model", .string, help: "Claude model (claude --model): opus, sonnet, haiku or an id"),
+                             ParamSpec("shepherd", .flag, help: "Make it a sub-Shepherd: it summons its own (up to 6, no --paddock; depth 2). You may dismiss it, with everything it summoned"),
                              ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true),
                              ParamSpec("prompt", .rest, positional: true, help: "First prompt, sent without waiting for a reply")],
                     timeoutSeconds: 60, shepherdOnly: true),

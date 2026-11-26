@@ -53,6 +53,9 @@ protocol LoopHost: Sendable {
     func now() -> Date
     /// One line for the Shepherd the moment a task of the loop ends (done, or deferred after its last try).
     func taskEnded(_ line: String) async
+    /// ma2 4e: the verdict on the attempt `agent` ran (already dismissed): the memories its session left pending count a
+    /// use only when the task passed on its 1st try (`MemoryService.settleParked`).
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async
     /// An approved task's declared evidence: what `glob` matches in the worktree `dir`, copied under `patchDir`
     /// (`EvidenceFiles`). It reads only inside the worktree: never more than the check could.
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied
@@ -125,6 +128,7 @@ extension LoopHost {
     /// A host with no processes (the tests' fakes).
     func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
     func taskEnded(_ line: String) async {}
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
     }
@@ -951,6 +955,7 @@ actor WorkLoop {
                 if let n = c.note { await note(id, "[loop] evidência de \"\(task.title)\": \(n)") }
             }
             let found = evidence
+            if let agent = r.agent { await host.memoryVerdict(agent, firstTryPassed: n == 1) }   // ma2 4e: the check passed
             // M3.5: in a lane the task is `done` only once integrated: what passed waits for `WorkLoopLanes`
             if lane != nil {
                 passed = Passed(task: task, name: name, n: n, tries: r.loop.tries, at: at, evidence: found, before: before, judged: judged, head: head, dir: dir)
@@ -961,6 +966,7 @@ actor WorkLoop {
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
             let at = r.at, refused = state.facts.review
+            if let agent = r.agent { await host.memoryVerdict(agent, firstTryPassed: false) }   // ma2 4e
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)

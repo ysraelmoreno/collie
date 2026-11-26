@@ -95,6 +95,9 @@ actor LoopFakeHost: LoopHost {
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
     func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
+    /// ma2 4e: each `memoryVerdict`, as "<agent name> <firstTryPassed>", in order.
+    var verdicts: [String] = []
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async { verdicts.append("\(names[agent] ?? "?") \(firstTryPassed)") }
     /// A4 (AutoLandTests): the paddock's factory mark, every land asked (only `merge` is accepted: anything else is an
     /// issue and refused), the error a land throws (nil: it lands), and each line the owner got (`notifyOwner`).
     var isFactory = false, lands: [LandMode] = [], landError: ProtocolError?, ownerNotices: [String] = []

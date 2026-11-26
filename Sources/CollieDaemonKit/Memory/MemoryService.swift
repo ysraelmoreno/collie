@@ -200,6 +200,10 @@ actor MemoryService {
     /// turns named (`noteTurnCitations`) or `memory.get` read (`noteGet`), with the kinds (cite|get). Actor memory only, ids
     /// and memory titles, never the turn's text: a restart drops them.
     private var pendingRecords: [UUID: [MemoryRecord]] = [:], cited: [UUID: [UUID: Set<String>]] = [:]
+    /// ma2 4e: what a session left pending when it ended, kept for the loop's verdict on its attempt (`settleParked`).
+    /// ponytail: the last `parkedCap` sessions, oldest dropped: a session no loop judges is simply never settled.
+    private var parked: [(terminal: UUID, session: String, ids: [UUID])] = []
+    static let parkedCap = 64
     /// When each terminal's session last started (`context(for:)`): `newRules` brings the user's rules changed after it.
     private var sessionStarted: [UUID: Date] = [:]
     func noteSession(_ terminal: UUID, transcript: String) {
@@ -803,13 +807,32 @@ actor MemoryService {
         }
     }
 
-    /// The session's pending uses are dropped, not counted (no next prompt: no evidence).
+    /// The session's pending uses are not counted (no next prompt: no evidence). ma2 4e: they are parked for the loop's
+    /// verdict, if a loop judges this terminal's attempt (`settleParked`); otherwise they are never counted.
     func endSession(_ terminal: UUID) async {
         let s = sessions[terminal]
         injected[terminal] = nil; injectedDocs[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
         reinjectable[terminal] = nil; reinjected[terminal] = nil
         sessionStarted[terminal] = nil; pendingRecords[terminal] = nil; cited[terminal] = nil
-        if let s { _ = await lifecycle.takePending(session: s) }
+        guard let s else { return }
+        let ids = await lifecycle.takePending(session: s)
+        parked.removeAll { $0.terminal == terminal }
+        guard !ids.isEmpty else { return }
+        parked.append((terminal, s, ids))
+        if parked.count > Self.parkedCap { parked.removeFirst(parked.count - Self.parkedCap) }
+    }
+
+    /// ma2 4e: the loop's verdict on the attempt `terminal` ran (its session already ended, `endSession`): a task that
+    /// passed on its 1st try counts the uses its last injection left, one per (UTC day, session), as a user's next prompt
+    /// would; any other verdict drops them (`used`, reason `loop`). Nothing parked: nothing.
+    func settleParked(_ terminal: UUID, firstTryPassed: Bool, now: Date = Date()) async {
+        guard let i = parked.firstIndex(where: { $0.terminal == terminal }) else { return }
+        let p = parked.remove(at: i)
+        var e = MemoryEvent(type: .used, terminal: terminal, session: p.session, ids: [], hits: p.ids.count)
+        if firstTryPassed {
+            e.ids = await lifecycle.addUse(p.ids, key: UseKey(day: LifecycleRules.dayFormatter.string(from: now), session: p.session), now: now)
+        } else { e.reason = "loop" }
+        events.emit(e)
     }
 
     /// `turn.completed`: which of the session's pending ids the agent's last message names (`UseEvidence`), kept until the
@@ -823,13 +846,17 @@ actor MemoryService {
 
     /// At `terminal`'s next prompt: the memories its last prompt-relevance injection brought count one useful use per
     /// (UTC day, session), unless `correction` (dropped) or this session flagged them wrong/outdated. No session: nothing.
-    func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
+    /// ma2 4e: only when that prompt is the user's own (`user`, `InputProvenance.submit`). Most prompts are machine asks
+    /// (an agent's ask, the loop's prompt, a nudge): "the next prompt came without a correction" said nothing about the
+    /// memory, so the use was empty. A machine prompt drops them (`used`, reason `machine`); a loop attempt's last ones
+    /// are judged by its verdict instead (`settleParked`). `user` has no default: every caller must say who wrote it.
+    func resolvePending(for terminal: UUID, correction: Bool, user: Bool, now: Date = Date()) async {
         let named = cited.removeValue(forKey: terminal) ?? [:]
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
         guard !ids.isEmpty else { return }
         var e = MemoryEvent(type: .used, terminal: terminal, session: s, ids: [], hits: ids.count)
-        if correction { e.reason = "correction" } else {
+        if correction { e.reason = "correction" } else if !user { e.reason = "machine" } else {
             let key = UseKey(day: LifecycleRules.dayFormatter.string(from: now), session: s)
             let taken = await lifecycle.addUse(ids, key: key, now: now)
             e.ids = taken

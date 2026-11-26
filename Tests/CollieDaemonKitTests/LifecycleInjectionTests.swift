@@ -69,16 +69,16 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let r = x(), now = Date()
         let (mem, repo) = try await setup([r])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
-        await mem.resolvePending(for: t, correction: false, now: now)
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])   // injected again the same day
-        await mem.resolvePending(for: t, correction: false, now: now)
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)
         #expect(await mem.lifecycle.entry(r.id)?.usefulUses == [UseKey(day: Self.day(now), session: "s1")])
-        await mem.resolvePending(for: t, correction: false, now: now)   // nothing pending: no change
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)   // nothing pending: no change
         #expect(await mem.lifecycle.entry(r.id)?.usefulUses.count == 1)
         // a wrong flag from this session: not counted
         await mem.lifecycle.update(r.id, now: now) { $0.flags = [LifecycleFlag(verdict: .wrong, session: "s1", day: Self.day(now), reason: "")] }
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
-        await mem.resolvePending(for: t, correction: false, now: now.addingTimeInterval(86_400))
+        await mem.resolvePending(for: t, correction: false, user: true, now: now.addingTimeInterval(86_400))
         #expect(await mem.lifecycle.entry(r.id)?.usefulUses.count == 1)
     }
 
@@ -86,7 +86,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let r = x()
         let (mem, repo) = try await setup([r])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
-        await mem.resolvePending(for: t, correction: true, now: Date())
+        await mem.resolvePending(for: t, correction: true, user: true, now: Date())
         #expect(await mem.lifecycle.entry(r.id) == nil)
         #expect(await mem.lifecycle.takePending(session: "s1").isEmpty)
     }
@@ -105,10 +105,10 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let r = x(), rv = MemoryRecord(kind: .decision, subject: "q", title: "Pool size twenty", body: "postgres pool sizing twenty", reviewed: true)
         let (mem, repo) = try await setup([r, rv])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
-        await mem.resolvePending(for: t, correction: true, now: Date())
-        await mem.resolvePending(for: t, correction: false, now: Date())   // nothing pending: no event
+        await mem.resolvePending(for: t, correction: true, user: true, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())   // nothing pending: no event
         _ = try await mem.applyFlag(session: "s1", id: r.id, record: r, verdict: .useful, reason: "", terminal: t)
         mem.events.flush()
         let es = mem.events.read(since: Date().addingTimeInterval(-60))
@@ -130,7 +130,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let (mem, repo) = try await setup([r])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         await mem.noteTurnCitations(t, message: "Usei a [\(id8(r))] e deu certo.")
-        await mem.resolvePending(for: t, correction: false, now: now)
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)
         let e = try #require(await mem.lifecycle.entry(r.id))
         #expect(e.usefulUses == [key] && e.evidencedUses == [key])
         mem.events.flush()
@@ -143,10 +143,10 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let (mem, repo) = try await setup([r])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         await mem.noteTurnCitations(t, message: "Use Postgres pool, como a memória diz")   // the title (3 words)
-        await mem.resolvePending(for: t, correction: true, now: now)
+        await mem.resolvePending(for: t, correction: true, user: true, now: now)
         #expect(await mem.lifecycle.entry(r.id) == nil)
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
-        await mem.resolvePending(for: t, correction: false, now: now)   // the citation went with the corrected prompt
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)   // the citation went with the corrected prompt
         let e = try #require(await mem.lifecycle.entry(r.id))
         #expect(e.usefulUses.count == 1 && e.evidencedUses == nil)
         mem.events.flush()
@@ -158,7 +158,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let (mem, repo) = try await setup([r, other])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         await mem.noteTurnCitations(t, message: "Other one here [\(id8(other))]")   // not pending in this session
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         let ev = await mem.lifecycle.entry(r.id)?.evidencedUses, o = await mem.lifecycle.entry(other.id)
         #expect(ev == nil && o == nil)
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: "postgres pool sizing again")
@@ -166,7 +166,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         await mem.noteTurnCitations(t, message: "[\(id8(r))]")
         await mem.endSession(t); await mem.noteSession(t, transcript: "/x/s1.jsonl")
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         #expect(await mem.lifecycle.entry(r.id)?.evidencedUses == nil)   // endSession forgot the citation
     }
 
@@ -182,7 +182,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         await mem.noteGet(t, record: r); await mem.noteGet(t, record: other)
         let after = await mem.lifecycle.all()
         #expect(after == before && after[r.id] == nil)   // (a) no use, no entry: tier, promotion and unused plan can't move
-        await mem.resolvePending(for: t, correction: false, now: now)
+        await mem.resolvePending(for: t, correction: false, user: true, now: now)
         let e = try #require(await mem.lifecycle.entry(r.id))
         #expect(e.usefulUses == [key] && e.evidencedUses == [key])   // (b) the implicit use as today, plus evidence
         #expect(await mem.lifecycle.entry(other.id) == nil)          // (d) never injected: nothing
@@ -193,9 +193,9 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         // (c) a correction: nothing, the get went with it
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
         await mem.noteGet(t, record: r)
-        await mem.resolvePending(for: t, correction: true, now: now.addingTimeInterval(86_400))
+        await mem.resolvePending(for: t, correction: true, user: true, now: now.addingTimeInterval(86_400))
         await mem.lifecycle.setPending(session: "s1", ids: [r.id])
-        await mem.resolvePending(for: t, correction: false, now: now.addingTimeInterval(86_400))
+        await mem.resolvePending(for: t, correction: false, user: true, now: now.addingTimeInterval(86_400))
         let k2 = UseKey(day: Self.day(now.addingTimeInterval(86_400)), session: "s1")
         let e2 = try #require(await mem.lifecycle.entry(r.id))
         #expect(e2.usefulUses == [key, k2] && e2.evidencedUses == [key])
@@ -207,7 +207,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         await mem.noteGet(t, record: r)
         await mem.noteTurnCitations(t, message: "[\(id8(r))]")
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         mem.events.flush()
         let u = mem.events.read(since: Date().addingTimeInterval(-60)).filter { $0.type == .used }
         #expect(u.count == 1 && u[0].evidenced == [r.id, r.id] && u[0].evidence == ["cite", "get"], "\(u)")
@@ -221,7 +221,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let out = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         #expect(out.contains("[decisão \(id8(r))] Use Postgres pool: postgres pool sizing\n") || out.hasSuffix("[decisão \(id8(r))] Use Postgres pool: postgres pool sizing"), "\(out)")
         #expect(out.contains("[decisão \(id8(p))]") && !out.contains("(provisória"), "\(out)")
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         #expect(await mem.lifecycle.all().isEmpty)
     }
 
@@ -229,7 +229,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let r = x()
         let (mem, repo) = try await setup([r], session: false)
         #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).contains("(provisória)"))
-        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.resolvePending(for: t, correction: false, user: true, now: Date())
         #expect(await mem.lifecycle.all().isEmpty)
     }
 

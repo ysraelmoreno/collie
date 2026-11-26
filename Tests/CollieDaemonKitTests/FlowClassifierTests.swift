@@ -59,7 +59,8 @@ struct FlowClassifierTests {
         let d = Recorder()
         #expect(try await run(#"{"steps":[{"action":"tap","target":"ref:e3"}]}"#, nodes: screen, d) == refused(at: 1))
         #expect(await d.commands.isEmpty)
-        #expect(try FlowRunner.command(FlowPlan.Step(action: "tap", target: "ref:e2")) == ("device.tap", ["ref": .string("e2")]))
+        let (c, a) = try FlowRunner.command(FlowPlan.Step(action: "tap", target: "ref:e2"))
+        #expect(c == "device.tap" && a == ["ref": .string("e2")])
     }
 
     @Test func coordinateOnAnExcluirNodeIsRefusedTheSmallestNodeWinning() async throws {

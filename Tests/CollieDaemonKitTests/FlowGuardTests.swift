@@ -176,7 +176,7 @@ private func striped(_ w: Int, _ h: Int) throws -> Data {
 
 /// A game screen: one label and a SurfaceView, so the tree misses any other text.
 private let game = xml([ax("Jogo", cls: "TextView", "[0,1200][300,1300]"), ax(id: "com.game:id/surface", cls: "SurfaceView", "[0,0][1080,2400]")])
-private let iosGame = "[" + el("Application", (0, 0, 390, 844), [el("StaticText", "Jogo", (0, 400, 100, 30))]) + "]"   // no label: the OCR is not masked
+private let iosGame = "[" + el("Application", "", (0, 0, 390, 844), [el("StaticText", "Jogo", (0, 400, 100, 30))]) + "]"   // no label: the OCR is not masked
 
 struct FlowGuardTests {
     // Android and iOS: `tap "Pagar"` refused untouched, `tap "Voltar"` touched.

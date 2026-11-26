@@ -88,9 +88,9 @@ struct FlowRunnerTests {
     @Test func aFailingStepStopsThePlanNamingIt() async throws {
         let d = FakeDevice(fail: "device.tap")
         let e = await #expect(throws: ProtocolError.self) {
-            try await runner(d).run(try plan(#"{"steps":[{"action":"key","target":"Home"},{"action":"tap","target":"Pagar"},{"action":"key","target":"Back"}]}"#))
+            try await runner(d).run(try plan(#"{"steps":[{"action":"key","target":"Home"},{"action":"tap","target":"Entrar"},{"action":"key","target":"Back"}]}"#))
         }
-        #expect(e?.message == "step 2 (tap Pagar): no such element")
+        #expect(e?.message == "step 2 (tap Entrar): no such element")
         #expect(await d.commands == ["device.key", "device.tap"])
     }
 

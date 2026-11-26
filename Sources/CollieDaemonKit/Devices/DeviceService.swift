@@ -602,6 +602,9 @@ actor DeviceService {
         if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
     }
 
+    /// The nodes of the panel's last tree read (`device.ui`/`screen`/`find`), for `FlowClassifier` (b3); [] before any.
+    func flowNodes(_ panel: UUID) -> [UINode] { refs[panel] ?? [] }
+
     /// The signature of the panel's last `device.screen`; "" before any.
     func flowSig(_ panel: UUID) -> String { lastScreen[panel].map(ScreenSignature.compute) ?? "" }
 

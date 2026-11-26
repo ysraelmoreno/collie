@@ -5,7 +5,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// The panels' texts under `.en` (the Portuguese ones are in each panel's own suite).
-@Suite struct PluginsEnglishTests {
+@Suite @MainActor struct PluginsEnglishTests {
     @Test func workErrorsInEnglish() {
         func e(_ c: ErrorCode, _ m: String) -> ProtocolError { ProtocolError(code: c, message: m) }
         L10n.$override.withValue(.en) {

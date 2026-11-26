@@ -41,7 +41,7 @@ private func job(prompt: String = "x") -> CuratorJob {
             L10n.$override.withValue(lang) {
                 #expect(throws: ProtocolError.self) { try ClaudeCuratorRunner.parse("oops") }
                 do throws(ProtocolError) { _ = try ClaudeCuratorRunner.parse("oops") } catch { #expect(error.message.hasPrefix(CuratorTag.unreadable)) }
-                #expect((try? ClaudeCuratorRunner.parseOrNil("oops")) == .some(nil))
+                do { let r = try ClaudeCuratorRunner.parseOrNil("oops"); #expect(r == nil) } catch { Issue.record("parseOrNil threw: \(error)") }
             }
         }
     }

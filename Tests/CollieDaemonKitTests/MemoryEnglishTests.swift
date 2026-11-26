@@ -37,9 +37,9 @@ import CollieProtocol
     @Test func contextAdviceAndOrientationAreEnglish() {
         #expect(ContextAdvice.line(tokens: 300_000, level: 2).hasPrefix("Very large context (300k tokens)"))
         #expect(ContextAdvice.line(tokens: 150_000, level: 1).hasPrefix("Large context (150k tokens)"))
-        let o = CollieOrientation.text(terminal: "A", isShepherd: true, paddock: nil, peers: [], panels: [], figcraftAvailable: false,
-                                       designFirst: .figcraft, candidates: 2)
-        #expect(!o.contains("Prévia") && !o.contains("indisponível"), o)
+        let o = CollieOrientation.text(terminal: "A", isShepherd: true, paddock: nil, peers: [], panels: [], designFirst: .figcraft,
+                                       figcraftAvailable: false, candidates: 2)
+        #expect(!o.contains("Prévia") && !o.contains("indisponível"), Comment(rawValue: o))
         #expect(CollieOrientation.fieldLine("f").hasSuffix("commit here; the Shepherd integrates."))
     }
 

@@ -47,13 +47,13 @@ private func call(_ d: Daemon, _ p: Paths, _ args: [String: JSONValue] = [:]) as
     @Test func launchSpecCarriesLang() async throws {
         try await withDaemon { d, p in
             defer { L10n.set(.pt) }
-            let rec = TerminalRecord(id: UUID(), name: "T", preset: .shell, command: nil, cwd: "/")
+            let rec = TerminalRecord(id: UUID(), name: "T", preset: .shell, command: nil, cwd: "/", isShepherd: false)
             _ = try await call(d, p, ["language": .string("pt")])
             let before = try await d.router.launchSpec(rec, token: "t", user: [:])
             _ = try await call(d, p, ["language": .string("en")])
             let after = try await d.router.launchSpec(rec, token: "t", user: [:])
-            #expect(before.env["COLLIE_LANG"] == "pt")
-            #expect(after.env["COLLIE_LANG"] == "en")
+            #expect(before.environment["COLLIE_LANG"] == "pt")
+            #expect(after.environment["COLLIE_LANG"] == "en")
         }
     }
 }

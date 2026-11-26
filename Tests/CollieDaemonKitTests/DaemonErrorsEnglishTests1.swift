@@ -11,7 +11,7 @@ import CollieNetwork
             let m = Maintenance()
             try? await m.enter("backup")
             do { try await m.enter("import"); Issue.record("expected conflict") }
-            catch { #expect(error.message == "backup in progress") }
+            catch let error as ProtocolError { #expect(error.message == "backup in progress") } catch { Issue.record("\(error)") }
         }
     }
 

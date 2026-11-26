@@ -8,7 +8,7 @@ import CollieTheme
     #expect(Palette.light.accent == RGB(hex: 0x2448C9))
     #expect(Palette.light.attention == RGB(hex: 0xA14A06))
 }
-@Test(arguments: [Palette.dark, Palette.light], .themePT) func textTokensPassAA(_ p: Palette) {
+@Test(.themePT, arguments: [Palette.dark, Palette.light]) func textTokensPassAA(_ p: Palette) {
     for fg in [p.text, p.textSecondary, p.muted, p.accent, p.attention, p.secondary, p.danger] {
         for bg in [p.background, p.surface, p.sidebar, p.sunken] { #expect(contrastRatio(fg, bg) >= 4.5) }
     }

@@ -85,7 +85,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
             return LoopBadge(text: tr("em laço: \(title) (tentativa \(l.attempt)/\(l.tries))", "in loop: \(title) (attempt \(l.attempt)/\(l.tries))") + (l.max.map { tr(" · \(l.used)/\($0) no total", " · \(l.used)/\($0) in total") } ?? "") + (l.phase.map { " · \($0.label)" } ?? ""),
                              running: true)
         case .stopped: return LoopBadge(text: tr("laço parado (\(l.used) tentativas)", "loop stopped (\(l.used) attempts)"), running: false)
-        case .finished: return LoopBadge(text: tr("laço terminou (\(l.used) tentativas)", "loop finished (\(l.used) attempts)"), running: false)
+        case .finished: return LoopBadge(text: tr("laço terminou (\(l.used) tentativas)", "loop ended (\(l.used) attempts)"), running: false)
         case .queued: return LoopBadge(text: l.autoLand?.dequeuedAt != nil ? tr("aprovado, fora da fila (work stop)", "approved, out of the queue (work stop)") : tr("na fila do auto-land (aprovado)", "in the auto-land queue (approved)"), running: false)
         }
     }

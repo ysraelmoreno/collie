@@ -789,10 +789,10 @@ actor WorkLoop {
             do {
                 let res = try await host.check(task.accept ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted, limit))
                 r.acceptOutput = Self.acceptOutput(res.stdout + res.stderr, secrets: await host.secrets())
-                ran = .acceptDone(status: res.status, broken: nil); line = res.status == 0 ? "passou (exit 0)" : "falhou (exit \(res.status))"
+                ran = .acceptDone(status: res.status, broken: nil); line = res.status == 0 ? tr("passou (exit 0)", "passed (exit 0)") : tr("falhou (exit \(res.status))", "failed (exit \(res.status))")
             } catch where error.code == .timeout {
                 r.acceptOutput = ""
-                ran = .acceptDone(status: nil, broken: nil); line = "falhou (timeout)"
+                ran = .acceptDone(status: nil, broken: nil); line = tr("falhou (timeout)", "failed (timeout)")
             } catch {
                 r.acceptOutput = ""
                 ran = .acceptDone(status: nil, broken: "accept could not run: \(error.message)"); line = tr("não rodou: \(error.message)", "did not run: \(error.message)")

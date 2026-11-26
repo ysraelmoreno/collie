@@ -330,7 +330,7 @@ enum AttemptMachine {
             case .pass:
                 // the task passed and another terminal works: nothing to discard, the loop stops after it
                 let notes = s.facts.reviewNotes
-                let done: [Effect] = [.markDone] + (notes.isEmpty ? [] : [.note("[loop \(s.task)] parecer: " + notes.joined(separator: "; "))])
+                let done: [Effect] = [.markDone] + (notes.isEmpty ? [] : [.note("[loop \(s.task)] " + ReviewVerdict.reviewLabel + notes.joined(separator: "; "))])
                 guard let who = s.facts.blockedBy else { return (s, done) }
                 return (s, done + [.note(WorkLoop.blockedNote(who)), .stopLoop(.init(.othersWorking, detail: who))])
             case .retry(let reason, let discards):

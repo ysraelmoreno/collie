@@ -187,7 +187,7 @@ extension WorkLoop {
             x.loop?.used = Swift.max(0, used - 1)
             guard let reason, let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .open else { return }
             x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(reason)"; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
-            x.notes.append(WorkNote(at: at, text: "[loop] \"\(task.title)\" adiada: \(reason)"))
+            x.notes.append(WorkNote(at: at, text: tr("[loop] \"\(task.title)\" adiada: \(reason)", "[loop] \"\(task.title)\" deferred: \(reason)")))
         }
         if reason != nil { await reportEnd(id, task.id) }
     }
@@ -209,7 +209,7 @@ extension WorkLoop {
             for b in stuck {
                 guard let i = x.tasks.firstIndex(where: { $0.id == b.task }), x.tasks[i].state == .open else { continue }
                 x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(b.reason)"; x.tasks[i].updatedAt = at
-                x.notes.append(WorkNote(at: at, text: "[loop] \"\(x.tasks[i].title)\" adiada: \(b.reason)"))
+                x.notes.append(WorkNote(at: at, text: tr("[loop] \"\(x.tasks[i].title)\" adiada: \(b.reason)", "[loop] \"\(x.tasks[i].title)\" deferred: \(b.reason)")))
             }
         }
         for b in stuck { await reportEnd(id, b.task) }

@@ -166,7 +166,7 @@ extension CommandRouter {
             let t = try remoteTerminalRecord(r)
             target = t.id.uuidString.lowercased()
             let text = (str(r, "text") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, text.count <= ChatMessage.maxText else { throw ProtocolError(code: .invalidArgs, message: "Mensagem vazia ou com mais de 8 000 caracteres.") }
+            guard !text.isEmpty, text.count <= ChatMessage.maxText else { throw ProtocolError(code: .invalidArgs, message: tr("Mensagem vazia ou com mais de 8 000 caracteres.", "Message is empty or over 8,000 characters.")) }
             // D1: a phone never types commands into a shell, nor into a terminal outside the sandbox
             guard t.preset != .shell, t.sandbox == .sandboxed else {
                 throw ProtocolError(code: .invalidArgs, message: tr("Pelo iPhone só se fala com agentes: \(t.name) é um shell ou um terminal livre.", "From the iPhone you can only talk to agents: \(t.name) is a shell or a free terminal."))

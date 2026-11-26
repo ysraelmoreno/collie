@@ -79,14 +79,18 @@ import CollieProtocol
 
     @Test func parkedSessionsAreCapped() async throws {
         let (mem, _) = try await setup([])
+        var ts: [UUID] = []
         for _ in 0...MemoryService.parkedCap {
-            let u = UUID()
+            let u = UUID(); ts.append(u)
             await mem.noteSession(u, transcript: "/x/\(u).jsonl")
             await mem.lifecycle.setPending(session: u.uuidString, ids: [UUID()])
             await mem.endSession(u)
         }
-        await mem.settleParked(UUID(), firstTryPassed: true)   // unknown: nothing
+        await mem.settleParked(UUID(), firstTryPassed: false)   // unknown: nothing
+        await mem.settleParked(ts[0], firstTryPassed: false)   // the oldest, dropped past the cap: nothing
         #expect(used(mem).isEmpty)
+        await mem.settleParked(ts[ts.count - 1], firstTryPassed: false)
+        #expect(used(mem).map(\.session) == [ts[ts.count - 1].uuidString])
     }
 
     // the loop's wiring: `markDone` says whether it was the 1st try, `markOpenOrDeferred` never counts

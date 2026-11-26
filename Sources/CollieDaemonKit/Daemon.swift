@@ -12,6 +12,9 @@ public struct DaemonConfig: Sendable {
     /// The app's version (CFBundleShortVersionString of the bundle collied ships in); nil: not bundled ("dev").
     public var version: String?
     public var workspaceId: UUID
+    /// collied: the daemon language is also the process one (`L10n.set`). Off in tests: daemons in one test process never
+    /// change the language the other suites read; the daemon still answers and launches terminals in its own `language`.
+    public var setsProcessLanguage = false
     public var idleQuietSeconds: Double = 2.0
     /// `check --screen`: a terminal's raw output → its screen as drawn now (collied's CollieScreen; nil: unavailable).
     public var screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)?

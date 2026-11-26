@@ -11,10 +11,10 @@ import CollieCore
 import Testing
 
 /// Suites whose assertions compare Portuguese texts run under `.pt` (the daemon language is per task).
-struct PortugueseScope: SuiteTrait, TestScoping {
+struct PortugueseScope: SuiteTrait, TestTrait, TestScoping {
     var isRecursive: Bool { true }
     func provideScope(for test: Test, testCase: Test.Case?, performing function: @Sendable () async throws -> Void) async throws {
         try await L10n.$override.withValue(.pt) { try await function() }
     }
 }
-extension SuiteTrait where Self == PortugueseScope { static var pt: PortugueseScope { .init() } }
+extension Trait where Self == PortugueseScope { static var pt: PortugueseScope { .init() } }

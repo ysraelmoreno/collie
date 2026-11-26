@@ -12,9 +12,10 @@ extension CommandRouter {
             }
             s.language = l.rawValue
             do { try s.save(config.paths.root) } catch { throw ProtocolError(code: .internal, message: "preferences.json: \(error)") }
-            L10n.set(Lang.resolve(l))
+            language = Lang.resolve(l)
+            if config.setsProcessLanguage { L10n.set(language) }
         }
-        return .object(["language": .string(LanguageSetting.parse(s.language).rawValue), "active": .string(L10n.current.rawValue)])
+        return .object(["language": .string(LanguageSetting.parse(s.language).rawValue), "active": .string(language.rawValue)])
     }
 }
 

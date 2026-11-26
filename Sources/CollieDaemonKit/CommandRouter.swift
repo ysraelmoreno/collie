@@ -188,6 +188,8 @@ actor CommandRouter {
     var sandboxWatch: Task<Void, Never>?
     /// The Collie-wide sandbox mode (`<root>/preferences.json`); nil: `config.defaultSandboxMode`.
     var sandboxPref: SandboxMode?
+    /// `admin.language` (`<root>/preferences.json`, resolved): what terminals get as `COLLIE_LANG`.
+    var language = Lang.pt
     /// Preferências → "Baixar fontes do Google Fonts" (`<root>/preferences.json`; on unless turned off).
     var googleFonts = true
     /// The remote listener (off unless the user turned it on) and its TLS identity, loaded once needed.
@@ -313,7 +315,8 @@ actor CommandRouter {
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
             }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub,
             audit: remoteAudit, limits: remoteLimits))
-        L10n.set(Lang.resolve(.parse(settings.language)))
+        self.language = Lang.resolve(.parse(settings.language))
+        if config.setsProcessLanguage { L10n.set(language) }
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
@@ -1167,7 +1170,7 @@ actor CommandRouter {
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
             "COLLIE_USAGE_DIR": config.paths.root.appendingPathComponent("usage").path,   // = UsageService's parent of providers/
             "COLLIE_TERMINAL_NAME": rec.name, "COLLIE_WORKSPACE_ID": ws.id.uuidString,
-            "COLLIE_LANG": L10n.current.rawValue,   // fixed at launch: a terminal open before a language change keeps its own
+            "COLLIE_LANG": language.rawValue,   // fixed at launch: a terminal open before a language change keeps its own
             "TERM": "xterm-256color", "TERM_PROGRAM": "Collie",
             "PATH": env["PATH"] ?? "/usr/bin:/bin",
         ]

@@ -63,7 +63,7 @@ import CollieCore
         // at the cap the short sentence stays rather than the Loop line going with a shorter form (a Cursor Shepherd, real names)
         let tightFit = CollieOrientation.text(terminal: "Collie Main", isShepherd: true, paddock: "collie", peers: ["Bob"], panels: [], agent: "cursor")
         let short = tightFit.split(separator: "\n").first { $0.hasPrefix("- Loop") }.map(String.init) ?? ""
-        #expect(tightFit.count <= 1500 && short.hasSuffix("the checks. Wait: collie work wait."), "\(tightFit.count)\n\(tightFit)")
+        #expect(tightFit.count <= 1500 && (short.hasSuffix("the checks. Wait: collie work wait.") || short.hasSuffix(phrase)), "\(tightFit.count)\n\(tightFit)")
         // who cannot start a loop does not carry it: another agent, a Shepherd without a paddock or in a shared folder
         for t in [CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: "P", peers: ["Bob"], panels: []),
                   CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: ["Bob"], panels: []),

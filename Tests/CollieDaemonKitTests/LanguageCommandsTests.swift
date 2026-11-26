@@ -11,17 +11,14 @@ private func call(_ d: Daemon, _ p: Paths, _ args: [String: JSONValue] = [:]) as
 @Suite(.serialized) struct LanguageCommandsTests {
     @Test func setEnPersistsAndActivates() async throws {
         try await withDaemon { d, p in
-            defer { L10n.set(.pt) }
             let r = try await call(d, p, ["language": .string("en")])
             #expect(r.result == .object(["language": .string("en"), "active": .string("en")]), "\(r)")
             #expect(CollieSettings.load(p.root).language == "en")
-            #expect(L10n.current == .en)
         }
     }
 
     @Test func readOnlyReturnsCurrent() async throws {
         try await withDaemon { d, p in
-            defer { L10n.set(.pt) }
             _ = try await call(d, p, ["language": .string("pt")])
             let r = try await call(d, p)
             #expect(r.result == .object(["language": .string("pt"), "active": .string("pt")]), "\(r)")
@@ -46,7 +43,6 @@ private func call(_ d: Daemon, _ p: Paths, _ args: [String: JSONValue] = [:]) as
 
     @Test func launchSpecCarriesLang() async throws {
         try await withDaemon { d, p in
-            defer { L10n.set(.pt) }
             let rec = TerminalRecord(id: UUID(), name: "T", preset: .shell, command: nil, cwd: "/", isShepherd: false)
             _ = try await call(d, p, ["language": .string("pt")])
             let before = try await d.router.launchSpec(rec, token: "t", user: [:])

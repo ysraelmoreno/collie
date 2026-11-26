@@ -88,6 +88,7 @@ let weblibs = ProcessInfo.processInfo.environment["COLLIE_WEBLIBS_DIR"].map { UR
 let daemon: Daemon
 do {
     var config = DaemonConfig(paths: Paths(root: root), collieExecutable: collie, workspaceId: workspace!)
+    config.setsProcessLanguage = true
     config.scrcpyServer = FileManager.default.fileExists(atPath: scrcpy.path) ? scrcpy : nil
     let helperApk = ProcessInfo.processInfo.environment["COLLIE_HELPER_APK"].map { URL(fileURLWithPath: $0) }
         ?? resources.appendingPathComponent("collie-helper.apk")

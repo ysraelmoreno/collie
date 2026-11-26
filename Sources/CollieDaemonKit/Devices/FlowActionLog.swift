@@ -83,11 +83,16 @@ struct FlowActionLog: Sendable {
             // c2: a failed rotation (a folder at the tmp, ENOSPC) never costs the line: warn, then write anyway.
             // wd2: if the current file is still past the cap (it could not move), it is truncated, so it never grows
             // without bound and the next rotation (and its warning) waits until it fills again, not the next action.
-            do { try rotate(d, now: now) } catch {
-                warn("collied: flows: rotation of \(dir.path) failed: \(error)")
-            }
+            // we2: the warning says when the history was truncated (it is lost in blocks of `maxBytes`, unrotated).
+            var failed: Error?
+            do { try rotate(d, now: now) } catch { failed = error }
             fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
-            if size(fd) >= maxBytes { ftruncate(fd, 0) }
+            let truncated = size(fd) >= maxBytes
+            if truncated { ftruncate(fd, 0) }
+            if let failed {
+                warn("collied: flows: rotation of \(dir.path) failed: \(failed)"
+                     + (truncated ? "; the current log was truncated, its history lost" : ""))
+            }
         }
         defer { close(fd) }
         try write(fd, data)

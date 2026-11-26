@@ -363,7 +363,18 @@ public final class UnixSocketServer: @unchecked Sendable {
 /// at a point of its own choosing instead of being cancelled mid-write.
 final class ClientHangup: Sendable {
     @TaskLocal static var current: ClientHangup?
-    private let gone = OSAllocatedUnfairLock(initialState: false)
-    var isSet: Bool { gone.withLock { $0 } }
-    func set() { gone.withLock { $0 = true } }
+    private struct State: Sendable { var gone = false; var waiters: [CheckedContinuation<Void, Never>] = [] }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    var isSet: Bool { state.withLock { $0.gone } }
+    func set() {
+        let w = state.withLock { s in s.gone = true; defer { s.waiters = [] }; return s.waiters }
+        w.forEach { $0.resume() }
+    }
+    /// we2: returns once `set` (at once when already set), with no polling.
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let now = state.withLock { s in s.gone ? true : { s.waiters.append(c); return false }() }
+            if now { c.resume() }
+        }
+    }
 }

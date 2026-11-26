@@ -59,16 +59,7 @@ private final class Lines: @unchecked Sendable {
 
 private actor Steps {
     var commands: [String] = []
-    var response: Response?
     func add(_ c: String) -> Int { commands.append(c); return commands.count }
-    func done(_ r: Response) { response = r }
-}
-
-/// Spins (yields, no sleep) until `cond` or 10 s of wall time pass.
-private func until(_ cond: @Sendable () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(10)
-    while Date() < end { if await cond() { return true }; await Task.yield() }
-    return false
 }
 
 /// wd2 (findings 5, 7, 8, 9 and 10 of rev-device-flows-final): the text is in clear only after a recent read, a folder
@@ -199,11 +190,12 @@ extension DeviceCommandTests {
                 #expect(try await send(Request(id: "x", token: d.adminToken, command: "panel.open", args: ["plugin": .string("device")])).ok)
 
                 let steps = Steps()
+                let (responses, responded) = AsyncStream.makeStream(of: Response.self)
                 let fd = OSAllocatedUnfairLock<Int32>(initialState: -1)
                 await d.router.devices.stageFresh { c, _, _ async throws(ProtocolError) -> JSONValue in
                     if await steps.add(c) == 2 {
                         close(fd.withLock { $0 })   // ctrl-C on `collie device run` while step 2 is in flight
-                        _ = await until { ClientHangup.current?.isSet ?? false }
+                        await ClientHangup.current?.wait()   // we2: signalled by the hangup, no polling
                     }
                     return .object([:])
                 }
@@ -213,7 +205,7 @@ extension DeviceCommandTests {
                 let router = d.router
                 let server = UnixSocketServer(path: sock) { r, peer in
                     let res = await router.handle(r, peer: peer.pid)
-                    await steps.done(res)
+                    responded.yield(res)
                     return res
                 }
                 try server.start(); defer { server.stop() }
@@ -226,8 +218,8 @@ extension DeviceCommandTests {
                 line.append(10)
                 #expect(writeAll(c, line, deadline: Date().addingTimeInterval(10)))
 
-                #expect(await until { await steps.response != nil })
-                let res = await steps.response
+                var it = responses.makeAsyncIterator()
+                let res = await it.next()   // we2: the router's reply, no polling nor wall-clock ceiling
                 #expect(res?.ok == false && res?.error?.message == "plan cancelled before step 3 (done: 2)", "\(String(describing: res))")
                 #expect(await steps.commands == ["device.key", "device.key"])
             }

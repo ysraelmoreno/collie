@@ -194,17 +194,21 @@ enum FlowClassifier {
             for j in nodes.indices.prefix(i).reversed() where nodes[j].depth < d { out.append(j); d = nodes[j].depth }
             return out
         }
-        /// Node `i` when clickable, else its clickable ancestor (as `UITree.target` climbs); nil: none.
-        func clickable(_ i: Int) -> Int? { nodes[i].clickable ? i : ancestors(i).first { nodes[$0].clickable } }
+        func area(_ i: Int) -> CGFloat { nodes[i].bounds.width * nodes[i].bounds.height }
+        /// we2: a node of ≥ 90 % of the root's area (Android's clickable root, a content view under the status bar) is the
+        /// screen itself: it lends no labels to what lies in it, or a scroll swipe on a screen with "Sair" would be refused.
+        // ponytail: fixed 90 % cut; a real full-screen button (rare) is still classified by its own names
+        func screen(_ i: Int) -> Bool { area(0) > 0 && area(i) >= 0.9 * area(0) }
+        /// Node `i` when clickable, else its clickable ancestor (as `UITree.target` climbs), never the screen itself; nil: none.
+        func clickable(_ i: Int) -> Int? { nodes[i].clickable ? i : ancestors(i).first { nodes[$0].clickable && !screen($0) } }
         /// wd1: what a touch at `pt` can act on, fail-closed (see the type's doc).
         func at(_ pt: CGPoint) -> [String] {
             let inside = nodes.indices.filter { nodes[$0].bounds.contains(pt) }
-            var out = inside.flatMap { subtree(clickable($0) ?? $0) }
-            let area = { (i: Int) in nodes[i].bounds.width * nodes[i].bounds.height }
+            var out = inside.flatMap { screen($0) ? names(nodes[$0]) : subtree(clickable($0) ?? $0) }
             if let i = inside.min(by: { area($0) < area($1) }), clickable(i) == nil {
                 let leaf = i + 1 == nodes.count || nodes[i + 1].depth <= nodes[i].depth
                 let c = leaf ? ancestors(i).first ?? i : i
-                if nodes[c].bounds != nodes[0].bounds { out += subtree(c, all: true) }   // the screen itself: not every label on it
+                if !screen(c) { out += subtree(c, all: true) }   // the screen itself: not every label on it
             }
             return out
         }

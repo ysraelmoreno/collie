@@ -843,7 +843,7 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
-        flowFreshAt[id] = nil; screenAt[id] = nil
+        flowFreshAt[id] = nil; flowReadAt[id] = nil; screenAt[id] = nil
         flowGen.bump(id)   // c3: never reset (monotonic): a read still in flight can not match it again
         lastScreen[id] = nil
         simPoints[id] = nil
@@ -1021,7 +1021,7 @@ actor DeviceService {
     /// Daemon stop: ends every session and watcher and waits (≤ 1.5 s) for their groups, so the delayed KILL is not lost
     /// with the process; and for the sessions' `forward --remove` (≤ its 5 s adb timeout).
     func stop() async {
-        refs = [:]; flowFreshAt = [:]; screenAt = [:]
+        refs = [:]; flowFreshAt = [:]; flowReadAt = [:]; screenAt = [:]
         flowGen.bumpAll()   // c3: not zeroed: reads in flight stay stale
         watched = [:]; online = [:]; watchedIOS = [:]; booted = [:]
         poller?.cancel(); poller = nil

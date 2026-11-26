@@ -50,7 +50,7 @@ public struct AppUpdateSwap {
         defer { mounted.detach() }
         // B1: exclusive, 0700, never an existing path, never merged with planted content.
         var template = Array(parent.appendingPathComponent(Self.siblingPrefix + "XXXXXX").path.utf8CString)
-        guard let made = mkdtemp(&template) else { throw .swapFailed("criar a pasta irmã: \(String(cString: strerror(errno)))") }
+        guard let made = mkdtemp(&template) else { throw .swapFailed(tr("criar a pasta irmã: \(String(cString: strerror(errno)))", "creating the sibling folder: \(String(cString: strerror(errno)))")) }
         let sibling = URL(fileURLWithPath: String(cString: made), isDirectory: true)
         let out = sibling.appendingPathComponent("Collie.app")
         do throws(Refusal) {
@@ -78,7 +78,7 @@ public struct AppUpdateSwap {
     /// Back to the remembered previous bundle, same exchange and check; the newer one becomes the previous.
     public func rollback() throws(Refusal) {
         guard let p = defaults.string(forKey: Self.previousKey), FileManager.default.fileExists(atPath: p) else {
-            throw .swapFailed("sem versão anterior")
+            throw .swapFailed(tr("sem versão anterior", "no previous version"))
         }
         let current = Self.version(app)
         try exchange(URL(fileURLWithPath: p))   // failure: swapped back, the previous kept

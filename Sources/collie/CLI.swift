@@ -78,7 +78,7 @@ enum Client {
             to: socket, timeoutSeconds: timeout(command, args))
         if r.ok { return r.result ?? .null }
         // CLI and MCP (both call through here): a command an older daemon lacks says to restart the service
-        throw RestartHint.wrap(r.error ?? ProtocolError(code: .internal, message: "request failed"))
+        throw RestartHint.wrap(r.error ?? ProtocolError(code: .internal, message: "request failed"), text: RestartHint.localized)
     }
 }
 
@@ -97,7 +97,7 @@ enum PluginPublishCLI {
     static func run(_ a: [String]) -> Int32 {
         func fail(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         func read(_ path: String) throws(ProtocolError) -> Data {
-            guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)) else { throw fail("não consegui ler \(path)") }
+            guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)) else { throw fail(tr("não consegui ler \(path)", "could not read \(path)")) }
             return d
         }
         do throws(ProtocolError) {
@@ -108,17 +108,17 @@ enum PluginPublishCLI {
                 let key = Curve25519.Signing.PrivateKey()
                 let b = Data(key.rawRepresentation.base64EncodedString().utf8)
                 let fd = open(a[2], O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)   // never overwrites
-                guard fd >= 0 else { throw fail("não consegui criar \(a[2]) (já existe?)") }
+                guard fd >= 0 else { throw fail(tr("não consegui criar \(a[2]) (já existe?)", "could not create \(a[2]) (already exists?)")) }
                 let n = b.withUnsafeBytes { write(fd, $0.baseAddress, b.count) }
                 close(fd)
-                guard n == b.count else { unlink(a[2]); throw fail("não consegui gravar \(a[2])") }
+                guard n == b.count else { unlink(a[2]); throw fail(tr("não consegui gravar \(a[2])", "could not write \(a[2])")) }
                 print(key.publicKey.rawRepresentation.base64EncodedString())
             case "catalog-sign" where a.count == 4 && a[2] == "--key-env":
                 let k = (ProcessInfo.processInfo.environment[a[3]] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !k.isEmpty else { throw fail("\(a[3]) não está no ambiente") }
+                guard !k.isEmpty else { throw fail(tr("\(a[3]) não está no ambiente", "\(a[3]) is not in the environment")) }
                 let sig = try PluginCatalog.sign(try read(a[1]), privateKey: k)
                 guard (try? sig.write(to: URL(fileURLWithPath: a[1] + ".sig"), options: .atomic)) != nil else {
-                    throw fail("não consegui gravar \(a[1]).sig")
+                    throw fail(tr("não consegui gravar \(a[1]).sig", "could not write \(a[1]).sig"))
                 }
                 // sign accepted the key: prints its public half, for the workflow's verify
                 if let raw = Data(base64Encoded: k), let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) {
@@ -262,7 +262,7 @@ enum CLI {
             return str(o["text"]) + "\n" + (o["tree"].map { "\n" + str($0) + "\n" } ?? "")
         case ("admin.spawn", .object(let o)): return str(o["id"]) + "\n"
         case ("plugin.install", .object(let o)):
-            var s = "Instalado \(str(o["name"])) \(str(o["version"]))\n"
+            var s = tr("Instalado", "Installed") + " \(str(o["name"])) \(str(o["version"]))\n"
             if case .array(let lines)? = o["permissions"] { for l in lines { s += "  - \(str(l))\n" } }
             return s
         case (_, .null): return ""

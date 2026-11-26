@@ -58,10 +58,10 @@ public enum RemoteCopy {
     /// "agora, Tailscale 100.88.1.4" / "visto há 3 h, Wi-Fi 192.168.1.40" / "nunca conectou".
     public static func seen(_ d: RemoteDeviceRow, now: Date = Date()) -> String {
         let where_ = d.lastAddress.map { ", " + via(d.lastVia) + " " + $0 } ?? ""
-        if d.live { return "agora" + where_ }
-        guard let at = d.lastSeenAt else { return "nunca conectou" }
+        if d.live { return tr("agora", "now") + where_ }
+        guard let at = d.lastSeenAt else { return tr("nunca conectou", "never connected") }
         let m = max(0, Int(now.timeIntervalSince(at) / 60))
-        let ago = m < 1 ? "agora há pouco" : m < 60 ? "visto há \(m) min" : m < 48 * 60 ? "visto há \(m / 60) h" : "visto há \(m / 1440) dias"
+        let ago = m < 1 ? tr("agora há pouco", "just now") : m < 60 ? tr("visto há \(m) min", "seen \(m) min ago") : m < 48 * 60 ? tr("visto há \(m / 60) h", "seen \(m / 60) h ago") : tr("visto há \(m / 1440) dias", "seen \(m / 1440) days ago")
         return ago + where_
     }
 }

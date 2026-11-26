@@ -161,3 +161,13 @@ struct ScreenModelTests {
         #expect(tree.filter { $0.text == "chevron" }.count == 3)   // raw tree (device ui, --all) keeps them
     }
 }
+
+@Suite struct ScreenModelEnglishTests {
+    @Test func labelsInEnglish() {
+        var s = Screen(title: "Settings")
+        s.actions = [ScreenItem(ref: "a", label: "Keyboard", role: "button", state: [], id: "", position: nil)]
+        #expect(ScreenModel.text(s, en: true) == "Screen: Settings\nActions: [Keyboard]")
+        #expect(ScreenModel.text(s) == "Tela: Settings\nAções: [Keyboard]")
+        #expect(ScreenModel.changes(from: Screen(title: "Home"), to: s, en: true) == ["title Home → Settings"])
+    }
+}

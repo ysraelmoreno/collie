@@ -115,7 +115,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         hostWatch?.cancel()
         let paths = paths
         let h = HostConnection(paths: paths, token: { try Self.readToken(paths) }) { [weak self] panel, command, args, timeout throws(ProtocolError) in
-            guard let run = await self?.panelHandler else { throw ProtocolError(code: .unavailable, message: "Plug-in indisponível") }
+            guard let run = await self?.panelHandler else { throw ProtocolError(code: .unavailable, message: tr("Plug-in indisponível", "Plug-in unavailable")) }
             return try await run(panel, command, args, timeout)
         }
         host = h
@@ -380,7 +380,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func denyAll(_ cards: [SandboxDenial]) async throws {
         var failed = 0
         for c in cards { do { try await deny(c) } catch { failed += 1 } }
-        if failed > 0 { throw ProtocolError(code: .internal, message: "\(failed) de \(cards.count) acessos não foram dispensados") }
+        if failed > 0 { throw ProtocolError(code: .internal, message: tr("\(failed) de \(cards.count) acessos não foram dispensados", "\(failed) of \(cards.count) access requests were not dismissed")) }
     }
     /// Removes a grant; the running terminals it reached restart without it.
     public func revoke(_ grant: SandboxGrant) async throws {
@@ -431,7 +431,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// `timeout` nil: `adminTimeout(command)`.
     public func adminCall(_ command: String, _ args: [String: JSONValue], timeout: Double? = nil) async throws(ProtocolError) -> JSONValue {
         do { return try await admin(command, args, timeout: timeout ?? Self.adminTimeout(command)) ?? .null }
-        catch let e as ProtocolError { throw RestartHint.wrap(e) }   // an older daemon: "reinicie o serviço para usar isto"
+        catch let e as ProtocolError { throw RestartHint.wrap(e, text: RestartHint.localized) }   // an older daemon: "reinicie o serviço para usar isto"
         catch { throw ProtocolError(code: .internal, message: "\(error)") }
     }
     /// An admin `ui.*` stream for app-side plug-in views (`PanelHostContext.openStream`, e.g. `ui.device`).

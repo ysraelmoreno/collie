@@ -143,35 +143,37 @@ public enum ScreenModel {
     }
 
     /// What changed since `old`: title, the selected tabs, the content count. No `old`: nothing.
-    public static func changes(from old: Screen?, to new: Screen) -> [String] {
+    public static func changes(from old: Screen?, to new: Screen, en: Bool = false) -> [String] {
         guard let old else { return [] }
         var out: [String] = []
-        if old.title != new.title { out.append("título \(old.title ?? "-") → \(new.title ?? "-")") }
+        if old.title != new.title { out.append("\(en ? "title" : "título") \(old.title ?? "-") → \(new.title ?? "-")") }
         let sel = { (s: Screen) in s.tabs.filter { $0.state.contains("selected") }.map(\.label).joined(separator: ", ") }
-        if sel(old) != sel(new) { out.append("aba \(sel(old).nonEmpty ?? "-") → \(sel(new).nonEmpty ?? "-")") }
+        if sel(old) != sel(new) { out.append("\(en ? "tab" : "aba") \(sel(old).nonEmpty ?? "-") → \(sel(new).nonEmpty ?? "-")") }
         let count = { (s: Screen) in s.content.count + s.more }
-        if count(old) != count(new) { out.append("itens \(count(old)) → \(count(new))") }
+        if count(old) != count(new) { out.append("\(en ? "items" : "itens") \(count(old)) → \(count(new))") }
         return out
     }
 
-    public static func text(_ s: Screen) -> String {
+    /// `en`: English labels (CollieDevice can't see `tr`; the daemon passes `L10n.current == .en`). Default pt.
+    public static func text(_ s: Screen, en: Bool = false) -> String {
+        func t(_ pt: String, _ e: String) -> String { en ? e : pt }
         func b(_ i: ScreenItem) -> String { "[\(i.label)\(i.state.contains("selected") || i.state.contains("checked") ? "*" : "")]" }
         func row(_ name: String, _ items: [ScreenItem]) -> String? { items.isEmpty ? nil : name + ": " + items.map(b).joined(separator: " ") }
         var lines: [String?] = []
-        lines.append("Tela: \(s.title ?? "(sem título)")" + (s.back == nil ? "" : "   [voltar]"))
-        lines.append(row("Abas", s.tabs))
-        lines.append(row("Ações", s.actions))
-        lines.append(row("Campos", s.fields))
+        lines.append(t("Tela", "Screen") + ": \(s.title ?? t("(sem título)", "(untitled)"))" + (s.back == nil ? "" : "   [" + t("voltar", "back") + "]"))
+        lines.append(row(t("Abas", "Tabs"), s.tabs))
+        lines.append(row(t("Ações", "Actions"), s.actions))
+        lines.append(row(t("Campos", "Fields"), s.fields))
         if !s.content.isEmpty {
-            let items = s.content.map { $0.role == "text" ? "\"\($0.label)\"" + ($0.ocr ? " (ocr)" : "") : b($0) } + (s.more > 0 ? ["+\(s.more) itens: use device ui"] : [])
-            lines.append("Conteúdo\(s.scrolls ? " (rolável)" : ""): " + items.joined(separator: ", "))
+            let items = s.content.map { $0.role == "text" ? "\"\($0.label)\"" + ($0.ocr ? " (ocr)" : "") : b($0) } + (s.more > 0 ? ["+\(s.more) " + t("itens", "items") + ": use device ui"] : [])
+            lines.append(t("Conteúdo", "Content") + (s.scrolls ? " (" + t("rolável", "scrollable") + ")" : "") + ": " + items.joined(separator: ", "))
         }
         if !s.floating.isEmpty {
-            lines.append("Flutuante: " + s.floating.map { f in
+            lines.append(t("Flutuante", "Floating") + ": " + s.floating.map { f in
                 b(f) + (f.id.isEmpty ? "" : " id=\(f.id)") + (f.position.map { ", \($0)" } ?? "")
             }.joined(separator: "; "))
         }
-        if !s.changed.isEmpty { lines.append("Mudou: " + s.changed.joined(separator: "; ")) }
+        if !s.changed.isEmpty { lines.append(t("Mudou", "Changed") + ": " + s.changed.joined(separator: "; ")) }
         return lines.compactMap { $0 }.joined(separator: "\n")
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// Manages `collied` as a user LaunchAgent so the daemon outlives the app.
 public enum DaemonLauncher {
@@ -136,7 +137,7 @@ public enum DaemonLauncher {
             case .bootstrapFailed(let c): return "bootstrapFailed(\(c))"
             case .restartFailed(let c): return "restartFailed(\(c))"
             case .invalidLabel(let l): return "invalidLabel(\(l))"
-            case .legacyStillRunning: return "O Orq antigo ainda está rodando; feche o Orq.app e tente de novo"
+            case .legacyStillRunning: return tr("O Orq antigo ainda está rodando; feche o Orq.app e tente de novo", "The old Orq is still running; quit Orq.app and try again")
             }
         }
     }

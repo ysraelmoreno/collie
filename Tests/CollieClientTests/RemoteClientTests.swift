@@ -27,10 +27,18 @@ import CollieProtocol
         let rows = RemoteDeviceRow.rows(.array([.object(a), .object(b)]))
         #expect(rows.map(\.id) == ["a", "b"] && rows[0].live && !rows[1].live && rows[1].readOnly && !rows[0].readOnly)
         let now = ISO8601DateFormatter().date(from: "2026-11-05T15:00:00Z")!
-        #expect(RemoteCopy.seen(rows[0], now: now) == "agora, Tailscale 100.88.1.4")
-        #expect(RemoteCopy.seen(rows[1], now: now) == "nunca conectou")
-        var away = rows[0]; away.live = false
-        #expect(RemoteCopy.seen(away, now: now).hasPrefix("visto há 3 h"), "\(RemoteCopy.seen(away, now: now))")
+        L10n.$override.withValue(.pt) {
+            #expect(RemoteCopy.seen(rows[0], now: now) == "agora, Tailscale 100.88.1.4")
+            #expect(RemoteCopy.seen(rows[1], now: now) == "nunca conectou")
+            var away = rows[0]; away.live = false
+            #expect(RemoteCopy.seen(away, now: now).hasPrefix("visto há 3 h"), "\(RemoteCopy.seen(away, now: now))")
+        }
+        L10n.$override.withValue(.en) {
+            #expect(RemoteCopy.seen(rows[0], now: now) == "now, Tailscale 100.88.1.4")
+            #expect(RemoteCopy.seen(rows[1], now: now) == "never connected")
+            var away = rows[0]; away.live = false
+            #expect(RemoteCopy.seen(away, now: now).hasPrefix("seen 3 h ago"))
+        }
     }
 
     @Test func pairingCodeAndVia() {

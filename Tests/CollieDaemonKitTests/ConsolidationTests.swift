@@ -21,7 +21,7 @@ private func tailwind() -> [MemoryRecord] {
 }
 private func status(_ s: RepoMemory, _ id: UUID) async throws -> MemoryStatus? { try await all(s).first { $0.id == id }?.status }
 
-@Suite(.serialized) struct ConsolidationTests {
+@Suite(.serialized, .memoryPT) struct ConsolidationTests {
     /// Task 9: a payload sized at enqueue is cut again to the running provider's cap (whole clusters dropped, oldest kept first).
     @Test func consolidationTrimsAtRun() {
         func item(_ n: Int) -> ConsolidatePayload.Item { .init(id: UUID(), kind: .decision, title: "t\(n)", body: String(repeating: "b", count: 400), updatedAt: Date()) }

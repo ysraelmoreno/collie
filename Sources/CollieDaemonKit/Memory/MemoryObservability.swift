@@ -6,7 +6,7 @@ import CollieProtocol
 /// week trends. Pure (`compute`): the router hands it the events already filtered to the caller's scope.
 /// Savings are never estimated: with no controlled comparison, only trends are shown, with `caveat` saying so.
 enum MemoryObservability {
-    static let caveat = "economia não medida diretamente (sem comparação controlada); tendências apenas"
+    static var caveat: String { tr("economia não medida diretamente (sem comparação controlada); tendências apenas", "savings not measured directly (no controlled comparison); trends only") }
     static let deadAfterDays = 30, repeatWithinDays = 14, topMax = 10, candidatesTop = 5
 
     struct Day: Codable, Sendable, Equatable { var day: String; var value: Double }
@@ -179,7 +179,8 @@ enum MemoryObservability {
         r.usage.precision = precision(inPeriod)
         // the path again through `shownPath`: an older log line may carry a raw one
         r.usage.enforcedGone = inPeriod.filter { $0.type == .enforced && $0.mode == "gone" }.sorted { $0.at > $1.at }.map {
-            "checagem sumiu (\(MapDrift.shownPath($0.reason))): \($0.ids?.first.map { String($0.uuidString.prefix(8)).lowercased() } ?? "?") voltou à injeção"
+            tr("checagem sumiu (\(MapDrift.shownPath($0.reason))): \($0.ids?.first.map { String($0.uuidString.prefix(8)).lowercased() } ?? "?") voltou à injeção",
+               "check gone (\(MapDrift.shownPath($0.reason))): \($0.ids?.first.map { String($0.uuidString.prefix(8)).lowercased() } ?? "?") is back in injection")
         }
         let cands = records.filter { $0.isEnforceCandidate(verified: verified($0)) }.sorted { ($0.hits ?? 0, $0.updatedAt) > ($1.hits ?? 0, $1.updatedAt) }
         r.candidates = Candidates(count: cands.count, top: cands.prefix(candidatesTop).map { MemoryRef(id: $0.id, title: $0.title, count: $0.hits ?? 0) })

@@ -39,7 +39,7 @@ private func createProcedure() -> CuratorOutput {
     ])])]), inputTokens: 10, outputTokens: 5, costUSD: 0.0001)
 }
 
-@Suite struct StatedProcedureTests {
+@Suite(.memoryPT) struct StatedProcedureTests {
     @Test func detectsStatedProcedure() {
         for p in [stated, "toda vez que criar um plano, commite com os trailers", "whenever you add a command, update the MCP schema"] {
             #expect(CorrectionDetector.isProcedure(p), "\(p)")
@@ -90,7 +90,7 @@ private func createProcedure() -> CuratorOutput {
     }
 }
 
-@Suite(.serialized) struct ProcedureTests {
+@Suite(.serialized, .memoryPT) struct ProcedureTests {
     @Test func statedProcedureCreated() async throws {
         let repo = try await makeRepo()
         let f = FakeCurator(); f.output = createProcedure()

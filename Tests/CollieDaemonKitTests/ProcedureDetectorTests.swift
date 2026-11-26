@@ -31,7 +31,7 @@ private func spawn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL) async thro
     return u
 }
 
-@Suite struct ProcedureDetectorTests {
+@Suite(.memoryPT) struct ProcedureDetectorTests {
     @Test func stepNormalized() {
         #expect(ProcedureDetector.step("Rodar o filtro (2x)!") == "rodar filtro")
         #expect(ProcedureDetector.step("1. Implementar") == "implementar")
@@ -55,7 +55,7 @@ private func spawn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL) async thro
     }
 }
 
-@Suite(.serialized) struct ProcedureNoticedTests {
+@Suite(.serialized, .memoryPT) struct ProcedureNoticedTests {
     /// The daily consolidation finds the sequence, the curator names it; it waits for the user (`proposed`), and the same
     /// sequence is never sent again.
     @Test func curatorNamesProcedure() async throws {

@@ -27,18 +27,18 @@ enum MemoryCleanup {
             let s = stats[r.id]
             if let m = s?.missingSince, now.timeIntervalSince(m) >= missingAge {
                 items.append(CleanupItem(action: .archiveMissingPath, id: r.id, into: nil,
-                                         reason: "caminho sumiu há \(days(now.timeIntervalSince(m))) dias"))
+                                         reason: tr("caminho sumiu há \(days(now.timeIntervalSince(m))) dias", "path gone for \(days(now.timeIntervalSince(m))) days")))
                 continue
             }
             let age = now.timeIntervalSince(s?.lastReadAt ?? r.createdAt)
             if exempt.contains(r.id) { rest.append(r); continue }
             if age >= coldAge, pow(0.5, age / halfLife) <= coldScore {
-                items.append(CleanupItem(action: .archiveCold, id: r.id, into: nil, reason: "não lida há \(days(age)) dias"))
+                items.append(CleanupItem(action: .archiveCold, id: r.id, into: nil, reason: tr("não lida há \(days(age)) dias", "unread for \(days(age)) days")))
                 continue
             }
             if let score = scores[r.id], score <= lowScore, age >= lowScoreAge {
                 let shown = String(format: "%.1f", score).replacingOccurrences(of: ".", with: ",")
-                items.append(CleanupItem(action: .archiveLowScore, id: r.id, into: nil, reason: "nota baixa (\(shown)) e sem uso há \(days(age)) dias"))
+                items.append(CleanupItem(action: .archiveLowScore, id: r.id, into: nil, reason: tr("nota baixa (\(shown)) e sem uso há \(days(age)) dias", "low score (\(shown)) and unused for \(days(age)) days")))
                 continue
             }
             rest.append(r)
@@ -50,7 +50,7 @@ enum MemoryCleanup {
             for other in rest[(i + 1)...] where !gone.contains(other.id) && isDuplicate(keep, other) {
                 gone.insert(other.id)
                 items.append(CleanupItem(action: .mergeDuplicate, id: other.id, into: keep.id,
-                                         reason: "duplicata de \"\(keep.title)\""))
+                                         reason: tr("duplicata de \"\(keep.title)\"", "duplicate of \"\(keep.title)\"")))
             }
         }
         return items

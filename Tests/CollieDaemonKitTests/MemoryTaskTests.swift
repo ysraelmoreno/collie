@@ -36,7 +36,7 @@ private func plant(_ s: RepoMemory, _ r: MemoryRecord) throws {
 private let transcript = "/tmp/collie-task-tests/sess-task.jsonl"
 
 /// Task 5 (spec 2026-11-17 cursor memory §3): the per-task pull for agents without a prompt hook.
-@Suite(.serialized) struct MemoryTaskTests {
+@Suite(.serialized, .memoryPT) struct MemoryTaskTests {
     /// B3: a pull between two prompts never touches the prompt's pending uses (Claude's useful-use count).
     @Test func taskLeavesPendingUntouched() async throws {
         let repo = try await makeRepo()

@@ -4,7 +4,7 @@ import Foundation
 
 /// M5.5 (M10.1: measured in tokens, see `PastorContextLifecycleTests`): never in the Stop of the memory ask; shown to
 /// the user, it never blocks the turn.
-@Suite struct ContextAdviceTests {
+@Suite(.memoryPT) struct ContextAdviceTests {
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 
     @Test func neverWithTheMemoryAsk() {

@@ -3,7 +3,7 @@ import Foundation
 @testable import CollieDaemonKit
 
 /// R5: personas parsed from their front-matter and routed by the diff's paths and size.
-struct PersonaTests {
+@Suite(.memoryPT) struct PersonaTests {
     static func file(_ name: String, paths: String = #"["*"]"#, model: String = "sonnet") -> String {
         "---\nname: \(name)\nmodel: \(model)\npaths: \(paths)\n---\n# \(name)\nlente de \(name)\n"
     }

@@ -17,7 +17,7 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
                                                        inputTokens: 0, outputTokens: 0, costUSD: 0), calendar: utc)
 }
 
-@Suite struct MemoryObservabilityTests {
+@Suite(.memoryPT) struct MemoryObservabilityTests {
     @Test func sinceParses() {
         #expect(MemoryObservability.since("7d", now: now) == ago(7))
         #expect(MemoryObservability.since("24h", now: now) == ago(1))
@@ -226,7 +226,7 @@ private func assistant(_ id: String, model: String = "claude-opus-4", _ i: Int, 
                                                      "cache_creation_input_tokens": made]]])
 }
 
-@Suite struct SessionUsageTests {
+@Suite(.memoryPT) struct SessionUsageTests {
     @Test func sumsPerModelOncePerMessage() throws {
         let f = FileManager.default.temporaryDirectory.appendingPathComponent("su-\(UUID().uuidString).jsonl")
         defer { try? FileManager.default.removeItem(at: f) }
@@ -282,7 +282,7 @@ private func top(_ repo: URL) -> String {
     return String(cString: r)
 }
 
-@Suite(.serialized) struct MemoryEventEmissionTests {
+@Suite(.serialized, .memoryPT) struct MemoryEventEmissionTests {
     @Test func hooksSearchSaveAndStats() async throws {
         try await withEnv { e in
             let saved = try await e.call("memory.save", ["kind": .string("decision"), "subject": .string("banco"),
@@ -402,7 +402,7 @@ extension JSONDecoder {
 }
 
 /// Task 8 (spec 2026-11-17 cursor memory §6): per-agent usage and the Cursor's obedience to memory_task.
-@Suite struct MemoryAgentStatsTests {
+@Suite(.memoryPT) struct MemoryAgentStatsTests {
     private let cur = UUID(), cla = UUID()
     private func base() -> [MemoryEvent] {
         [ev(.injected, ago(2)) { $0.agent = "cursor"; $0.terminal = cur; $0.session = "s1"; $0.where = "focus"; $0.ids = [UUID()] },

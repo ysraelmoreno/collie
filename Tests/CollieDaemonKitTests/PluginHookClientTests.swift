@@ -40,7 +40,7 @@ private func json(_ s: String?) -> [String: Any]? {
 private let plain = Data(#"{"stop_hook_active":false}"#.utf8)
 private let continued = Data(#"{"stop_hook_active":true}"#.utf8)
 
-@Suite(.serialized) struct PluginHookClientTests {
+@Suite(.serialized, .memoryPT) struct PluginHookClientTests {
     @Test func editGuideIsAdditionalContext() async throws {
         let f = try Fake(plugin: ["guide": .string("follow Foo")])
         let out = await PluginHookClient.toolOutput(hook: "claude-tool", payload: editPayload, env: f.env)

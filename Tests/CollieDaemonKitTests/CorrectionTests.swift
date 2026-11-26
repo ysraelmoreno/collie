@@ -60,7 +60,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
     return (f, { $0.curatorRunner = f })
 }
 
-@Suite struct CorrectionDetectorTests {
+@Suite(.memoryPT) struct CorrectionDetectorTests {
     @Test func detectsCorrections() {
         for p in ["não, use o MemoryStore", "na verdade é 2048", "pare de rodar a suíte inteira", "para de pedir confirmação",
                   "eu disse para não commitar", "já falei isso", "não era isso", "de novo esse erro", "errado, o arquivo é outro",
@@ -80,7 +80,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
     }
 }
 
-@Suite(.serialized) struct CorrectionTests {
+@Suite(.serialized, .memoryPT) struct CorrectionTests {
     @Test func hookStaysFast() async throws {
         let repo = try await makeRepo()
         let (fake, cfg) = curated()
@@ -535,7 +535,7 @@ private let likelyPrompt = "não, use SQLite em vez do Postgres pool no índice 
 private let ruleTitle = "Use SQLite, nunca o Postgres pool"
 
 /// "Parece uma correção sua — confirmar?": the app typed, nothing tainted, but the exact match failed.
-@Suite(.serialized) struct LikelyUserCorrectionTests {
+@Suite(.serialized, .memoryPT) struct LikelyUserCorrectionTests {
     @Test func likelyUserWhenHistoryRecall() async throws {
         let repo = try await makeRepo()
         let x = rec("Use Postgres pool", subject: "db", body: "postgres pool sizing")

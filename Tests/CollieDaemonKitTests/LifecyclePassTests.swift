@@ -26,7 +26,7 @@ private func id8(_ id: UUID) -> String { String(id.uuidString.lowercased().prefi
 private func dayString(_ d: Date) -> String { let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f.string(from: d) }
 private let bad = "deadbee1"
 
-@Suite(.serialized) struct LifecyclePassTests {
+@Suite(.serialized, .memoryPT) struct LifecyclePassTests {
     private func run(available: Bool = true, _ body: (Daemon, RepoMemory) async throws -> Void) async throws {
         let repo = try await makeRepo(), fake = FakeCurator()
         fake.gated = true

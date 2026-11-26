@@ -5,7 +5,7 @@ import CollieCore
 
 private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercased().prefix(8)) }
 
-@Suite(.serialized) struct LifecycleInjectionTests {
+@Suite(.serialized, .memoryPT) struct LifecycleInjectionTests {
     private let t = UUID(), prompt = "postgres pool sizing"
 
     /// A service over a fresh repo holding `recs`, with `t`'s session "s1" (unless `session` is false).

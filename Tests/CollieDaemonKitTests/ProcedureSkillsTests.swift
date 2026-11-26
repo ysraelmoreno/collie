@@ -53,7 +53,7 @@ private func claudeTerm(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, fake:
     return (Term(id: id, token: token), args)
 }
 
-@Suite struct ProcedureSkillsUnitTests {
+@Suite(.memoryPT) struct ProcedureSkillsUnitTests {
     @Test func rendersValidPlugin() throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let dir = ProcedureSkills.dir(UUID(), root: root)
@@ -160,7 +160,7 @@ private func claudeTerm(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, fake:
     }
 }
 
-@Suite(.serialized) struct ProcedureSkillsTests {
+@Suite(.serialized, .memoryPT) struct ProcedureSkillsTests {
     /// Review Focus 3: no `--plugin-dir` in the installed claude: launched as before; the procedure is in the index and `get`.
     @Test func noPluginSupportNoFlag() async throws {
         let repo = try await makeRepo(), fake = try fakeClaude()

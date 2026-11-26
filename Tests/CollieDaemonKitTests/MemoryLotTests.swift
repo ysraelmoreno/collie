@@ -47,7 +47,7 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
                  createdAt: Date().addingTimeInterval(-age))
 }
 
-@Suite(.serialized) struct MemoryLotTests {
+@Suite(.serialized, .memoryPT) struct MemoryLotTests {
     @Test func saveDefaultsToCallersLot() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

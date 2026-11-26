@@ -31,7 +31,7 @@ private func klass(_ title: String, subject: String, hits: Int, examples: [Strin
                  body: PitfallClasses.withExamples("Cheque o caminho real antes de usar.", examples), hits: hits)
 }
 
-@Suite(.serialized) struct PitfallClassTests {
+@Suite(.serialized, .memoryPT) struct PitfallClassTests {
     @Test func bumpKeepsThreeNewest() {
         var c = klass("Symlink seguido", subject: "symlink", hits: 3, examples: ["b", "c", "d"])
         let t = Date(timeIntervalSince1970: 1_800_000_000)

@@ -3,7 +3,7 @@ import Foundation
 import CollieCore
 @testable import CollieDaemonKit
 
-@Suite struct MemoryCleanupTests {
+@Suite(.memoryPT) struct MemoryCleanupTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     func ago(_ d: Double) -> Date { now.addingTimeInterval(-d * 86400) }
     func tmpDir() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("collie-clean-\(UUID().uuidString)") }

@@ -47,7 +47,7 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
     return await read()
 }
 
-@Suite(.serialized) struct MemoryCaptureTests {
+@Suite(.serialized, .memoryPT) struct MemoryCaptureTests {
     @Test func candidatesFromDoneNotes() {
         let t0 = Date()
         var w = Work(title: "Login", terminalId: UUID(), notes: [

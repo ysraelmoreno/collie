@@ -29,7 +29,7 @@ private func candidate(_ e: inout LifecycleEntry) {
     e.usefulUses = uses
 }
 
-@Suite(.serialized) struct VerifyJobTests {
+@Suite(.serialized, .memoryPT) struct VerifyJobTests {
     private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
         try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args), to: p.socket, timeoutSeconds: 60)
     }

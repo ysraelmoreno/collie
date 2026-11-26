@@ -85,7 +85,7 @@ private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30
     }
 }
 
-@Suite struct ConversationApplyTests {
+@Suite(.memoryPT) struct ConversationApplyTests {
     let chunk = "Usuário: eu prefiro respostas em português sempre\n\nAgente: ok"
 
     @Test func applyWritesActive() {
@@ -181,7 +181,7 @@ private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30
     }
 }
 
-@Suite(.serialized) struct ConversationCaptureTests {
+@Suite(.serialized, .memoryPT) struct ConversationCaptureTests {
     @Test func captureSkipsShortChunk() async throws {
         try await withEnv { e in
             try Data(talk(2).utf8).write(to: e.transcript)

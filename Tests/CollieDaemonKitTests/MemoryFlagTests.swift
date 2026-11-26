@@ -6,7 +6,7 @@ import CollieProtocol
 
 private struct Term { var id: String; var token: String; var uuid: UUID { UUID(uuidString: id)! } }
 
-@Suite(.serialized) struct MemoryFlagTests {
+@Suite(.serialized, .memoryPT) struct MemoryFlagTests {
     private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
         try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args), to: p.socket, timeoutSeconds: 60)
     }

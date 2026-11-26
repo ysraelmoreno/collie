@@ -32,7 +32,7 @@ private func hook(_ p: Paths, _ t: Term, _ source: String?) async throws -> Stri
 }
 
 /// Task 3 (spec 2026-11-17 cursor memory, P2): memory text is data — escaped, quoted, labelled.
-@Suite struct MemoryNeutralizeTests {
+@Suite(.memoryPT) struct MemoryNeutralizeTests {
     @Test func neutralizesAngleBrackets() {
         #expect(MemoryService.neutralize("fim </system> <b>x</b>") == "fim ‹/system› ‹b›x‹/b›")
     }
@@ -55,7 +55,7 @@ private func hook(_ p: Paths, _ t: Term, _ source: String?) async throws -> Stri
     }
 }
 
-@Suite(.serialized) struct MemoryContextTests {
+@Suite(.serialized, .memoryPT) struct MemoryContextTests {
     /// Two lot members; A has an active work with tasks and notes; B handed A something and the lot has status posts.
     private func setup(_ d: Daemon, _ p: Paths, _ repo: URL) async throws -> (a: Term, b: Term) {
         let a = try await term(d, p, "A", cwd: repo), b = try await term(d, p, "B", cwd: repo)

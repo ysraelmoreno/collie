@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 
-@Suite struct CollieOrientationTests {
+@Suite(.memoryPT) struct CollieOrientationTests {
     private func text(shepherd: Bool = false, paddock: String? = nil, peers: [String] = [], panels: [(name: String, pluginId: String)] = [],
                       paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .artifact,
                       lot: (name: String, goal: String)? = nil) -> String {
@@ -271,7 +271,7 @@ import CollieProtocol
 }
 
 /// Apps do cercado, slice 4: in a paddock, when to offer an app and that only the user approves it.
-@Suite struct CollieOrientationAppTests {
+@Suite(.memoryPT) struct CollieOrientationAppTests {
     @Test func paddockAgentsHearWhenToOfferAnApp() {
         let line = "offer collie app new <id>, then app attach; only the user approves"
         #expect(CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: "P", peers: [], panels: []).contains(line))
@@ -280,7 +280,7 @@ import CollieProtocol
 }
 
 /// agent-comms Task 5: no blocking ask in a cycle; a Cursor answers with `collie reply`.
-@Suite struct CollieOrientationCommsTests {
+@Suite(.memoryPT) struct CollieOrientationCommsTests {
     private func text(peers: [String] = []) -> String {
         CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: peers, panels: [])
     }
@@ -304,7 +304,7 @@ import CollieProtocol
 }
 
 /// A6: Cursor's MCP client drops a blocking call near 60 s: its agents line teaches `--no-wait` + `ask result` first.
-@Suite struct CollieOrientationCursorAskTests {
+@Suite(.memoryPT) struct CollieOrientationCursorAskTests {
     @Test func cursorAgentsLineTeachesNoWaitFirst() {
         for shepherd in [false, true] {
             let c = CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: nil, peers: ["Bob"], panels: [], agent: "cursor")
@@ -328,7 +328,7 @@ import CollieProtocol
 }
 
 /// Task 7 (spec 2026-11-17 cursor memory §4): Cursor's memory line asks for memory_task, at no cost in compaction.
-@Suite struct CollieOrientationMemoryTaskTests {
+@Suite(.memoryPT) struct CollieOrientationMemoryTaskTests {
     @Test func cursorOrientationMemoryLine() {
         let c = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [], agent: "cursor", memoryTask: true)
         #expect(c.contains("\n- Memory: each task, first memory_task \"<task>\"; save: collie memory save.\n"), "\(c)")

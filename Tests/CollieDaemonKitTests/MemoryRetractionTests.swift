@@ -31,7 +31,7 @@ private func rec(_ title: String, kind: MemoryKind = .decision, subject: String?
     MemoryRecord(kind: kind, subject: subject ?? title, title: title, body: body, pinned: pinned)
 }
 
-@Suite(.serialized) struct MemoryRetractionTests {
+@Suite(.serialized, .memoryPT) struct MemoryRetractionTests {
     /// Review Focus 5: X reached A (session start) and B (prompt relevance); X superseded by Y on disk → each gets the line once.
     @Test func retractionOnceToReceivers() async throws {
         let repo = try await makeRepo()

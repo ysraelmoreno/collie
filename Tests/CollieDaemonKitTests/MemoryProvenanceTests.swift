@@ -4,7 +4,7 @@ import CollieCore
 @testable import CollieDaemonKit
 
 /// Task 1 (spec 2026-11-17 cursor memory, P1): who wrote a memory is known outside its file.
-@Suite struct MemoryProvenanceTests {
+@Suite(.memoryPT) struct MemoryProvenanceTests {
     private func dirs() -> (root: URL, ledger: URL, store: URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("prov-\(UUID().uuidString)")
         return (root, root.appendingPathComponent("learning/provenance.json"), root.appendingPathComponent("repo/.collie/memory"))

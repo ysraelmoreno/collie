@@ -123,7 +123,7 @@ extension CommandRouter {
     func undoDigest(_ id: UUID) async throws -> DigestEntry {
         let es = digest.since(.distantPast)
         guard var e = es.first(where: { $0.id == id }) else {
-            throw ProtocolError(code: .notFound, message: "entrada \(id.uuidString.lowercased()) não encontrada")
+            throw ProtocolError(code: .notFound, message: tr("entrada \(id.uuidString.lowercased()) não encontrada", "entry \(id.uuidString.lowercased()) not found"))
         }
         if e.undone { return e }
         if e.action == "promovida" {   // no record file changed: only the tier goes back (re-judged no sooner than the cooldown)
@@ -138,8 +138,8 @@ extension CommandRouter {
             e.undone = true
             return e
         }
-        guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: "uma pergunta se resolve (memory.resolve), não se desfaz") }
-        guard e.action != "confirmar" else { throw ProtocolError(code: .invalidArgs, message: "uma confirmação se responde (memory.confirm), não se desfaz") }
+        guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: tr("uma pergunta se resolve (memory.resolve), não se desfaz", "a question is resolved (memory.resolve), not undone")) }
+        guard e.action != "confirmar" else { throw ProtocolError(code: .invalidArgs, message: tr("uma confirmação se responde (memory.confirm), não se desfaz", "a confirmation is answered (memory.confirm), not undone")) }
         let group = e.job.map { j in es.filter { $0.job == j && !$0.undone && $0.action != "ask" } } ?? [e]
         let before = group.flatMap(\.before)
         let created = Set(group.flatMap(\.created)).subtracting(before.map(\.id))
@@ -148,7 +148,7 @@ extension CommandRouter {
         // ponytail: 1 s of slack — the job's own writes carry a timestamp a hair before its last entry's
         let last = group.map(\.at).max() ?? e.at
         if now.values.contains(where: { $0.rec.updatedAt > last.addingTimeInterval(1) }) {
-            throw ProtocolError(code: .invalidArgs, message: "a memória mudou depois; desfaça pelo histórico")
+            throw ProtocolError(code: .invalidArgs, message: tr("a memória mudou depois; desfaça pelo histórico", "the memory changed afterwards; undo it from the history"))
         }
         var back: [UUID] = []
         for g in group {
@@ -190,7 +190,7 @@ extension CommandRouter {
     /// changed before it); the kept one is active, the others superseded by it.
     func resolveAsk(_ id: UUID, keepNewer: Bool) async throws -> DigestEntry {
         guard var e = digest.since(.distantPast).first(where: { $0.id == id }), e.action == "ask" else {
-            throw ProtocolError(code: .notFound, message: "pergunta \(id.uuidString.lowercased()) não encontrada")
+            throw ProtocolError(code: .notFound, message: tr("pergunta \(id.uuidString.lowercased()) não encontrada", "question \(id.uuidString.lowercased()) not found"))
         }
         if e.resolved { return e }
         let order = e.before.sorted { ($0.updatedAt, $0.id.uuidString) < ($1.updatedAt, $1.id.uuidString) }

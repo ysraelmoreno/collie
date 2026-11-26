@@ -28,7 +28,7 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
     }
 }
 
-@Suite(.serialized) struct MemoryDigestTests {
+@Suite(.serialized, .memoryPT) struct MemoryDigestTests {
     @Test func undoRestoresBefore() async throws {
         let x = MemoryRecord(kind: .decision, subject: "db", title: "Use Postgres", pinned: true)
         try await withRepo([x]) { d, p, store, job in
@@ -138,7 +138,7 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
     }
 }
 
-@Suite(.serialized) struct MemoryDigestScopeTests {
+@Suite(.serialized, .memoryPT) struct MemoryDigestScopeTests {
     private func entry(_ title: String, store: String) -> DigestEntry {
         DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: title, reason: "", store: store, created: [], before: [], undone: false, resolved: false)
     }

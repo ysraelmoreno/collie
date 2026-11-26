@@ -3,7 +3,7 @@ import Foundation
 import CollieCore
 @testable import CollieDaemonKit
 
-@Suite struct LifecycleRulesTests {
+@Suite(.memoryPT) struct LifecycleRulesTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)   // 2027-01-15 UTC
     func ago(_ d: Double) -> Date { now.addingTimeInterval(-d * 86400) }
     func day(_ d: Int) -> String {

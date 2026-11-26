@@ -14,7 +14,7 @@ private func assistant(input: Int, write: Int = 0, read: Int = 0, output: Int = 
 /// M10.1: the Shepherd's context is the last call's (input + cache written + cache read), read from the transcript's
 /// tail (numbers only); a warning at 150 mil and a strong one at 250 mil, once per level per 2 h; the loop's end leaves
 /// a handoff file per paddock that `work handoff` prints; `memory stats` keeps the Shepherd's context per session.
-@Suite struct PastorContextLifecycleTests {
+@Suite(.memoryPT) struct PastorContextLifecycleTests {
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
     let root = URL(fileURLWithPath: "/tmp/collie-pastor-\(UUID().uuidString.prefix(8))")
     var projects: URL { root.appendingPathComponent("projects") }

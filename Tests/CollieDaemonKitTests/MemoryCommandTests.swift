@@ -40,7 +40,7 @@ private func commitAll(_ repo: URL) async throws {
     _ = try await git(["commit", "-q", "-m", "more"], repo)
 }
 
-@Suite(.serialized) struct MemoryCommandTests {
+@Suite(.serialized, .memoryPT) struct MemoryCommandTests {
     @Test func terminalSavesAndSearches() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

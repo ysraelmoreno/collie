@@ -15,10 +15,10 @@ enum LifecycleRules {
     }
     private static func kindLabel(_ k: MemoryKind) -> String {
         switch k {
-        case .decision: "decisão"
-        case .map: "mapa"
-        case .pitfall: "armadilha"
-        case .procedure: "procedimento"
+        case .decision: tr("decisão", "decision")
+        case .map: tr("mapa", "map")
+        case .pitfall: tr("armadilha", "pitfall")
+        case .procedure: tr("procedimento", "procedure")
         case .feedback: "feedback"
         }
     }
@@ -75,7 +75,8 @@ enum LifecycleRules {
             let age = now.timeIntervalSince(last)
             guard age >= ttl else { return nil }
             return CleanupItem(action: .archiveUnused, id: r.id, into: nil,
-                               reason: "provisória sem uso há \(Int((age / 86_400).rounded(.down))) dias (prazo de \(kindLabel(r.kind)): \(Int(ttl / 86_400)))")
+                               reason: tr("provisória sem uso há \(Int((age / 86_400).rounded(.down))) dias (prazo de \(kindLabel(r.kind)): \(Int(ttl / 86_400)))",
+                                          "provisional and unused for \(Int((age / 86_400).rounded(.down))) days (\(kindLabel(r.kind)) limit: \(Int(ttl / 86_400)))"))
         }
     }
 

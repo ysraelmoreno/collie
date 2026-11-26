@@ -5,7 +5,7 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 /// Item 7 in the lifecycle pass: anchor, measure, contest (never archive on its own), re-anchor.
-@Suite(.serialized) struct MapDriftPassTests {
+@Suite(.serialized, .memoryPT) struct MapDriftPassTests {
     private func run(available: Bool = true, _ body: (Daemon, RepoMemory, URL) async throws -> Void) async throws {
         let repo = try await makeRepo(), fake = FakeCurator()
         defer { try? FileManager.default.removeItem(at: repo) }

@@ -6,7 +6,10 @@ import CollieCore
 /// deterministic markdown is always the source: any failure returns no text and the reason, never a guess.
 actor WorkAssistant {
     typealias Rewrite = (text: String?, reason: String?)
-    static let instructions = "Reescreva o resumo de trabalho abaixo em português, em até 8 frases curtas, na ordem: o que foi feito, o que ficou para depois, o que não foi feito e onde parou. Use somente os fatos do texto. Não acrescente tarefas, nomes, números ou conclusões que não estejam nele. Se uma seção não existir, não a mencione."
+    static var instructions: String {
+        tr("Reescreva o resumo de trabalho abaixo em português, em até 8 frases curtas, na ordem: o que foi feito, o que ficou para depois, o que não foi feito e onde parou. Use somente os fatos do texto. Não acrescente tarefas, nomes, números ou conclusões que não estejam nele. Se uma seção não existir, não a mencione.",
+           "Rewrite the work summary below in plain English, in up to 8 short sentences, in this order: what was done, what was left for later, what was not done and where it stopped. Use only the facts in the text. Do not add tasks, names, numbers or conclusions that are not in it. If a section does not exist, do not mention it.")
+    }
     static let deadline: Duration = .seconds(10)
     /// How long a timeout or failure is answered from the cache (a stuck model is not asked again meanwhile).
     static let failureTTL: Duration = .seconds(60)
@@ -77,15 +80,18 @@ actor WorkAssistant {
         if case .unavailable(let why) = await model.availability() { return (nil, why) }
         do {
             let t = sanitize(try await model.respond(instructions: instructions, prompt: prompt, tools: tools))
-            return t.isEmpty ? (nil, "o modelo não respondeu") : (t, nil)
+            return t.isEmpty ? (nil, tr("o modelo não respondeu", "the model did not answer")) : (t, nil)
         } catch {
-            return (nil, Task.isCancelled ? "cancelado" : "o modelo falhou")
+            return (nil, Task.isCancelled ? tr("cancelado", "cancelled") : tr("o modelo falhou", "the model failed"))
         }
     }
 
     // MARK: captured proposals (MemoryCapture)
 
-    static let proposalInstructions = "Reescreva a nota abaixo como uma memória curta de projeto, em português: na primeira linha um título de até 80 caracteres, depois uma linha em branco e o corpo em até 3 frases. Use somente os fatos do texto. Não acrescente nomes, números ou conclusões que não estejam nele."
+    static var proposalInstructions: String {
+        tr("Reescreva a nota abaixo como uma memória curta de projeto, em português: na primeira linha um título de até 80 caracteres, depois uma linha em branco e o corpo em até 3 frases. Use somente os fatos do texto. Não acrescente nomes, números ou conclusões que não estejam nele.",
+           "Rewrite the note below as a short project memory, in English: a title of up to 80 characters on the first line, then a blank line and the body in up to 3 sentences. Use only the facts in the text. Do not add names, numbers or conclusions that are not in it.")
+    }
 
     /// A captured proposal's title and body rewritten by the on-device model within `deadline`, sanitized like a rewrite;
     /// nil (unavailable, failed, late, empty) keeps the deterministic text. Not cached: each proposal is asked once.
@@ -104,10 +110,13 @@ actor WorkAssistant {
 
     // MARK: free questions (the chat's "?")
 
-    static let questionInstructions = "Você responde perguntas sobre o trabalho dos agentes no Collie. Use as ferramentas para consultar o registro; responda só com o que elas devolverem, em português, em poucas frases. Se o registro não tiver a resposta, diga que não sabe."
+    static var questionInstructions: String {
+        tr("Você responde perguntas sobre o trabalho dos agentes no Collie. Use as ferramentas para consultar o registro; responda só com o que elas devolverem, em português, em poucas frases. Se o registro não tiver a resposta, diga que não sabe.",
+           "You answer questions about the agents' work in Collie. Use the tools to query the log; answer only with what they return, in English, in a few sentences. If the log does not have the answer, say you do not know.")
+    }
     static let questionDeadline: Duration = .seconds(20)
     static let maxQueued = 3
-    static let busy = "O assistente está ocupado, tente de novo em instantes."
+    static var busy: String { tr("O assistente está ocupado, tente de novo em instantes.", "The assistant is busy, try again in a moment.") }
     static let maxToolOutput = 2_000
 
     private var asking = false
@@ -159,27 +168,27 @@ actor WorkAssistant {
     /// Read-only views of the registry. `argument` comes from the model: it only filters or looks up, bounded.
     static func tools(_ reg: WorkRegistryView) -> [AssistantTool] {
         [AssistantTool(name: "listarTrabalhos",
-                       description: "Lista os trabalhos ativos e os 20 fechados mais recentes (id · título · terminal · estado). O argumento filtra por texto; vazio lista todos.") {
+                       description: tr("Lista os trabalhos ativos e os 20 fechados mais recentes (id · título · terminal · estado). O argumento filtra por texto; vazio lista todos.", "Lists the active works and the 20 most recently closed (id · title · terminal · state). The argument filters by text; empty lists all.")) {
             await listing(reg, filter: argument($0)) },
-         AssistantTool(name: "resumoDoTrabalho", description: "O resumo de um trabalho (feito, para depois, em aberto, onde parou), pelo id ou pelo título.") {
+         AssistantTool(name: "resumoDoTrabalho", description: tr("O resumo de um trabalho (feito, para depois, em aberto, onde parou), pelo id ou pelo título.", "A work's summary (done, for later, open, where it stopped), by id or title.")) {
             await summary(reg, of: argument($0)) },
-         AssistantTool(name: "statusAgora", description: "Onde estamos, o que travou e o que está rodando agora nos trabalhos ativos.") { _ in
+         AssistantTool(name: "statusAgora", description: tr("Onde estamos, o que travou e o que está rodando agora nos trabalhos ativos.", "Where we are, what is stuck and what is running now across the active works.")) { _ in
             await status(reg) }]
     }
 
-    private static let unreadable = "O registro de trabalhos não pôde ser lido."
+    private static var unreadable: String { tr("O registro de trabalhos não pôde ser lido.", "The work log could not be read.") }
 
     private static func listing(_ reg: WorkRegistryView, filter: String) async -> String {
         guard let all = try? await reg.works() else { return unreadable }
         // the filter looks at the raw fields; only what is printed is escaped
         let lines = ordered(all, closedLimit: 20).compactMap { w -> String? in
-            let title = RerailText.clean(w.title), terminal = RerailText.clean(reg.names[w.terminalId] ?? "terminal removido")
-            let state = w.closedAt.map { "fechado em " + day($0) } ?? "ativo"
+            let title = RerailText.clean(w.title), terminal = RerailText.clean(reg.names[w.terminalId] ?? tr("terminal removido", "terminal removed"))
+            let state = w.closedAt.map { tr("fechado em ", "closed on ") + day($0) } ?? tr("ativo", "active")
             let raw = [w.id.uuidString.lowercased(), title, terminal, state].joined(separator: " · ")
             guard filter.isEmpty || raw.localizedCaseInsensitiveContains(filter) else { return nil }
             return [w.id.uuidString.lowercased(), WorkSummary.escaped(title), WorkSummary.escaped(terminal), state].joined(separator: " · ")
         }
-        return bounded(lines.isEmpty ? "Nenhum trabalho." : lines.joined(separator: "\n"))
+        return bounded(lines.isEmpty ? tr("Nenhum trabalho.", "No works.") : lines.joined(separator: "\n"))
     }
 
     private static func summary(_ reg: WorkRegistryView, of key: String) async -> String {
@@ -188,7 +197,7 @@ actor WorkAssistant {
         let w = ws.first { $0.id.uuidString.caseInsensitiveCompare(key) == .orderedSame }
             ?? ws.first { $0.title.caseInsensitiveCompare(key) == .orderedSame }
             ?? ws.first { !key.isEmpty && $0.title.localizedCaseInsensitiveContains(key) }
-        guard let w else { return "Nenhum trabalho com esse id ou título." }
+        guard let w else { return tr("Nenhum trabalho com esse id ou título.", "No work with that id or title.") }
         // `terminalAlive` is unused by WorkSummary (see its note)
         return bounded(WorkSummary.make(w, terminalAlive: true, now: reg.now()).markdown())
     }
@@ -196,7 +205,7 @@ actor WorkAssistant {
     private static func status(_ reg: WorkRegistryView) async -> String {
         guard let all = try? await reg.works() else { return unreadable }
         let active = all.filter { $0.closedAt == nil }, now = reg.now()
-        let parts: [(String, StatusQuestion)] = [("Onde estamos", .whereAreWe), ("O que travou", .whatIsStuck), ("O que está rodando", .whatIsRunning)]
+        let parts: [(String, StatusQuestion)] = [(tr("Onde estamos", "Where we are"), .whereAreWe), (tr("O que travou", "What is stuck"), .whatIsStuck), (tr("O que está rodando", "What is running"), .whatIsRunning)]
         return bounded(parts.map { "\($0.0):\n" + WorkStatusText.answer($0.1, works: active, names: reg.names, badges: reg.badges, now: now) }
             .joined(separator: "\n\n"))
     }

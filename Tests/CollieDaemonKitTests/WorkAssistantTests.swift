@@ -89,7 +89,7 @@ actor FakeModel: LocalModel {
     func count() -> Int { calls.count }
 }
 
-@Suite struct WorkAssistantTests {
+@Suite(.memoryPT) struct WorkAssistantTests {
     func summary(_ title: String = "Login") -> WorkSummary {
         WorkSummary.make(Work(title: title, terminalId: UUID(), tasks: [WorkTask(id: "a", title: "form", state: .done)]),
                          terminalAlive: true, now: Date())

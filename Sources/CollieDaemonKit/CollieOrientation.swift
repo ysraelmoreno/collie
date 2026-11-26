@@ -30,7 +30,7 @@ enum CollieOrientation {
     static let fieldsHint = "- Fields (own worktree): summon <n> --field; field list|land|drop <n>."
     /// F4: an agent in a field: every form carries it (where it works and how its work goes back).
     static func fieldLine(_ name: String) -> String {
-        "- Field \(quote(name)) (branch \(LaneWorktree.fieldBranchPrefix)\(name)): commite aqui; o Pastor integra."
+        "- Field \(quote(name)) (branch \(LaneWorktree.fieldBranchPrefix)\(name)): " + tr("commite aqui; o Pastor integra.", "commit here; the Shepherd integrates.")
     }
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
@@ -46,7 +46,7 @@ enum CollieOrientation {
     /// F2 Z1 (`reviewerHooksBare`): a loop reviewer's whole session text. Fixed, with nothing another agent can write
     /// (no peers, lot goal, panels nor shared folder): only its own name, quoted as every name is.
     static func reviewer(_ terminal: String) -> String {
-        "You are \(quote(terminal)), a reviewer in a Collie loop. Judge only from the review prompt and the evidence it names. Your verdict is an opinion (parecer): it can veto with a confirmed finding, never approve a task. "
+        "You are \(quote(terminal)), a reviewer in a Collie loop. Judge only from the review prompt and the evidence it names. Your verdict is an opinion\(tr(" (parecer)", "")): it can veto with a confirmed finding, never approve a task. "
             + "You may not edit files, run collie commands nor talk to other terminals; Collie gives you no memory, board or documents."
     }
 
@@ -130,8 +130,8 @@ enum CollieOrientation {
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens, checks pages.") }
         // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
-        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " Slides: artifact export <id> --format pptx|pdf. claude.ai links: artifact import-claude." : "")
-            : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
+        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a \(tr("Prévia", "Preview")). No CDN: offline JS libs via artifact libs." + (claude ? " Slides: artifact export <id> --format pptx|pdf. claude.ai links: artifact import-claude." : "")
+            : "- Artifacts: collie artifact … (new <kind>: \(tr("Prévia", "Preview")); --folder).")
         // M4 (device loop spec): teach the tree loop, not the PNG; compact forms keep only the commands (today's length)
         if !v.isEmpty { lines.append("- Device \(names(v)): " + (compact ? deviceShort : deviceLoop)) }
         if isShepherd {
@@ -160,7 +160,7 @@ enum CollieOrientation {
                 case .artifact where compact:
                     lines.append("- UI work: design it as a page first (collie artifact new prototype <name>); FigCraft only if asked.")
                 case .artifact:
-                    lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name>\(tight ? "" : " (Prévia; fonts, animation, offline libs, collie font add)"). Use FigCraft only if the user asks or for design-system work. \(notFor)")
+                    lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name>\(tight ? "" : " (\(tr("Prévia", "Preview")); fonts, animation, offline libs, collie font add)"). Use FigCraft only if the user asks or for design-system work. \(notFor)")
                 case .figcraft:
                     lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
                 case .ask:
@@ -168,7 +168,8 @@ enum CollieOrientation {
                     lines.append("- UI work (screen, flow, visible change; also a bare 'design X') and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? " + (paddock == nil ? "Save the answer: collie design prefer artifact|figcraft." : "Tell the user to set it in Collie's Preferences (Onde desenhar).") + " \(notFor)")
                 }
                 if figcraftNote {
-                    lines.append("- FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências.")
+                    lines.append(tr("- FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências.",
+                                    "- FigCraft unavailable (engine not installed or out of date); if the user wants FigCraft, ask them to download it in Preferences."))
                 }
             }
             lines.append("- Herds: collie herd list|apply <id> --name <n>|save <name> --terminals a,b")
@@ -181,7 +182,7 @@ enum CollieOrientation {
             if fieldsHint { lines.append(Self.fieldsHint) }
             // the owner's language: the Shepherd relays it (`text` drops it where it can't fit)
             if candidates > 0 {
-                lines.append("- \(candidates) \(candidates == 1 ? "armadilha recorrente pode" : "armadilhas recorrentes podem") virar checagem: collie memory list --candidates")
+                lines.append("- \(candidates) " + tr("\(candidates == 1 ? "armadilha recorrente pode" : "armadilhas recorrentes podem") virar checagem", "recurring \(candidates == 1 ? "pitfall" : "pitfalls") could become a check") + ": collie memory list --candidates")
             }
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")

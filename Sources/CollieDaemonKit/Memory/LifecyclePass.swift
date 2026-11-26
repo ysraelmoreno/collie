@@ -86,7 +86,7 @@ extension CommandRouter {
             guard await ClaimChecks.check(r, facts: facts, knownIds: byId.keys).isEmpty else { continue }
             let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
             do {
-                let rows = try await applyOps([.activate(id: r.id, reason: "proposta de 14 dias com checagens ok")], job: job)
+                let rows = try await applyOps([.activate(id: r.id, reason: tr("proposta de 14 dias com checagens ok", "14-day proposal with checks passing"))], job: job)
                 if rows.contains(where: { $0.action == "ativado" }) { await lc.update(r.id, now: now) { $0 = LifecycleEntry(tierSince: now, store: store.key) } }
                 try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows.map { var x = $0; x.at = now; return x }) }
             } catch { memoryLog("lifecycle proposal \(store.path): \(error)") }
@@ -105,9 +105,9 @@ extension CommandRouter {
             guard users || LifecycleRules.eligible(r) && now.timeIntervalSince(at) >= LifecycleRules.contestedAskAfter,
                   !asks.contains(where: { $0.at >= at && $0.before.contains { $0.id == r.id } }) else { continue }
             let days = Int(now.timeIntervalSince(at) / 86_400)
-            rows.append(DigestEntry(id: UUID(), at: now, action: "ask", title: "Memória contestada: \"\(MemoryLearning.oneLine(r.title, max: 60))\"",
-                                    reason: users ? "memória fixada ou editada pelo usuário foi marcada como errada ou velha"
-                                                  : "contestada há \(days) dias sem veredito",
+            rows.append(DigestEntry(id: UUID(), at: now, action: "ask", title: tr("Memória contestada: \"\(MemoryLearning.oneLine(r.title, max: 60))\"", "Contested memory: \"\(MemoryLearning.oneLine(r.title, max: 60))\""),
+                                    reason: users ? tr("memória fixada ou editada pelo usuário foi marcada como errada ou velha", "a memory pinned or edited by the user was flagged as wrong or outdated")
+                                                  : tr("contestada há \(days) dias sem veredito", "contested for \(days) days with no verdict"),
                                     store: store.key, created: [], before: [r], undone: false, resolved: false))
         }
         do { try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows) } } catch { memoryLog("lifecycle asks: \(error)") }

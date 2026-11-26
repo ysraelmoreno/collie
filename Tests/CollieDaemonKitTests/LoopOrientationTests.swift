@@ -5,7 +5,7 @@ import CollieCore
 
 /// M2.4: a Shepherd follows a loop by reading the daemon's state (`collie work wait`, `collie work status`); the
 /// notice typed into its terminal is only a hint. `/collie:loop`, the orientation and the notices all say so.
-@Suite struct LoopOrientationTests {
+@Suite(.memoryPT) struct LoopOrientationTests {
     private let hint = " · estado: collie work status"
 
     @Test func theLoopCommandWaitsOnStateNotOnTheNotice() {

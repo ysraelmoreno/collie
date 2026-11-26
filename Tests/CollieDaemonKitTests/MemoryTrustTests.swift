@@ -32,7 +32,7 @@ private func plant(_ s: RepoMemory, _ r: MemoryRecord) throws {
 private let mark = "(editada fora do Collie)"
 
 /// Task 2 (spec 2026-11-17 cursor memory, P1): only what the daemon wrote is injected in full or as the user's.
-@Suite(.serialized) struct MemoryTrustTests {
+@Suite(.serialized, .memoryPT) struct MemoryTrustTests {
     @Test func forgedFeedbackIsNotUserRule() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

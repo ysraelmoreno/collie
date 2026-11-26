@@ -28,7 +28,7 @@ private func additional(_ json: String?, _ event: String) -> String? {
     return h["additionalContext"] as? String
 }
 
-@Suite(.serialized) struct MemoryHookTests {
+@Suite(.serialized, .memoryPT) struct MemoryHookTests {
     @Test func claudeSettingsHaveSessionAndPromptHooks() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }

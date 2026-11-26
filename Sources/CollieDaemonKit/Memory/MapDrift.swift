@@ -39,15 +39,15 @@ enum MapDrift {
 
     /// The flag reason's fact (data for the curator): numbers, the path and a short anchor only.
     static func detail(_ path: String, _ c: PathChange, _ x: PathExtent, anchor: String) -> String {
-        let since = "desde \(anchor.prefix(8))"
-        if x.isDir { return "\(path) \(c.files) de \(x.files.map(String.init) ?? "?") arquivos mudaram \(since)" }
-        let pct = x.lines.flatMap { $0 > 0 ? " (\(min(999, (c.added + c.deleted) * 100 / $0))% do arquivo)" : nil } ?? ""
-        return "\(path) +\(c.added) −\(c.deleted) linhas \(since)\(pct)"
+        let since = tr("desde \(anchor.prefix(8))", "since \(anchor.prefix(8))")
+        if x.isDir { return tr("\(path) \(c.files) de \(x.files.map(String.init) ?? "?") arquivos mudaram \(since)", "\(path) \(c.files) of \(x.files.map(String.init) ?? "?") files changed \(since)") }
+        let pct = x.lines.flatMap { $0 > 0 ? tr(" (\(min(999, (c.added + c.deleted) * 100 / $0))% do arquivo)", " (\(min(999, (c.added + c.deleted) * 100 / $0))% of the file)") : nil } ?? ""
+        return "\(path) +\(c.added) −\(c.deleted) " + tr("linhas", "lines") + " \(since)\(pct)"
     }
 
     static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
     /// What stands for a path that is not plain (`safePath`) wherever the daemon states it as a fact.
-    static let refusedPath = "caminho recusado"
+    static var refusedPath: String { tr("caminho recusado", "path refused") }
     /// A gone check's path as the log and `memory stats` state it: the path only when plain, never an agent's sentence.
     static func shownPath(_ p: String?) -> String { p.flatMap { safePath($0) ? $0 : nil } ?? refusedPath }
 

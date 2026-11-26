@@ -248,7 +248,7 @@ extension CommandRouter {
                     field: me.field?.name)
                 if cursor && mode == .off { text = orientation; return .object(["output": .string(text)]) }   // "Desligada": no memory block
                 // Cursor `full`: the time line (≤ 70 B) and the focus block, all under `cursorCap` with the orientation
-                let stamp = cursor && mode == .full ? "memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task" : ""
+                let stamp = cursor && mode == .full ? tr("memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task", "memory as of \(Self.hourMinute.string(from: Date())); news and the task's memory: memory_task") : ""
                 let total = Self.cursorCap - orientation.utf8.count - 2 - (stamp.isEmpty ? 0 : stamp.utf8.count + 2)
                 await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
                 let w = try? await work.active(terminal: me.id)
@@ -340,7 +340,7 @@ extension CommandRouter {
             // Codex). The text is the agent's: no provenance, no correction capture, no pending uses (B3)
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'memory.task' is for terminals only") }
             let text = await promptBlock(me, paddock: paddockName, lot: myLot, query: HookPayload.boundedPrompt(try need(r, "task")), pull: true)
-            return .object(["output": .string(text.isEmpty ? "Nada novo para esta tarefa." : text)])
+            return .object(["output": .string(text.isEmpty ? tr("Nada novo para esta tarefa.", "Nothing new for this task.") : text)])
 
         case "memory.review":
             let id = try id()
@@ -390,7 +390,7 @@ extension CommandRouter {
                     try store.write(rec)
                 }
             }
-            if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
+            if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: tr("editada pelo usuário", "edited by the user")) }
             if action != "approve" || wasProposed {   // approving a proposal (a procedure too) makes it: created by the user
                 var ev = MemoryEvent(type: action == "approve" ? .created : action == "archive" ? .archived : .retracted, ids: [id], source: "user")
                 ev.place(store: repo.key)
@@ -451,20 +451,20 @@ extension CommandRouter {
 
         case "memory.enforce":   // PRD B3: a check now enforces this pitfall/decision, so it leaves the injection (not the search)
             let id = try id(), clear = flag(r, "clear"), by = str(r, "by")
-            guard clear != (by != nil) else { throw invalid("diga --by <caminho> ou --clear") }
+            guard clear != (by != nil) else { throw invalid(tr("diga --by <caminho> ou --clear", "say --by <path> or --clear")) }
             let agent = caller != nil
             if let by {
                 // B3.4: the app names the repo (never its cwd's); the item's repo is the caller's worktree
-                guard agent || str(r, "repo") != nil else { throw invalid("--by: o app precisa dizer --repo <repositório git>") }
-                guard let root = project.root else { throw invalid("--by precisa de um repositório git") }
+                guard agent || str(r, "repo") != nil else { throw invalid(tr("--by: o app precisa dizer --repo <repositório git>", "--by: the app must say --repo <git repository>")) }
+                guard let root = project.root else { throw invalid(tr("--by precisa de um repositório git", "--by needs a git repository")) }
                 // the charset first: a name with a line break or a control character is never echoed
                 guard MapDrift.safePath(by), isRepoRelative(by) else {
-                    throw invalid("--by: caminho relativo à raiz do repo, sem '..', só letras, dígitos e ._/@+-")
+                    throw invalid(tr("--by: caminho relativo à raiz do repo, sem '..', só letras, dígitos e ._/@+-", "--by: path relative to the repo root, no '..', only letters, digits and ._/@+-"))
                 }
                 let facts = config.gitFacts(root)
                 guard let head = await facts.head(), await facts.existed(at: head, by) == true,
                       try await project.run({ _ in Self.isRegularFile(root.appendingPathComponent(by).path) }) else {
-                    throw invalid("--by: '\(by)' não é um arquivo rastreado em HEAD deste repositório")
+                    throw invalid(tr("--by: '\(by)' não é um arquivo rastreado em HEAD deste repositório", "--by: '\(by)' is not a file tracked at HEAD of this repository"))
                 }
             }
             // B3.4: an agent changes only a project memory of its own store (as `memory.supersede`); a global or a lot one
@@ -475,10 +475,10 @@ extension CommandRouter {
                     guard var rec = m.store.all().records.first(where: { $0.id == id }),
                           !agent || MemoryService.visible(rec, paddock: paddockName, lot: m.lotId) else { return nil }
                     guard !agent || rec.scope == .project else {
-                        throw ProtocolError(code: .unauthorized, message: "só o dono impõe itens globais ou de lote")
+                        throw ProtocolError(code: .unauthorized, message: tr("só o dono impõe itens globais ou de lote", "only the owner enforces global or lot items"))
                     }
                     guard rec.kind == .pitfall || rec.kind == .decision else {
-                        throw ProtocolError(code: .invalidArgs, message: "só armadilha (pitfall) ou decisão pode ser imposta por checagem; esta é \(rec.kind.rawValue)")
+                        throw ProtocolError(code: .invalidArgs, message: tr("só armadilha (pitfall) ou decisão pode ser imposta por checagem; esta é \(rec.kind.rawValue)", "only a pitfall or decision can be enforced by a check; this one is \(rec.kind.rawValue)"))
                     }
                     guard by != nil || rec.enforcedBy != nil else { return (rec, false) }   // --clear with nothing to clear
                     rec.enforcedBy = by
@@ -486,7 +486,7 @@ extension CommandRouter {
                     return (rec, true)
                 }
                 guard let found else { continue }
-                guard found.changed else { return try memJSON(found.rec, s, ["message": .string("não estava imposto")]) }
+                guard found.changed else { return try memJSON(found.rec, s, ["message": .string(tr("não estava imposto", "was not enforced"))]) }
                 let rec = found.rec
                 var ev = MemoryEvent(type: .enforced, terminal: caller?.id, ids: [id], kinds: [rec.kind.rawValue], scopes: [rec.scope.rawValue],
                                      source: caller == nil ? "user" : "agent", reason: by, mode: clear ? "clear" : "set")
@@ -498,11 +498,11 @@ extension CommandRouter {
             if agent {
                 for s in stores where s !== project {
                     if try await s.run({ m in m.store.all().records.contains { $0.id == id && MemoryService.visible($0, paddock: paddockName, lot: m.lotId) } }) {
-                        throw ProtocolError(code: .unauthorized, message: "só o dono impõe itens globais ou de lote")
+                        throw ProtocolError(code: .unauthorized, message: tr("só o dono impõe itens globais ou de lote", "only the owner enforces global or lot items"))
                     }
                 }
             }
-            throw ProtocolError(code: .notFound, message: "memória \(id.uuidString.lowercased()) não encontrada")
+            throw ProtocolError(code: .notFound, message: tr("memória \(id.uuidString.lowercased()) não encontrada", "memory \(id.uuidString.lowercased()) not found"))
 
         case "memory.restore":
             let id = try id()
@@ -518,7 +518,7 @@ extension CommandRouter {
         case "memory.flag":   // the agent's judgement of a memory injected into its own session (admin token: no session, refused)
             let verdicts = ["useful", "wrong", "outdated"].filter { flag(r, $0) || str(r, "verdict") == $0 }
             guard verdicts.count == 1, str(r, "verdict").map({ verdicts.contains($0) }) ?? true, let verdict = FlagVerdict(rawValue: verdicts[0]) else {
-                throw invalid("diga um veredito: --useful, --wrong ou --outdated")
+                throw invalid(tr("diga um veredito: --useful, --wrong ou --outdated", "give a verdict: --useful, --wrong or --outdated"))
             }
             let (session, target) = try await memory.flagTarget(caller?.id, prefix: try need(r, "id"))
             let reason = String(LotBoards.scrub(str(r, "reason") ?? "", secrets: await auth.secrets())

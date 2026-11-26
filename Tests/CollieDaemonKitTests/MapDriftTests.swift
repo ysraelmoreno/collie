@@ -3,7 +3,7 @@ import Foundation
 @testable import CollieDaemonKit
 
 /// Item 7 of spec 2026-11-17-memory-stage-rules: a map's file changed past a threshold since its anchor commit.
-@Suite struct MapDriftTests {
+@Suite(.memoryPT) struct MapDriftTests {
     // MARK: thresholds (pure)
 
     @Test func fileThresholdIsFortyLinesOrFortyPercent() {

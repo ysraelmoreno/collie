@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// R5: one review persona (docs/fabrica/personas/<name>.md). `body` is what the reviewer receives, verbatim.
 /// Pure: the texts come from the caller, who reads them from the attempt's BASE commit, never from the worktree,
@@ -18,7 +19,7 @@ enum PersonaError: Error, Equatable, CustomStringConvertible {
     var description: String {
         switch self {
         case let .malformed(file, reason): "persona \(file): \(reason)"
-        case let .unknown(name): "persona '\(name)' não está no catálogo"
+        case let .unknown(name): tr("persona '\(name)' não está no catálogo", "persona '\(name)' is not in the catalog")
         }
     }
 }
@@ -31,7 +32,7 @@ enum PersonaCatalog {
         return try files.keys.sorted().map { file in
             let persona = try parse(file: file, text: files[file] ?? "")
             guard seen.insert(persona.name).inserted else {
-                throw PersonaError.malformed(file: file, reason: "nome '\(persona.name)' repetido")
+                throw PersonaError.malformed(file: file, reason: tr("nome '\(persona.name)' repetido", "name '\(persona.name)' repeated"))
             }
             return persona
         }.sorted { $0.name < $1.name }
@@ -40,25 +41,25 @@ enum PersonaCatalog {
     static func parse(file: String, text: String) throws -> Persona {
         func bad(_ reason: String) -> PersonaError { .malformed(file: file, reason: reason) }
         let lines = text.components(separatedBy: "\n")
-        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { throw bad("falta o front-matter (--- na 1ª linha)") }
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { throw bad(tr("falta o front-matter (--- na 1ª linha)", "missing front matter (--- on line 1)")) }
         guard let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else {
-            throw bad("front-matter sem o --- de fechamento")
+            throw bad(tr("front-matter sem o --- de fechamento", "front matter without the closing ---"))
         }
         var fields: [String: String] = [:]
         for line in lines[1..<end] where !line.trimmingCharacters(in: .whitespaces).isEmpty {
-            guard let colon = line.firstIndex(of: ":") else { throw bad("linha sem 'chave: valor': \(line)") }
+            guard let colon = line.firstIndex(of: ":") else { throw bad(tr("linha sem 'chave: valor': \(line)", "line without 'key: value': \(line)")) }
             let key = line[..<colon].trimmingCharacters(in: .whitespaces)
-            guard ["name", "model", "paths"].contains(key) else { throw bad("chave desconhecida '\(key)'") }
+            guard ["name", "model", "paths"].contains(key) else { throw bad(tr("chave desconhecida '\(key)'", "unknown key '\(key)'")) }
             fields[key] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
-        guard let name = fields["name"], !name.isEmpty else { throw bad("falta 'name'") }
-        guard name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else { throw bad("'name' inválido: \(name)") }
-        guard let rawPaths = fields["paths"] else { throw bad("falta 'paths'") }
+        guard let name = fields["name"], !name.isEmpty else { throw bad(tr("falta 'name'", "missing 'name'")) }
+        guard name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" }) else { throw bad(tr("'name' inválido: \(name)", "invalid 'name': \(name)")) }
+        guard let rawPaths = fields["paths"] else { throw bad(tr("falta 'paths'", "missing 'paths'")) }
         guard let paths = try? JSONDecoder().decode([String].self, from: Data(rawPaths.utf8)), !paths.isEmpty else {
-            throw bad("'paths' deve ser um array JSON de globs não vazio")
+            throw bad(tr("'paths' deve ser um array JSON de globs não vazio", "'paths' must be a non-empty JSON array of globs"))
         }
         let body = lines[(end + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { throw bad("corpo vazio") }
+        guard !body.isEmpty else { throw bad(tr("corpo vazio", "empty body")) }
         let model = fields["model"].flatMap { $0.isEmpty ? nil : $0 }
         return Persona(name: name, model: model, paths: paths, body: body)
     }

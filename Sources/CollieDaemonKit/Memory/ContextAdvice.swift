@@ -20,8 +20,10 @@ enum ContextAdvice {
     static func line(tokens: Int, level: Int) -> String {
         let k = tokens / 1000
         return level >= 2
-            ? "Contexto muito grande (\(k) mil tokens): cada turno relê esse contexto. Abra uma sessão nova agora e leia a passagem de turno: collie work handoff."
-            : "Contexto grande (\(k) mil tokens): cada turno relê esse contexto. Considere uma sessão nova e leia a passagem de turno: collie work handoff."
+            ? tr("Contexto muito grande (\(k) mil tokens): cada turno relê esse contexto. Abra uma sessão nova agora e leia a passagem de turno: collie work handoff.",
+                 "Very large context (\(k)k tokens): every turn rereads this context. Open a new session now and read the handoff: collie work handoff.")
+            : tr("Contexto grande (\(k) mil tokens): cada turno relê esse contexto. Considere uma sessão nova e leia a passagem de turno: collie work handoff.",
+                 "Large context (\(k)k tokens): every turn rereads this context. Consider a new session and read the handoff: collie work handoff.")
     }
 
     /// The last call's context in tokens, from the transcript's tail; nil: the path is not allowed, it cannot be read, or

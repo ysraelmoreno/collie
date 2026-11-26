@@ -9,9 +9,12 @@ import CollieProtocol
 enum MemoryCapture {
     static let maxTitle = 120, maxBody = 1200, maxCommits = 5
 
-    static let stopReason = "Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar') e marque as memórias injetadas que estavam erradas ou velhas (collie memory flag)."
+    static var stopReason: String {
+        tr("Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar') e marque as memórias injetadas que estavam erradas ou velhas (collie memory flag).",
+           "Before wrapping up: record this work's decisions and pitfalls with collie memory save --scope lot (or answer 'nothing to record') and flag the injected memories that were wrong or outdated (collie memory flag).")
+    }
     /// Outside a lot `--scope lot` would be refused: the same ask, for the project.
-    static let stopReasonNoLot = stopReason.replacingOccurrences(of: "--scope lot", with: "--scope project")
+    static var stopReasonNoLot: String { stopReason.replacingOccurrences(of: "--scope lot", with: "--scope project") }
 
     /// The commits recorded after `mark` (default: the last Stop ask's); all of them without one, or when it was archived.
     static func newCommits(_ w: Work, after mark: String?? = nil) -> ArraySlice<String> {

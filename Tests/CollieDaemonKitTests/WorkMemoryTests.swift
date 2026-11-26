@@ -40,7 +40,7 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
     return await read() ?? ["timeout: router did not answer in 15 s"]
 }
 
-@Suite(.serialized) struct WorkMemoryTests {
+@Suite(.serialized, .memoryPT) struct WorkMemoryTests {
     @Test func closingSavesSummary() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

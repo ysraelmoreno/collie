@@ -3,7 +3,7 @@ import Foundation
 import CollieCore
 @testable import CollieDaemonKit
 
-@Suite struct ClaimChecksTests {
+@Suite(.memoryPT) struct ClaimChecksTests {
     struct Fake: GitFacts {
         var branches: [String: BranchState] = [:]
         var commits: Set<String> = []

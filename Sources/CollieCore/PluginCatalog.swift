@@ -37,25 +37,25 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
     static let urlPrefix = "https://github.com/ysraelmoreno/collie/releases/download/plugin-"
 
     private static func refuse(_ why: String) -> ProtocolError {
-        ProtocolError(code: .invalidArgs, message: "catálogo de plug-ins recusado: \(why)")
+        ProtocolError(code: .invalidArgs, message: tr("catálogo de plug-ins recusado: \(why)", "plug-in catalog refused: \(why)"))
     }
 
     /// Checks the signature (any key of `keys`), the format and coherence. `lastSequence`: the last accepted one's.
     public static func accept(_ data: Data, signature: Data, keys: [String] = publicKeys,
                               lastSequence: Int?) throws(ProtocolError) -> PluginCatalog {
         let valid = keys.compactMap { Data(base64Encoded: $0).flatMap { try? Curve25519.Signing.PublicKey(rawRepresentation: $0) } }
-        guard !valid.isEmpty else { throw refuse("nenhuma chave pública do catálogo configurada neste Collie") }
+        guard !valid.isEmpty else { throw refuse(tr("nenhuma chave pública do catálogo configurada neste Collie", "no catalog public key is configured in this Collie")) }
         guard valid.contains(where: { $0.isValidSignature(signature, for: data) }) else {
-            throw refuse("a assinatura não confere")
+            throw refuse(tr("a assinatura não confere", "the signature does not match"))
         }
         struct Head: Decodable { var format: Int }
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
-        guard let head = try? d.decode(Head.self, from: data) else { throw refuse("não é um JSON com \"format\"") }
-        guard head.format == 1 else { throw refuse("formato \(head.format) não suportado (precisa de um Collie mais novo)") }
+        guard let head = try? d.decode(Head.self, from: data) else { throw refuse(tr("não é um JSON com \"format\"", "not a JSON with \"format\"")) }
+        guard head.format == 1 else { throw refuse(tr("formato \(head.format) não suportado (precisa de um Collie mais novo)", "format \(head.format) not supported (needs a newer Collie)")) }
         let c: PluginCatalog
-        do { c = try d.decode(PluginCatalog.self, from: data) } catch { throw refuse("JSON inválido (\(error))") }
+        do { c = try d.decode(PluginCatalog.self, from: data) } catch { throw refuse(tr("JSON inválido (\(error))", "invalid JSON (\(error))")) }
         if let lastSequence, c.sequence < lastSequence {
-            throw refuse("sequence \(c.sequence) é menor que a do último aceito (\(lastSequence))")
+            throw refuse(tr("sequence \(c.sequence) é menor que a do último aceito (\(lastSequence))", "sequence \(c.sequence) is lower than the last accepted one (\(lastSequence))"))
         }
         try c.validate()
         return c
@@ -65,22 +65,22 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
         let pubs = Set(publishers.map(\.id))
         var ids = Set<String>()
         for item in plugins {
-            guard ids.insert(item.id).inserted else { throw Self.refuse("id \"\(item.id)\" repetido") }
-            guard !item.versions.isEmpty else { throw Self.refuse("\(item.id) não tem versão") }
+            guard ids.insert(item.id).inserted else { throw Self.refuse(tr("id \"\(item.id)\" repetido", "duplicate id \"\(item.id)\"")) }
+            guard !item.versions.isEmpty else { throw Self.refuse(tr("\(item.id) não tem versão", "\(item.id) has no version")) }
             guard pubs.contains(item.publisher) else {
-                throw Self.refuse("\(item.id): publisher \"\(item.publisher)\" não está em publishers")
+                throw Self.refuse(tr("\(item.id): publisher \"\(item.publisher)\" não está em publishers", "\(item.id): publisher \"\(item.publisher)\" is not in publishers"))
             }
             var seen = Set<String>()
             for v in item.versions {
                 let at = "\(item.id) \(v.version)"
-                guard seen.insert(v.version).inserted else { throw Self.refuse("\(at): versão repetida") }
-                guard Self.isHex64(v.sha256) else { throw Self.refuse("\(at): sha256 não tem 64 hex") }
-                guard Self.isHex64(v.treeSha256) else { throw Self.refuse("\(at): treeSha256 não tem 64 hex") }
-                guard v.size > 0 else { throw Self.refuse("\(at): size inválido") }
+                guard seen.insert(v.version).inserted else { throw Self.refuse(tr("\(at): versão repetida", "\(at): repeated version")) }
+                guard Self.isHex64(v.sha256) else { throw Self.refuse(tr("\(at): sha256 não tem 64 hex", "\(at): sha256 is not 64 hex")) }
+                guard Self.isHex64(v.treeSha256) else { throw Self.refuse(tr("\(at): treeSha256 não tem 64 hex", "\(at): treeSha256 is not 64 hex")) }
+                guard v.size > 0 else { throw Self.refuse(tr("\(at): size inválido", "\(at): invalid size")) }
                 let u = v.url
                 guard u.absoluteString.hasPrefix(Self.urlPrefix), u.query == nil, u.fragment == nil,
                       !u.pathComponents.contains(".."), !u.absoluteString.contains("%") else {
-                    throw Self.refuse("\(at): url fora de \(Self.urlPrefix)…")
+                    throw Self.refuse(tr("\(at): url fora de \(Self.urlPrefix)…", "\(at): url outside \(Self.urlPrefix)…"))
                 }
             }
         }
@@ -120,10 +120,10 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
     public static func sign(_ data: Data, privateKey: String) throws(ProtocolError) -> Data {
         guard let raw = Data(base64Encoded: privateKey),
               let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) else {
-            throw ProtocolError(code: .invalidArgs, message: "chave privada do catálogo inválida (32 bytes em base64)")
+            throw ProtocolError(code: .invalidArgs, message: tr("chave privada do catálogo inválida (32 bytes em base64)", "invalid catalog private key (32 bytes in base64)"))
         }
         do { return try key.signature(for: data) } catch {
-            throw ProtocolError(code: .internal, message: "não consegui assinar o catálogo: \(error)")
+            throw ProtocolError(code: .internal, message: tr("não consegui assinar o catálogo: \(error)", "could not sign the catalog: \(error)"))
         }
     }
 }

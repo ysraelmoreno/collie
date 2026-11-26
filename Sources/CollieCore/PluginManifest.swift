@@ -150,17 +150,17 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public static let startWait: Double = 30
 
     public static let fileName = "collie-plugin.json"
-    static let newer = "precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)"
+    static var newer: String { tr("precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)", "needs a newer Collie (helpers/permissions arrive in phase 2/3)") }
 
     /// Decodes and validates a manifest (pure: no file access).
     public static func decode(_ data: Data) throws(ProtocolError) -> PluginManifest {
         struct Version: Decodable { var apiVersion: Int }
-        guard let v = try? JSONDecoder().decode(Version.self, from: data) else { throw bad("manifesto inválido: falta apiVersion (número)") }
+        guard let v = try? JSONDecoder().decode(Version.self, from: data) else { throw bad(tr("manifesto inválido: falta apiVersion (número)", "invalid manifest: apiVersion (number) is missing")) }
         guard (1...2).contains(v.apiVersion) else {
-            throw bad(v.apiVersion > 1 ? "precisa de um Collie mais novo (apiVersion \(v.apiVersion))" : "apiVersion inválida: \(v.apiVersion)")
+            throw bad(v.apiVersion > 1 ? tr("precisa de um Collie mais novo (apiVersion \(v.apiVersion))", "needs a newer Collie (apiVersion \(v.apiVersion))") : tr("apiVersion inválida: \(v.apiVersion)", "invalid apiVersion: \(v.apiVersion)"))
         }
         let m: PluginManifest
-        do { m = try JSONDecoder().decode(PluginManifest.self, from: data) } catch { throw bad("manifesto inválido: \(Self.describe(error))") }
+        do { m = try JSONDecoder().decode(PluginManifest.self, from: data) } catch { throw bad(tr("manifesto inválido: \(Self.describe(error))", "invalid manifest: \(Self.describe(error))")) }
         try m.validate()
         return m
     }
@@ -171,7 +171,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         let f = folder.appendingPathComponent(fileName)
         guard regularFile(f), let size = try? FileManager.default.attributesOfItem(atPath: f.path)[.size] as? Int, size <= 256 * 1024,
               let data = try? Data(contentsOf: f) else {
-            throw bad("\(fileName) ausente, ilegível, não é um arquivo comum ou maior que 256 KiB")
+            throw bad(tr("\(fileName) ausente, ilegível, não é um arquivo comum ou maior que 256 KiB", "\(fileName) is missing, unreadable, not a regular file or larger than 256 KiB"))
         }
         let m = try decode(data)
         if m.uiIsURL { return m }   // served by the app's own service: nothing on disk to check
@@ -179,9 +179,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         for part in m.ui.split(separator: "/") {
             at.appendPathComponent(String(part))
             guard let t = try? FileManager.default.attributesOfItem(atPath: at.path)[.type] as? FileAttributeType,
-                  t == .typeDirectory || t == .typeRegular else { throw bad("ui '\(m.ui)' não existe no plug-in (ou é um link)") }
+                  t == .typeDirectory || t == .typeRegular else { throw bad(tr("ui '\(m.ui)' não existe no plug-in (ou é um link)", "ui '\(m.ui)' does not exist in the plug-in (or is a link)")) }
         }
-        guard regularFile(at) else { throw bad("ui '\(m.ui)' não é um arquivo") }
+        guard regularFile(at) else { throw bad(tr("ui '\(m.ui)' não é um arquivo", "ui '\(m.ui)' is not a file")) }
         return m
     }
 
@@ -213,24 +213,24 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public static func appFiles(_ folder: URL) throws(ProtocolError) -> (files: [String: Data], sha: String) {
         let fm = FileManager.default
         func type(_ rel: String) -> FileAttributeType? { try? fm.attributesOfItem(atPath: folder.appendingPathComponent(rel).path)[.type] as? FileAttributeType }   // lstat
-        guard type(fileName) == .typeRegular else { throw bad("\(fileName) ausente ou não é um arquivo comum") }
+        guard type(fileName) == .typeRegular else { throw bad(tr("\(fileName) ausente ou não é um arquivo comum", "\(fileName) is missing or not a regular file")) }
         var rels = [fileName]
         if let t = type("ui") {
-            guard t == .typeDirectory else { throw bad("ui não é uma pasta") }
+            guard t == .typeDirectory else { throw bad(tr("ui não é uma pasta", "ui is not a folder")) }
             for rel in ((fm.enumerator(atPath: folder.appendingPathComponent("ui").path)?.allObjects as? [String]) ?? []).sorted() {
                 switch type("ui/" + rel) {
                 case .typeDirectory?: continue
                 case .typeRegular?: rels.append("ui/" + rel)
-                default: throw bad("'ui/\(rel)' não é um arquivo comum (links não são aceitos)")
+                default: throw bad(tr("'ui/\(rel)' não é um arquivo comum (links não são aceitos)", "'ui/\(rel)' is not a regular file (links are not accepted)"))
                 }
-                guard rels.count <= 256 else { throw bad("ui/ passa de 255 arquivos") }
+                guard rels.count <= 256 else { throw bad(tr("ui/ passa de 255 arquivos", "ui/ has more than 255 files")) }
             }
         }
         var files: [String: Data] = [:], total = 0, h = SHA256()
         for rel in rels {
-            guard let d = try? Data(contentsOf: folder.appendingPathComponent(rel)) else { throw bad("'\(rel)' ilegível") }
+            guard let d = try? Data(contentsOf: folder.appendingPathComponent(rel)) else { throw bad(tr("'\(rel)' ilegível", "'\(rel)' unreadable")) }
             total += d.count
-            guard total <= 16 << 20 else { throw bad("o app passa de 16 MiB") }
+            guard total <= 16 << 20 else { throw bad(tr("o app passa de 16 MiB", "the app is over 16 MiB")) }
             files[rel] = d
             h.update(data: Data(rel.utf8)); h.update(data: Data([0])); h.update(data: Data(SHA256.hash(data: d)))
         }
@@ -255,13 +255,13 @@ public struct PluginManifest: Codable, Sendable, Equatable {
 
     public func validate() throws(ProtocolError) {
         if commands.contains(where: { $0.runs == "helper" }) { throw Self.bad(Self.newer) }
-        for h in hooks ?? [] where !["edit", "stop"].contains(h) { throw Self.bad("hook '\(h)' desconhecido: edit ou stop") }
-        guard hookEvents.count <= 2, Set(hookEvents).count == hookEvents.count else { throw Self.bad("hooks: edit e/ou stop, sem repetição") }
+        for h in hooks ?? [] where !["edit", "stop"].contains(h) { throw Self.bad(tr("hook '\(h)' desconhecido: edit ou stop", "unknown hook '\(h)': edit or stop")) }
+        guard hookEvents.count <= 2, Set(hookEvents).count == hookEvents.count else { throw Self.bad(tr("hooks: edit e/ou stop, sem repetição", "hooks: edit and/or stop, no repeats")) }
         if let h = helper {
-            guard !hookEvents.isEmpty else { throw Self.bad("helper pede hooks (edit e/ou stop)") }
-            guard Self.safeHelperPath(h) else { throw Self.bad("helper '\(h)' inválido: bin/<nome>, sem '..'") }
+            guard !hookEvents.isEmpty else { throw Self.bad(tr("helper pede hooks (edit e/ou stop)", "helper asks for hooks (edit and/or stop)")) }
+            guard Self.safeHelperPath(h) else { throw Self.bad(tr("helper '\(h)' inválido: bin/<nome>, sem '..'", "helper '\(h)' invalid: bin/<name>, no '..'")) }
         } else if !hookEvents.isEmpty {
-            throw Self.bad("hooks pedem um helper (bin/<nome>)")
+            throw Self.bad(tr("hooks pedem um helper (bin/<nome>)", "hooks ask for a helper (bin/<name>)"))
         }
         for (k, v) in permissions ?? [:] {   // empty network list and project none/read are accepted
             switch (k, v) {
@@ -269,86 +269,86 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             default: throw Self.bad(Self.newer)
             }
         }
-        guard Self.match(id, "[a-z][a-z0-9-]{1,31}") else { throw Self.bad("id '\(id)' inválido: use a-z, 0-9 e '-', 2 a 32, começando com letra") }
-        guard !Commands.reservedPluginIds.contains(id) else { throw Self.bad("id '\(id)' é reservado pelo Collie") }
+        guard Self.match(id, "[a-z][a-z0-9-]{1,31}") else { throw Self.bad(tr("id '\(id)' inválido: use a-z, 0-9 e '-', 2 a 32, começando com letra", "id '\(id)' invalid: use a-z, 0-9 and '-', 2 to 32, starting with a letter")) }
+        guard !Commands.reservedPluginIds.contains(id) else { throw Self.bad(tr("id '\(id)' é reservado pelo Collie", "id '\(id)' is reserved by Collie")) }
         try Self.text(name, "name", 1...64)
-        guard Self.match(version, "[0-9][0-9A-Za-z.+-]{0,31}") else { throw Self.bad("version '\(version)' inválida (ex.: 0.1.0)") }
+        guard Self.match(version, "[0-9][0-9A-Za-z.+-]{0,31}") else { throw Self.bad(tr("version '\(version)' inválida (ex.: 0.1.0)", "version '\(version)' invalid (e.g. 0.1.0)")) }
         try Self.text(author, "author", 0...128); try Self.text(license, "license", 0...64)
-        guard !placements.isEmpty, !placements.contains(.headless) else { throw Self.bad("placements: um ou mais de canvas, dock.left, dock.right, dock.bottom") }
-        guard placements.contains(defaultPlacement) else { throw Self.bad("defaultPlacement precisa estar em placements") }
+        guard !placements.isEmpty, !placements.contains(.headless) else { throw Self.bad(tr("placements: um ou mais de canvas, dock.left, dock.right, dock.bottom", "placements: one or more of canvas, dock.left, dock.right, dock.bottom")) }
+        guard placements.contains(defaultPlacement) else { throw Self.bad(tr("defaultPlacement precisa estar em placements", "defaultPlacement must be in placements")) }
         if apiVersion == 1, service != nil || eventStream != nil || appFolder != nil || appPin != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
-            throw Self.bad("service, eventStream, http e confirm pedem apiVersion 2")
+            throw Self.bad(tr("service, eventStream, http e confirm pedem apiVersion 2", "service, eventStream, http and confirm need apiVersion 2"))
         }
         let origin = serviceOrigin
         if service != nil, origin == nil {
-            throw Self.bad("service.base '\(service?.base ?? "")' inválido: http://127.0.0.1, http://[::1] ou http://localhost, com porta e sem caminho")
+            throw Self.bad(tr("service.base '\(service?.base ?? "")' inválido: http://127.0.0.1, http://[::1] ou http://localhost, com porta e sem caminho", "service.base '\(service?.base ?? "")' invalid: http://127.0.0.1, http://[::1] or http://localhost, with a port and no path"))
         }
         if uiIsURL {
             guard let origin, Self.loopbackOrigin(ui, page: true) == origin else {
-                throw Self.bad("ui '\(ui)': uma URL do próprio service.base (loopback)")
+                throw Self.bad(tr("ui '\(ui)': uma URL do próprio service.base (loopback)", "ui '\(ui)': a URL under the service.base itself (loopback)"))
             }
         } else {
-            guard Self.safeUIPath(ui) else { throw Self.bad("ui '\(ui)' inválido: um .html dentro de ui/, sem '..'") }
+            guard Self.safeUIPath(ui) else { throw Self.bad(tr("ui '\(ui)' inválido: um .html dentro de ui/, sem '..'", "ui '\(ui)' invalid: an .html inside ui/, no '..'")) }
         }
-        guard commands.count <= 64 else { throw Self.bad("no máximo 64 comandos") }
+        guard commands.count <= 64 else { throw Self.bad(tr("no máximo 64 comandos", "at most 64 commands")) }
         var seen: Set<String> = []
         for c in commands {
             guard Self.match(c.name, "[a-z][a-z0-9-]{0,31}"), seen.insert(c.name).inserted else {
-                throw Self.bad("nome de comando '\(c.name)' inválido ou repetido: a-z, 0-9 e '-', até 32, começando com letra")
+                throw Self.bad(tr("nome de comando '\(c.name)' inválido ou repetido: a-z, 0-9 e '-', até 32, começando com letra", "command name '\(c.name)' invalid or repeated: a-z, 0-9 and '-', up to 32, starting with a letter"))
             }
             switch c.runs {
-            case "ui": guard c.http == nil, c.result == nil else { throw Self.bad("comando '\(c.name)': http e result só com runs \"http\"") }
+            case "ui": guard c.http == nil, c.result == nil else { throw Self.bad(tr("comando '\(c.name)': http e result só com runs \"http\"", "command '\(c.name)': http and result only with runs \"http\"")) }
             case "http" where apiVersion >= 2:
-                guard origin != nil else { throw Self.bad("comando '\(c.name)': runs \"http\" precisa de service.base") }
+                guard origin != nil else { throw Self.bad(tr("comando '\(c.name)': runs \"http\" precisa de service.base", "command '\(c.name)': runs \"http\" needs service.base")) }
                 guard let h = c.http, ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(h.method), Self.safeHTTPPath(h.path) else {
-                    throw Self.bad("comando '\(c.name)': http {method: GET|POST|PUT|PATCH|DELETE, path: /…} sem '..', '?' ou '#'")
+                    throw Self.bad(tr("comando '\(c.name)': http {method: GET|POST|PUT|PATCH|DELETE, path: /…} sem '..', '?' ou '#'", "command '\(c.name)': http {method: GET|POST|PUT|PATCH|DELETE, path: /…} without '..', '?' or '#'"))
                 }
-                guard !c.outputFile else { throw Self.bad("comando '\(c.name)': outputFile só com runs \"ui\"") }
+                guard !c.outputFile else { throw Self.bad(tr("comando '\(c.name)': outputFile só com runs \"ui\"", "command '\(c.name)': outputFile only with runs \"ui\"")) }
                 if let r = c.result, r.pick.count > 32 || r.pick.contains(where: { $0.isEmpty || $0.count > 64 })
                     || r.tail.contains(where: { $0.key.isEmpty || $0.key.count > 64 || !(1...1000).contains($0.value) }) {
-                    throw Self.bad("comando '\(c.name)': result {pick: até 32 chaves, tail: {chave: 1 a 1000}}")
+                    throw Self.bad(tr("comando '\(c.name)': result {pick: até 32 chaves, tail: {chave: 1 a 1000}}", "command '\(c.name)': result {pick: up to 32 keys, tail: {key: 1 to 1000}}"))
                 }
-            default: throw Self.bad("comando '\(c.name)': runs deve ser \"ui\"" + (apiVersion >= 2 ? " ou \"http\"" : ""))
+            default: throw Self.bad(tr("comando '\(c.name)': runs deve ser \"ui\"", "command '\(c.name)': runs must be \"ui\"") + (apiVersion >= 2 ? tr(" ou \"http\"", " or \"http\"") : ""))
             }
-            try Self.text(c.summary, "summary de '\(c.name)'", 1...2000)
-            guard (1...300).contains(c.timeout) else { throw Self.bad("comando '\(c.name)': timeout entre 1 e 300 segundos") }
+            try Self.text(c.summary, tr("summary de '\(c.name)'", "summary of '\(c.name)'"), 1...2000)
+            guard (1...300).contains(c.timeout) else { throw Self.bad(tr("comando '\(c.name)': timeout entre 1 e 300 segundos", "command '\(c.name)': timeout between 1 and 300 seconds")) }
             var names: Set<String> = []
             for (i, p) in c.params.enumerated() {
                 guard Self.match(p.name, "[a-z][a-z0-9-]{0,31}"), p.name != "panel", names.insert(p.name).inserted else {
-                    throw Self.bad("comando '\(c.name)': parâmetro '\(p.name)' inválido, repetido ou reservado")
+                    throw Self.bad(tr("comando '\(c.name)': parâmetro '\(p.name)' inválido, repetido ou reservado", "command '\(c.name)': parameter '\(p.name)' invalid, repeated or reserved"))
                 }
-                guard ["string", "int", "flag", "rest"].contains(p.type) else { throw Self.bad("parâmetro '\(p.name)': type string|int|flag|rest") }
+                guard ["string", "int", "flag", "rest"].contains(p.type) else { throw Self.bad(tr("parâmetro '\(p.name)': type string|int|flag|rest", "parameter '\(p.name)': type string|int|flag|rest")) }
                 // ArgvParser: a rest word list is positional and takes every word left, so it comes last
                 if p.type == "rest", !p.positional || c.params[(i + 1)...].contains(where: \.positional) {
-                    throw Self.bad("parâmetro '\(p.name)': rest precisa ser o último posicional")
+                    throw Self.bad(tr("parâmetro '\(p.name)': rest precisa ser o último posicional", "parameter '\(p.name)': rest must be the last positional"))
                 }
-                if p.type == "flag", p.positional || p.required { throw Self.bad("parâmetro '\(p.name)': flag não é posicional nem obrigatória") }
+                if p.type == "flag", p.positional || p.required { throw Self.bad(tr("parâmetro '\(p.name)': flag não é posicional nem obrigatória", "parameter '\(p.name)': a flag is neither positional nor required")) }
                 if p.name == "out", c.outputFile, p.type != "string" || p.positional {   // collie copies the file to it
-                    throw Self.bad("comando '\(c.name)': --out de um outputFile é string, não posicional")
+                    throw Self.bad(tr("comando '\(c.name)': --out de um outputFile é string, não posicional", "command '\(c.name)': --out of an outputFile is a string, not positional"))
                 }
-                try Self.text(p.help, "help de '\(p.name)'", 0...500)
+                try Self.text(p.help, tr("help de '\(p.name)'", "help of '\(p.name)'"), 0...500)
             }
         }
         guard events.count <= 64, events.allSatisfy({ Self.match($0, "\(id)\\.[a-z][a-z0-9.-]{0,63}") }), Set(events).count == events.count else {
-            throw Self.bad("events: até 64, cada um '\(id).<nome>'")
+            throw Self.bad(tr("events: até 64, cada um '\(id).<nome>'", "events: up to 64, each '\(id).<name>'"))
         }
         guard stateKeys.count <= 64, stateKeys.allSatisfy({ Self.match($0, "[A-Za-z][A-Za-z0-9_-]{0,63}") }) else {
-            throw Self.bad("stateKeys: até 64 nomes (letras, dígitos, _ e -)")
+            throw Self.bad(tr("stateKeys: até 64 nomes (letras, dígitos, _ e -)", "stateKeys: up to 64 names (letters, digits, _ and -)"))
         }
         if let s = service {   // slice 5: the daemon runs `start` in the app's folder (the approval card shows it)
             if let start = s.start { try Self.text(start, "service.start", 1...500) }
-            if let h = s.health, !Self.safeHTTPPath(h) { throw Self.bad("service.health '\(h)': um caminho /… do service.base") }
+            if let h = s.health, !Self.safeHTTPPath(h) { throw Self.bad(tr("service.health '\(h)': um caminho /… do service.base", "service.health '\(h)': a /… path of the service.base")) }
             if let cwd = s.cwd, s.start == nil || !Self.safeRelativePath(cwd) {
-                throw Self.bad("service.cwd '\(cwd)': uma pasta relativa ao cercado (sem '..', até 256 caracteres), com service.start")
+                throw Self.bad(tr("service.cwd '\(cwd)': uma pasta relativa ao cercado (sem '..', até 256 caracteres), com service.start", "service.cwd '\(cwd)': a folder relative to the paddock (no '..', up to 256 characters), with service.start"))
             }
         }
         if let e = eventStream {
             guard origin != nil, Self.safeHTTPPath(e), !events.isEmpty else {
-                throw Self.bad("eventStream '\(e)': um caminho /… do service.base, com events declarados")
+                throw Self.bad(tr("eventStream '\(e)': um caminho /… do service.base, com events declarados", "eventStream '\(e)': a /… path of the service.base, with events declared"))
             }
         }
         if let k = eventDiff, eventStream == nil || events.isEmpty || k.isEmpty || k.count > 64 || k.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
-            throw Self.bad("eventDiff '\(k)': o nome de uma chave (1 a 64), com eventStream e events declarados")
+            throw Self.bad(tr("eventDiff '\(k)': o nome de uma chave (1 a 64), com eventStream e events declarados", "eventDiff '\(k)': a key name (1 to 64), with eventStream and events declared"))
         }
     }
 
@@ -386,7 +386,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     static func match(_ s: String, _ pattern: String) -> Bool { (try? Regex(pattern).wholeMatch(in: s)) != nil }
     static func text(_ s: String, _ what: String, _ len: ClosedRange<Int>) throws(ProtocolError) {
         guard len.contains(s.count), !s.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
-            throw bad("\(what): \(len.lowerBound) a \(len.upperBound) caracteres, sem caracteres de controle")
+            throw bad(tr("\(what): \(len.lowerBound) a \(len.upperBound) caracteres, sem caracteres de controle", "\(what): \(len.lowerBound) to \(len.upperBound) characters, no control characters"))
         }
     }
     static func regularFile(_ u: URL) -> Bool {
@@ -395,13 +395,13 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
     /// A decoding error without the JSON text: the key path and what was wrong.
     static func describe(_ e: Error) -> String {
-        guard let e = e as? DecodingError else { return "JSON inválido" }
+        guard let e = e as? DecodingError else { return tr("JSON inválido", "invalid JSON") }
         func path(_ c: DecodingError.Context) -> String { c.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".") }
         switch e {
-        case .keyNotFound(let k, let c): return "falta '\((c.codingPath + [k]).map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: "."))'"
-        case .typeMismatch(_, let c), .valueNotFound(_, let c): return "tipo errado em '\(path(c))'"
-        case .dataCorrupted(let c): return c.codingPath.isEmpty ? "JSON inválido" : "valor inválido em '\(path(c))'"
-        @unknown default: return "JSON inválido"
+        case .keyNotFound(let k, let c): return tr("falta '\((c.codingPath + [k]).map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: "."))'", "missing '\((c.codingPath + [k]).map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: "."))'")
+        case .typeMismatch(_, let c), .valueNotFound(_, let c): return tr("tipo errado em '\(path(c))'", "wrong type at '\(path(c))'")
+        case .dataCorrupted(let c): return c.codingPath.isEmpty ? tr("JSON inválido", "invalid JSON") : tr("valor inválido em '\(path(c))'", "invalid value at '\(path(c))'")
+        @unknown default: return tr("JSON inválido", "invalid JSON")
         }
     }
 }
@@ -428,6 +428,6 @@ public struct InstalledPlugin: Codable, Sendable, Equatable {
     }
     /// The refusal to enable or reinstall a recalled version.
     public static func recalledRefusal(_ r: PluginCatalog.Recall) -> ProtocolError {
-        ProtocolError(code: .conflict, message: "versão recolhida: \(r.reason). Atualize ou remova.")
+        ProtocolError(code: .conflict, message: tr("versão recolhida: \(r.reason). Atualize ou remova.", "version recalled: \(r.reason). Update or remove it."))
     }
 }

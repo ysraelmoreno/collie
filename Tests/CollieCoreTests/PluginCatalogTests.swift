@@ -43,7 +43,9 @@ private func accept(_ data: Data, last: Int? = nil) throws(ProtocolError) -> Plu
     try PluginCatalog.accept(data, signature: try PluginCatalog.sign(data, privateKey: priv), keys: [pub], lastSequence: last)
 }
 private func refusal(_ data: Data, last: Int? = nil) -> ProtocolError? {
-    do throws(ProtocolError) { _ = try accept(data, last: last); return nil } catch { return error }
+    L10n.$override.withValue(.pt) {
+        do throws(ProtocolError) { _ = try accept(data, last: last); return nil } catch { return error }
+    }
 }
 
 @Suite struct PluginCatalogTests {
@@ -131,5 +133,17 @@ private func refusal(_ data: Data, last: Int? = nil) -> ProtocolError? {
         #expect(PluginCatalog.compare("0.10.0", "0.9.0") == .orderedDescending)
         #expect(PluginCatalog.compare("1.0", "1.0.0") == .orderedSame)
         #expect(PluginCatalog.compare("0.2.0", "0.2.1") == .orderedAscending)
+    }
+}
+
+@Suite struct PluginCatalogEnglishTests {
+    @Test func refusalsAreEnglish() {
+        L10n.$override.withValue(.en) {
+            do throws(ProtocolError) { _ = try accept(catalog(), last: 43) } catch {
+                #expect(error.message.hasPrefix("plug-in catalog refused:") && error.message.contains("lower than the last accepted"), "\(error.message)")
+                return
+            }
+            Issue.record("accepted")
+        }
     }
 }

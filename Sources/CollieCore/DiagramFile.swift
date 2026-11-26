@@ -17,12 +17,12 @@ public enum DiagramFile {
         let path = r.isEmpty ? "docs/diagrams/\(panelName).drawio" : r
         let root = real(projectRoot)
         let url = real(path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
-        guard url.pathExtension.lowercased() == "drawio", !path.hasSuffix("/") else { throw bad("o diagrama precisa ser um arquivo .drawio: \(path)") }
+        guard url.pathExtension.lowercased() == "drawio", !path.hasSuffix("/") else { throw bad(tr("o diagrama precisa ser um arquivo .drawio: \(path)", "the diagram must be a .drawio file: \(path)")) }
         guard url.pathComponents.count > root.pathComponents.count, url.pathComponents.starts(with: root.pathComponents) else {
-            throw bad("o diagrama precisa ficar dentro do projeto \(root.path): \(path)")
+            throw bad(tr("o diagrama precisa ficar dentro do projeto \(root.path): \(path)", "the diagram must be inside the project \(root.path): \(path)"))
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > maxBytes {
-            throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB): \(path)")
+            throw bad(tr("diagrama grande demais (máximo \(maxBytes >> 20) MiB): \(path)", "diagram too large (max \(maxBytes >> 20) MiB): \(path)"))
         }
         return url
     }
@@ -44,23 +44,23 @@ public enum DiagramFile {
     /// text: UTF-8 (no other declared encoding) and no NUL (which a parser could take for UTF-16).
     public static func validate(xml: String) throws(ProtocolError) {
         let data = Data(xml.utf8)
-        guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
-        guard !xml.contains("\0") else { throw bad("XML inválido: contém um caractere nulo") }
+        guard data.count <= maxBytes else { throw bad(tr("diagrama grande demais (máximo \(maxBytes >> 20) MiB)", "diagram too large (max \(maxBytes >> 20) MiB)")) }
+        guard !xml.contains("\0") else { throw bad(tr("XML inválido: contém um caractere nulo", "invalid XML: contains a null character")) }
         // every XML declaration anywhere (padding can push one past any fixed window): only UTF-8 may be declared
         for m in xml.matches(of: /<\?xml[^>]*?encoding\s*=\s*["']([^"']*)["']/.ignoresCase())
         where !["utf-8", "utf8"].contains(m.1.lowercased()) {
-            throw bad("o diagrama precisa ser UTF-8 (declarado: \(m.1))")
+            throw bad(tr("o diagrama precisa ser UTF-8 (declarado: \(m.1))", "the diagram must be UTF-8 (declared: \(m.1))"))
         }
         guard xml.range(of: "<!DOCTYPE", options: .caseInsensitive) == nil, xml.range(of: "<!ENTITY", options: .caseInsensitive) == nil else {
-            throw bad("diagrama recusado: <!DOCTYPE>/<!ENTITY> não são aceitos (o draw.io não os usa)")
+            throw bad(tr("diagrama recusado: <!DOCTYPE>/<!ENTITY> não são aceitos (o draw.io não os usa)", "diagram refused: <!DOCTYPE>/<!ENTITY> are not accepted (draw.io does not use them)"))
         }
         let p = XMLParser(data: data), root = RootName()
         p.delegate = root
         guard p.parse() else {
-            throw bad("XML inválido (linha \(p.lineNumber)): \(p.parserError?.localizedDescription ?? "erro de sintaxe")")
+            throw bad(tr("XML inválido (linha \(p.lineNumber)): \(p.parserError?.localizedDescription ?? "erro de sintaxe")", "invalid XML (line \(p.lineNumber)): \(p.parserError?.localizedDescription ?? "syntax error")"))
         }
         guard root.name == "mxfile" || root.name == "mxGraphModel" else {
-            throw bad("não é um diagrama draw.io: a raiz é <\(root.name ?? "")>, esperado <mxfile>")
+            throw bad(tr("não é um diagrama draw.io: a raiz é <\(root.name ?? "")>, esperado <mxfile>", "not a draw.io diagram: the root is <\(root.name ?? "")>, expected <mxfile>"))
         }
     }
     private final class RootName: NSObject, XMLParserDelegate {
@@ -78,7 +78,7 @@ public enum DiagramFile {
     static func posix(_ what: String) -> ProtocolError {
         let e = errno
         if e == ELOOP || e == ENOTDIR || e == EMLINK {
-            return bad("\(what): o caminho do diagrama passa por um link ou por algo que não é pasta")
+            return bad(tr("\(what): o caminho do diagrama passa por um link ou por algo que não é pasta", "\(what): the diagram path goes through a link or something that is not a folder"))
         }
         return ProtocolError(code: .internal, message: "\(what): \(String(cString: strerror(e)))")
     }
@@ -86,9 +86,9 @@ public enum DiagramFile {
     /// The folders below the root and the file name of `url` (already `resolve`d inside `root`).
     static func parts(_ url: URL, _ root: URL) throws(ProtocolError) -> (dirs: [String], name: String) {
         let r = real(root).pathComponents, u = url.pathComponents
-        guard u.count > r.count, u.starts(with: r) else { throw bad("o diagrama precisa ficar dentro do projeto \(real(root).path)") }
+        guard u.count > r.count, u.starts(with: r) else { throw bad(tr("o diagrama precisa ficar dentro do projeto \(real(root).path)", "the diagram must be inside the project \(real(root).path)")) }
         let rel = Array(u.dropFirst(r.count))
-        guard !rel.contains(where: { $0 == ".." || $0 == "." }) else { throw bad("caminho inválido: \(url.path)") }
+        guard !rel.contains(where: { $0 == ".." || $0 == "." }) else { throw bad(tr("caminho inválido: \(url.path)", "invalid path: \(url.path)")) }
         return (Array(rel.dropLast()), rel.last!)
     }
 
@@ -97,7 +97,7 @@ public enum DiagramFile {
     public static func openDirectory(of url: URL, root: URL, create: Bool) throws(ProtocolError) -> Int32? {
         let (dirs, _) = try parts(url, root)
         var fd = open(real(root).path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard fd >= 0 else { throw posix("pasta do projeto") }
+        guard fd >= 0 else { throw posix(tr("pasta do projeto", "project folder")) }
         for d in dirs {
             var next = openat(fd, d, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             if next < 0, errno == ENOENT, !create { close(fd); return nil }
@@ -121,7 +121,7 @@ public enum DiagramFile {
 
     /// The file's bytes (any kind: the Prévia serves images and fonts too); nil when it does not exist. `noun` names
     /// the document in the size error ("página grande demais").
-    public static func readData(_ url: URL, root: URL, noun: String = "diagrama") throws(ProtocolError) -> Data? {
+    public static func readData(_ url: URL, root: URL, noun: String = tr("diagrama", "diagram")) throws(ProtocolError) -> Data? {
         guard let dir = try openDirectory(of: url, root: root, create: false) else { return nil }
         defer { close(dir) }
         let fd = openat(dir, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
@@ -141,18 +141,18 @@ public enum DiagramFile {
     }
 
     static func readOpened(_ fd: Int32, _ name: String) throws(ProtocolError) -> String {
-        try utf8(readOpenedData(fd, name, noun: "diagrama"), name)
+        try utf8(readOpenedData(fd, name, noun: tr("diagrama", "diagram")), name)
     }
     static func utf8(_ data: Data, _ name: String) throws(ProtocolError) -> String {
-        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(name) não é UTF-8") }
+        guard let s = String(data: data, encoding: .utf8) else { throw bad(tr("\(name) não é UTF-8", "\(name) is not UTF-8")) }
         return s
     }
 
     static func readOpenedData(_ fd: Int32, _ name: String, noun: String) throws(ProtocolError) -> Data {
         var st = stat()
         guard fstat(fd, &st) == 0 else { throw posix(name) }
-        guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad("\(name) não é um arquivo comum") }
-        guard st.st_size <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad(tr("\(name) não é um arquivo comum", "\(name) is not a regular file")) }
+        guard st.st_size <= maxBytes else { throw bad(tr("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)", "\(noun) too large (max \(maxBytes >> 20) MiB)")) }
         var data = Data(), buf = [UInt8](repeating: 0, count: 64 << 10)
         while data.count <= maxBytes {
             let n = Darwin.read(fd, &buf, buf.count)
@@ -161,17 +161,17 @@ public enum DiagramFile {
             if n == 0 { break }
             data.append(buf, count: n)
         }
-        guard data.count <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard data.count <= maxBytes else { throw bad(tr("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)", "\(noun) too large (max \(maxBytes >> 20) MiB)")) }
         return data
     }
 
     /// Atomic: a temp file in the same folder fd, then `renameat` over the name (a link at the name is replaced, not
     /// followed). Creates missing folders, refuses more than 8 MiB. `exclusive`: never replaces anything at the name
     /// (`RENAME_EXCL`): "já existe".
-    public static func write(_ xml: String, to url: URL, root: URL, noun: String = "diagrama", exclusive: Bool = false) throws(ProtocolError) {
+    public static func write(_ xml: String, to url: URL, root: URL, noun: String = tr("diagrama", "diagram"), exclusive: Bool = false) throws(ProtocolError) {
         let data = Data(xml.utf8)
-        guard data.count <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
-        guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad("pasta do arquivo ausente") }
+        guard data.count <= maxBytes else { throw bad(tr("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)", "\(noun) too large (max \(maxBytes >> 20) MiB)")) }
+        guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad(tr("pasta do arquivo ausente", "the file's folder is missing")) }
         defer { close(dir) }
         let name = url.lastPathComponent, tmp = ".\(name).\(UUID().uuidString).tmp"
         let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
@@ -187,7 +187,7 @@ public enum DiagramFile {
         }
         close(fd)
         if failed == nil, (exclusive ? renameatx_np(dir, tmp, dir, name, UInt32(RENAME_EXCL)) : renameat(dir, tmp, dir, name)) != 0 {
-            failed = exclusive && errno == EEXIST ? bad("já existe: \(name)") : posix(name)
+            failed = exclusive && errno == EEXIST ? bad(tr("já existe: \(name)", "already exists: \(name)")) : posix(name)
         }
         if let failed { unlinkat(dir, tmp, 0); throw failed }
     }

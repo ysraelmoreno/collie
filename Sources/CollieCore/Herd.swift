@@ -98,13 +98,13 @@ public enum HerdFormat {
         allowedState[pluginId] ?? PluginRegistry.spec(pluginId).flatMap { $0.source == .builtIn ? nil : Set($0.stateKeys) }
     }
 
-    private static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "rebanho: \(m)") }
+    private static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: tr("rebanho: \(m)", "herd: \(m)")) }
 
     public static func decode(_ data: Data) throws(ProtocolError) -> Herd {
-        guard data.count <= maxBytes else { throw bad("arquivo grande demais (máximo \(maxBytes / 1024) KiB)") }
+        guard data.count <= maxBytes else { throw bad(tr("arquivo grande demais (máximo \(maxBytes / 1024) KiB)", "file too large (max \(maxBytes / 1024) KiB)")) }
         let p: Herd
         do { p = try JSONDecoder().decode(Herd.self, from: data) }
-        catch { throw bad("JSON inválido ou campos faltando") }
+        catch { throw bad(tr("JSON inválido ou campos faltando", "invalid JSON or missing fields")) }
         try validate(p)
         return p
     }
@@ -149,64 +149,64 @@ public enum HerdFormat {
             && (terminal ? terminalWidth : panelSize).contains(f.w) && (terminal ? terminalHeight : panelSize).contains(f.h)
     }
     private static func sizeText(terminal: Bool) -> String {
-        terminal ? "posição inválida (terminal de 320×200 a 4000×4000, x e y até 100000)"
-                 : "posição inválida (painel de 200×200 a 4000×4000, x e y até 100000)"
+        terminal ? tr("posição inválida (terminal de 320×200 a 4000×4000, x e y até 100000)", "invalid position (terminal 320×200 to 4000×4000, x and y up to 100000)")
+                 : tr("posição inválida (painel de 200×200 a 4000×4000, x e y até 100000)", "invalid position (panel 200×200 to 4000×4000, x and y up to 100000)")
     }
 
     public static func validate(_ p: Herd) throws(ProtocolError) {
-        guard p.format == 1 else { throw bad("formato \(p.format) não suportado") }
-        guard isKey(p.id, max: 64) else { throw bad("id inválido") }
-        guard !p.name.trimmingCharacters(in: .whitespaces).isEmpty, p.name.count <= 80, clean(p.name) else { throw bad("nome inválido") }
-        guard p.summary.count <= 500 else { throw bad("descrição longa demais") }
-        guard clean(p.summary) else { throw bad("descrição com caracteres de controle") }
-        guard p.terminals.count <= maxTerminals else { throw bad("terminais demais (máximo \(maxTerminals))") }
-        guard p.panels.count <= maxPanels else { throw bad("painéis demais (máximo \(maxPanels))") }
+        guard p.format == 1 else { throw bad(tr("formato \(p.format) não suportado", "format \(p.format) not supported")) }
+        guard isKey(p.id, max: 64) else { throw bad(tr("id inválido", "invalid id")) }
+        guard !p.name.trimmingCharacters(in: .whitespaces).isEmpty, p.name.count <= 80, clean(p.name) else { throw bad(tr("nome inválido", "invalid name")) }
+        guard p.summary.count <= 500 else { throw bad(tr("descrição longa demais", "description too long")) }
+        guard clean(p.summary) else { throw bad(tr("descrição com caracteres de controle", "description has control characters")) }
+        guard p.terminals.count <= maxTerminals else { throw bad(tr("terminais demais (máximo \(maxTerminals))", "too many terminals (max \(maxTerminals))")) }
+        guard p.panels.count <= maxPanels else { throw bad(tr("painéis demais (máximo \(maxPanels))", "too many panels (max \(maxPanels))")) }
         var keys = Set<String>()
         var terminalKeys = Set<String>()
         for t in p.terminals {
-            guard isKey(t.key, max: 24) else { throw bad("chave inválida '\(t.key)'") }
-            guard keys.insert(t.key).inserted else { throw bad("chave repetida '\(t.key)'") }
+            guard isKey(t.key, max: 24) else { throw bad(tr("chave inválida '\(t.key)'", "invalid key '\(t.key)'")) }
+            guard keys.insert(t.key).inserted else { throw bad(tr("chave repetida '\(t.key)'", "duplicate key '\(t.key)'")) }
             terminalKeys.insert(t.key)
             if t.preset == .custom {
-                guard let c = t.command, !c.isEmpty else { throw bad("'\(t.key)': o preset custom precisa de um comando") }
-                guard c.count <= 1000 else { throw bad("'\(t.key)': comando longo demais") }
-                guard clean(c) else { throw bad("'\(t.key)': o comando deve ter uma linha só, sem caracteres de controle") }
-            } else if t.command != nil { throw bad("'\(t.key)': comando só é permitido com o preset custom") }
+                guard let c = t.command, !c.isEmpty else { throw bad(tr("'\(t.key)': o preset custom precisa de um comando", "'\(t.key)': the custom preset needs a command")) }
+                guard c.count <= 1000 else { throw bad(tr("'\(t.key)': comando longo demais", "'\(t.key)': command too long")) }
+                guard clean(c) else { throw bad(tr("'\(t.key)': o comando deve ter uma linha só, sem caracteres de controle", "'\(t.key)': the command must be a single line, no control characters")) }
+            } else if t.command != nil { throw bad(tr("'\(t.key)': comando só é permitido com o preset custom", "'\(t.key)': a command is only allowed with the custom preset")) }
             if let r = t.role {
-                guard r.count <= 4000 else { throw bad("'\(t.key)': papel longo demais") }
-                guard clean(r, multiline: true) else { throw bad("'\(t.key)': papel com caracteres de controle") }
+                guard r.count <= 4000 else { throw bad(tr("'\(t.key)': papel longo demais", "'\(t.key)': role too long")) }
+                guard clean(r, multiline: true) else { throw bad(tr("'\(t.key)': papel com caracteres de controle", "'\(t.key)': role has control characters")) }
             }
             guard frameOK(t.frame, terminal: true) else { throw bad("'\(t.key)': \(sizeText(terminal: true))") }
         }
-        guard p.terminals.filter(\.isShepherd).count <= 1 else { throw bad("no máximo um terminal Pastor") }
+        guard p.terminals.filter(\.isShepherd).count <= 1 else { throw bad(tr("no máximo um terminal Pastor", "at most one Shepherd terminal")) }
         var panelKeys = Set<String>()
         for a in p.panels {
-            guard isKey(a.key, max: 24) else { throw bad("chave inválida '\(a.key)'") }
-            guard keys.insert(a.key).inserted else { throw bad("chave repetida '\(a.key)'") }
+            guard isKey(a.key, max: 24) else { throw bad(tr("chave inválida '\(a.key)'", "invalid key '\(a.key)'")) }
+            guard keys.insert(a.key).inserted else { throw bad(tr("chave repetida '\(a.key)'", "duplicate key '\(a.key)'")) }
             panelKeys.insert(a.key)
-            guard let allowed = allowedKeys(a.pluginId) else { throw bad("plug-in '\(a.pluginId)' não é permitido") }
+            guard let allowed = allowedKeys(a.pluginId) else { throw bad(tr("plug-in '\(a.pluginId)' não é permitido", "plug-in '\(a.pluginId)' is not allowed")) }
             for (k, v) in a.state {
-                guard allowed.contains(k) else { throw bad("'\(a.key)': chave de estado '\(k)' não é permitida") }
+                guard allowed.contains(k) else { throw bad(tr("'\(a.key)': chave de estado '\(k)' não é permitida", "'\(a.key)': state key '\(k)' is not allowed")) }
                 if k == "storage" {
-                    guard case .string(let s) = v, StorageScope(rawValue: s) != nil else { throw bad("'\(a.key)': storage deve ser isolated, workspace ou global") }
+                    guard case .string(let s) = v, StorageScope(rawValue: s) != nil else { throw bad(tr("'\(a.key)': storage deve ser isolated, workspace ou global", "'\(a.key)': storage must be isolated, workspace or global")) }
                 }
                 if a.pluginId == "browser", k == "url" {
                     guard case .string(let s) = v, clean(s), let u = URL(string: s), ["http", "https"].contains(u.scheme?.lowercased() ?? ""),
                           !(u.host ?? "").isEmpty
-                    else { throw bad("'\(a.key)': o endereço deve ser http ou https com um host") }
+                    else { throw bad(tr("'\(a.key)': o endereço deve ser http ou https com um host", "'\(a.key)': the address must be http or https with a host")) }
                 }
                 if a.pluginId == "design", k == "file" {
-                    guard case .string(let s) = v, isPlainFileName(s) else { throw bad("'\(a.key)': file deve ser um nome simples") }
+                    guard case .string(let s) = v, isPlainFileName(s) else { throw bad(tr("'\(a.key)': file deve ser um nome simples", "'\(a.key)': file must be a plain name")) }
                 }
             }
             guard frameOK(a.frame, terminal: false) else { throw bad("'\(a.key)': \(sizeText(terminal: false))") }
         }
         var seen = Set<Set<String>>()
         for c in p.leashes {
-            guard c.count == 2, c[0] != c[1] else { throw bad("uma guia precisa de duas chaves diferentes") }
-            for k in c where !keys.contains(k) { throw bad("guia com chave desconhecida '\(k)'") }
-            guard terminalKeys.contains(c[0]) || terminalKeys.contains(c[1]) else { throw bad("guia entre dois painéis") }
-            guard seen.insert(Set(c)).inserted else { throw bad("guia repetida \(c[0])-\(c[1])") }
+            guard c.count == 2, c[0] != c[1] else { throw bad(tr("uma guia precisa de duas chaves diferentes", "a leash needs two different keys")) }
+            for k in c where !keys.contains(k) { throw bad(tr("guia com chave desconhecida '\(k)'", "leash with unknown key '\(k)'")) }
+            guard terminalKeys.contains(c[0]) || terminalKeys.contains(c[1]) else { throw bad(tr("guia entre dois painéis", "leash between two panels")) }
+            guard seen.insert(Set(c)).inserted else { throw bad(tr("guia repetida \(c[0])-\(c[1])", "duplicate leash \(c[0])-\(c[1])")) }
         }
     }
 
@@ -224,7 +224,7 @@ public enum HerdFormat {
 
     public static func memberName(apply: String, key: String) -> String {
         let s = slug(apply)
-        return "\(s.isEmpty ? "rebanho" : s)-\(key)"
+        return "\(s.isEmpty ? tr("rebanho", "herd") : s)-\(key)"
     }
 }
 
@@ -233,15 +233,20 @@ extension Herd {
     private static func below(_ i: Int) -> HerdFrame { HerdFrame(x: Double(i) * 680, y: 440, w: 640, h: 400) }
 
     /// Built-in herds (original texts, pt-BR).
-    public static let factory: [Herd] = [
+    public static var factory: [Herd] { [
         Herd(
-            id: "feature-fullstack", name: "Feature fullstack",
-            summary: "Pastor, backend, interface e revisor com os painéis Design e Navegador.", wantsPaddock: true,
+            id: "feature-fullstack", name: tr("Feature fullstack", "Fullstack feature"),
+            summary: tr("Pastor, backend, interface e revisor com os painéis Design e Navegador.",
+           "Shepherd, backend, interface and reviewer, with the Design and Browser panels."), wantsPaddock: true,
             terminals: [
-                HerdTerminal(key: "pastor", preset: .claude, role: "Você coordena esta feature. Quebre o trabalho em partes, delegue ao backend e à interface pelas guias, peça revisão ao revisor antes de dar como pronto e mantenha `collie work` atualizado.", isShepherd: true, frame: row(0)),
-                HerdTerminal(key: "backend", preset: .claude, role: "Você implementa a parte de servidor e dados desta feature, com testes. Responda ao Pastor com o que mudou e o que falta.", frame: row(1)),
-                HerdTerminal(key: "interface", preset: .claude, role: "Você implementa a interface desta feature. Use o painel Design como referência e o Navegador para conferir o resultado. Responda ao Pastor com o que mudou.", frame: row(2)),
-                HerdTerminal(key: "revisor", preset: .claude, role: "Você revisa o que o Pastor pedir: procure bugs, casos não cobertos e testes faltando. Seja direto; não reescreva o código dos outros.", frame: row(3)),
+                HerdTerminal(key: "pastor", preset: .claude, role: tr("Você coordena esta feature. Quebre o trabalho em partes, delegue ao backend e à interface pelas guias, peça revisão ao revisor antes de dar como pronto e mantenha `collie work` atualizado.",
+           "You coordinate this feature. Break the work into parts, delegate to the backend and the interface through the leashes, ask the reviewer for a review before calling it done, and keep `collie work` up to date."), isShepherd: true, frame: row(0)),
+                HerdTerminal(key: "backend", preset: .claude, role: tr("Você implementa a parte de servidor e dados desta feature, com testes. Responda ao Pastor com o que mudou e o que falta.",
+           "You implement the server and data side of this feature, with tests. Tell the Shepherd what changed and what is left."), frame: row(1)),
+                HerdTerminal(key: "interface", preset: .claude, role: tr("Você implementa a interface desta feature. Use o painel Design como referência e o Navegador para conferir o resultado. Responda ao Pastor com o que mudou.",
+           "You implement the interface of this feature. Use the Design panel as reference and the Browser to check the result. Tell the Shepherd what changed."), frame: row(2)),
+                HerdTerminal(key: "revisor", preset: .claude, role: tr("Você revisa o que o Pastor pedir: procure bugs, casos não cobertos e testes faltando. Seja direto; não reescreva o código dos outros.",
+           "You review whatever the Shepherd asks: look for bugs, uncovered cases and missing tests. Be direct; do not rewrite other people's code."), frame: row(3)),
             ],
             panels: [
                 HerdPanel(key: "design", pluginId: "design", placement: .canvas, state: ["file": .string("Feature")], frame: below(2)),
@@ -250,13 +255,18 @@ extension Herd {
             leashes: [["pastor", "backend"], ["pastor", "interface"], ["pastor", "revisor"], ["interface", "design"], ["interface", "navegador"]],
             builtIn: true),
         Herd(
-            id: "feature-com-design", name: "Feature com design",
-            summary: "Pastor, designer, interface e tester: desenha no FigCraft, implementa e confere contra o design.", wantsPaddock: true,
+            id: "feature-com-design", name: tr("Feature com design", "Feature with design"),
+            summary: tr("Pastor, designer, interface e tester: desenha no FigCraft, implementa e confere contra o design.",
+           "Shepherd, designer, interface and tester: designs in FigCraft, implements and checks against the design."), wantsPaddock: true,
             terminals: [
-                HerdTerminal(key: "pastor", preset: .claude, role: "Você conduz esta feature do desenho à entrega. Peça primeiro as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas. O painel Design do rebanho já está aberto: use-o, não abra outro nem pergunte se deve desenhar antes.", isShepherd: true, frame: row(0)),
-                HerdTerminal(key: "designer", preset: .claude, role: "Você desenha as telas no painel Design com `collie design …`, seguindo o design system ativo. Avise o Pastor, pela guia, quais telas estão prontas.", frame: row(1)),
-                HerdTerminal(key: "interface", preset: .claude, role: "Você implementa a interface a partir do desenho: leia-o com `collie design inspect` e `collie design export`. Confira o resultado no Navegador e responda ao Pastor com o que mudou.", frame: row(2)),
-                HerdTerminal(key: "tester", preset: .claude, role: "Você compara `collie design screenshot` com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.", frame: row(3)),
+                HerdTerminal(key: "pastor", preset: .claude, role: tr("Você conduz esta feature do desenho à entrega. Peça primeiro as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas. O painel Design do rebanho já está aberto: use-o, não abra outro nem pergunte se deve desenhar antes.",
+           "You drive this feature from design to delivery. Ask the designer for the screens first; when they say which are ready, hand them to the interface. Before calling it done, ask the tester to compare against the design and only finish once the differences are resolved. The herd's Design panel is already open: use it, do not open another or ask whether to design first."), isShepherd: true, frame: row(0)),
+                HerdTerminal(key: "designer", preset: .claude, role: tr("Você desenha as telas no painel Design com `collie design …`, seguindo o design system ativo. Avise o Pastor, pela guia, quais telas estão prontas.",
+           "You design the screens in the Design panel with `collie design …`, following the active design system. Tell the Shepherd, through the leash, which screens are ready."), frame: row(1)),
+                HerdTerminal(key: "interface", preset: .claude, role: tr("Você implementa a interface a partir do desenho: leia-o com `collie design inspect` e `collie design export`. Confira o resultado no Navegador e responda ao Pastor com o que mudou.",
+           "You implement the interface from the design: read it with `collie design inspect` and `collie design export`. Check the result in the Browser and tell the Shepherd what changed."), frame: row(2)),
+                HerdTerminal(key: "tester", preset: .claude, role: tr("Você compara `collie design screenshot` com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.",
+           "You compare `collie design screenshot` with `collie browser screenshot` (and with the devices, if any) at the widths the Shepherd names. Report each difference to the Shepherd, with both images."), frame: row(3)),
             ],
             panels: [
                 HerdPanel(key: "design", pluginId: "design", placement: .canvas, state: ["file": .string("Feature")], frame: below(1)),
@@ -265,16 +275,20 @@ extension Herd {
             leashes: [["pastor", "designer"], ["pastor", "interface"], ["pastor", "tester"], ["designer", "design"], ["interface", "design"], ["interface", "navegador"], ["tester", "design"], ["tester", "navegador"]],
             builtIn: true),
         Herd(
-            id: "investigar-bug", name: "Investigar bug",
-            summary: "Pastor, investigador da causa e quem escreve o teste que falha.", wantsPaddock: false,
+            id: "investigar-bug", name: tr("Investigar bug", "Investigate bug"),
+            summary: tr("Pastor, investigador da causa e quem escreve o teste que falha.",
+           "Shepherd, a cause investigator and whoever writes the failing test."), wantsPaddock: false,
             terminals: [
-                HerdTerminal(key: "pastor", preset: .claude, role: "Você coordena a investigação de um bug. Peça ao investigador a causa com evidência e a quem testa um teste que falhe antes da correção.", isShepherd: true, frame: row(0)),
-                HerdTerminal(key: "investigador", preset: .claude, role: "Você encontra a causa raiz do bug com evidência (logs, reprodução, leitura do código). Não corrija antes de explicar a causa ao Pastor.", frame: row(1)),
-                HerdTerminal(key: "testes", preset: .claude, role: "Você escreve o teste que reproduz o bug e falha agora. Mostre a falha ao Pastor.", frame: row(2)),
+                HerdTerminal(key: "pastor", preset: .claude, role: tr("Você coordena a investigação de um bug. Peça ao investigador a causa com evidência e a quem testa um teste que falhe antes da correção.",
+           "You coordinate a bug investigation. Ask the investigator for the cause with evidence, and the tester for a test that fails before the fix."), isShepherd: true, frame: row(0)),
+                HerdTerminal(key: "investigador", preset: .claude, role: tr("Você encontra a causa raiz do bug com evidência (logs, reprodução, leitura do código). Não corrija antes de explicar a causa ao Pastor.",
+           "You find the bug's root cause with evidence (logs, reproduction, reading the code). Do not fix it before explaining the cause to the Shepherd."), frame: row(1)),
+                HerdTerminal(key: "testes", preset: .claude, role: tr("Você escreve o teste que reproduz o bug e falha agora. Mostre a falha ao Pastor.",
+           "You write the test that reproduces the bug and fails now. Show the failure to the Shepherd."), frame: row(2)),
             ],
             leashes: [["pastor", "investigador"], ["pastor", "testes"]],
             builtIn: true),
-    ]
+    ] }
 }
 
 extension Herd {
@@ -283,12 +297,17 @@ extension Herd {
     public func following(_ pref: DesignFirst) -> Herd {
         guard builtIn, id == "feature-com-design", pref != .figcraft else { return self }
         var h = self
-        h.summary = "Pastor, designer, interface e tester: desenha numa página na Prévia, implementa e confere contra o design."
+        h.summary = tr("Pastor, designer, interface e tester: desenha numa página na Prévia, implementa e confere contra o design.",
+           "Shepherd, designer, interface and tester: designs on a page in the Preview, implements and checks against the design.")
         let roles = [
-            "pastor": "Você conduz esta feature do desenho à entrega. Primeiro abra a página do design para o designer, a interface e o tester: `collie artifact new prototype feature --connect <designer>,<interface>,<tester>` (os nomes estão em `collie list`). Peça as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas. O design é essa página: não abra o FigCraft nem pergunte se deve desenhar antes.",
-            "designer": "Você desenha as telas na página que o Pastor abriu na Prévia (docs/pages/feature/index.html): HTML e CSS com os tokens do design system ativo, fontes offline (`collie font add`) e bibliotecas offline (`collie artifact libs`), sem CDN. Avise o Pastor, pela guia, quais telas estão prontas.",
-            "interface": "Você implementa a interface a partir da página de design (docs/pages/feature/index.html, aberta na Prévia). Confira o resultado no Navegador e responda ao Pastor com o que mudou.",
-            "tester": "Você compara `collie preview screenshot` da página de design com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.",
+            "pastor": tr("Você conduz esta feature do desenho à entrega. Primeiro abra a página do design para o designer, a interface e o tester: `collie artifact new prototype feature --connect <designer>,<interface>,<tester>` (os nomes estão em `collie list`). Peça as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas. O design é essa página: não abra o FigCraft nem pergunte se deve desenhar antes.",
+           "You drive this feature from design to delivery. First open the design page for the designer, the interface and the tester: `collie artifact new prototype feature --connect <designer>,<interface>,<tester>` (the names are in `collie list`). Ask the designer for the screens; when they say which are ready, hand them to the interface. Before calling it done, ask the tester to compare against the design and only finish once the differences are resolved. The design is that page: do not open FigCraft or ask whether to design first."),
+            "designer": tr("Você desenha as telas na página que o Pastor abriu na Prévia (docs/pages/feature/index.html): HTML e CSS com os tokens do design system ativo, fontes offline (`collie font add`) e bibliotecas offline (`collie artifact libs`), sem CDN. Avise o Pastor, pela guia, quais telas estão prontas.",
+           "You design the screens on the page the Shepherd opened in the Preview (docs/pages/feature/index.html): HTML and CSS with the active design system's tokens, offline fonts (`collie font add`) and offline libraries (`collie artifact libs`), no CDN. Tell the Shepherd, through the leash, which screens are ready."),
+            "interface": tr("Você implementa a interface a partir da página de design (docs/pages/feature/index.html, aberta na Prévia). Confira o resultado no Navegador e responda ao Pastor com o que mudou.",
+           "You implement the interface from the design page (docs/pages/feature/index.html, open in the Preview). Check the result in the Browser and tell the Shepherd what changed."),
+            "tester": tr("Você compara `collie preview screenshot` da página de design com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.",
+           "You compare `collie preview screenshot` of the design page with `collie browser screenshot` (and with the devices, if any) at the widths the Shepherd names. Report each difference to the Shepherd, with both images."),
         ]
         for i in h.terminals.indices { if let r = roles[h.terminals[i].key] { h.terminals[i].role = r } }
         h.panels.removeAll { $0.pluginId == "design" }

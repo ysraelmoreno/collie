@@ -13,7 +13,14 @@ private func manifest(_ edit: (inout [String: Any]) -> Void = { _ in }) throws(P
     return try PluginManifest.decode(try! JSONSerialization.data(withJSONObject: m))
 }
 private func refusal(_ edit: (inout [String: Any]) -> Void) -> ProtocolError? {
-    do throws(ProtocolError) { _ = try manifest(edit); return nil } catch { return error }
+    L10n.$override.withValue(.pt) {
+        do throws(ProtocolError) { _ = try manifest(edit); return nil } catch { return error }
+    }
+}
+private func refusalEn(_ edit: (inout [String: Any]) -> Void) -> ProtocolError? {
+    L10n.$override.withValue(.en) {
+        do throws(ProtocolError) { _ = try manifest(edit); return nil } catch { return error }
+    }
 }
 private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
     var c: [String: Any] = ["name": name, "summary": "s", "runs": "ui"]
@@ -284,5 +291,12 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         let json = String(decoding: try JSONEncoder().encode(m), as: UTF8.self)
         #expect(!json.contains("\"cwd\"") && !json.contains("\"result\"") && !json.contains("\"eventDiff\""), "\(json)")
         #expect(try PluginManifest.decode(JSONEncoder().encode(m)) == m)
+    }
+}
+
+@Suite struct PluginManifestEnglishTests {
+    @Test func newerCollieAndReservedId() {
+        #expect(refusalEn { $0["apiVersion"] = 3 }?.message.contains("needs a newer Collie") == true)
+        #expect(refusalEn { $0["id"] = "memory"; $0["events"] = [] }?.message.contains("is reserved by Collie") == true)
     }
 }

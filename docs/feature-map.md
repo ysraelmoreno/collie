@@ -114,6 +114,9 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   Registro das ações (d5): com o log ligado, `device tap|text|swipe|key|launch` de agente (`origin: agent:<nome>`) e o toque
   do painel (`origin: panel`) viram linhas; `sigBefore` do último `device screen`, `sigAfter` da tela devolvida (`--then screen`).
   Escrita fora do comando (falha só no log do daemon). Em `DeviceService.run(flow:)`. Testes: `--filter FlowActionRecordingTests`.
+  Executor de planos (d6): `device run --plan <arquivo>` (`--panel`/`--serial`) roda `{steps:[{action,target,text?,expectSig?}]}`
+  (até 200; arquivo pelas regras do `--body-file`, ≤ 256 KiB) pelos mesmos `device tap|text|swipe|key|launch`; depois de um passo com
+  `expectSig` lê a tela e para na primeira `sig` diferente (`{ok:false,stoppedAt,expected,got,screen}`). Em `FlowRunner`. Testes: `--filter FlowRunnerTests`.
   OCR (H6, Android; A3, iOS por `simctl io screenshot` com caixas convertidas de pixels para pontos; Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
   (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
   sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso

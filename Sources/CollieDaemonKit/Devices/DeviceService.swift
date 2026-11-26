@@ -57,6 +57,8 @@ actor DeviceService {
         var starting = false
     }
     private var crash: [String: CrashWatch] = [:]
+    /// Crash lines per device since its last `device screen` (d2), fed by the crash watchers above.
+    var screenErrors = ScreenErrors()
 
     private let scrcpyServer: URL?
     /// How long a session outlives its last viewer.
@@ -190,6 +192,10 @@ actor DeviceService {
             if let read, read.nodes == nil {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
+            }
+            if !closed.contains(panel.id), let lines = screenErrors.read(serial) {   // d2: ERROS DESDE A ÚLTIMA LEITURA, only when any
+                o["errors"] = .array(lines.map { .string($0) })
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + ScreenErrors.block(lines)) }
             }
             guard case .object(let u) = ui else { return o }
             if all { o["tree"] = u["tree"] }
@@ -684,6 +690,7 @@ actor DeviceService {
             for u in Set(watchedIOS.values) { if let e = IPSCrash.parse(data, udid: u) { out.append((u, e, name)) } }
         }
         for (u, e, name) in out {
+            screenErrors.record(u, e)
             await toPanels(of: u, "device.crash", ["serial": .string(u), "package": e.package.map { .string($0) } ?? .null, "text": .string(e.text),
                                                    "path": .string(dir.appendingPathComponent(name).path)])
         }
@@ -736,6 +743,7 @@ actor DeviceService {
 
     private func emitCrashes(_ serial: String, _ events: [CrashEvent]) async {
         for e in events {
+            screenErrors.record(serial, e)
             await toPanels(of: serial, "device.crash", ["serial": .string(serial), "package": e.package.map { .string($0) } ?? .null,
                                                         "text": .string(e.text)])
         }

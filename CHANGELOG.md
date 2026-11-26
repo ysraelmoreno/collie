@@ -2,9 +2,13 @@
 
 All notable changes to Collie, by version. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow the repository's `v*` tags (each tag publishes a signed and notarized release). Before 1.0, a new feature bumps the minor and a fix-only release bumps the patch (see "Versionamento" in `docs/release.md`); 0.1.0 to 0.1.9 bumped only the patch for every release, features included, and that is not repeated.
 
-Names in quotes are labels of the app, which is in Portuguese.
+Names in quotes are labels of the app in Portuguese.
 
 ## [Unreleased]
+
+### Added
+
+- **English:** the app, the daemon and the `collie` CLI speak Portuguese or English. Preferences › "Aparência" › "Idioma" (Sistema, Português, English); "Sistema" picks Portuguese on a Mac set to any Portuguese and English otherwise. The app restarts to switch; the daemon switches at once (`admin.language`) and passes `COLLIE_LANG` to every terminal it opens, so agents read the same language (a terminal already open keeps its own). Memories, names and other user data are never translated; MCP tool descriptions stay in English.
 
 ## [0.2.0] — 2026-11-25
 

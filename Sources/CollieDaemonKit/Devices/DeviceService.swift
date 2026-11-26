@@ -622,7 +622,7 @@ actor DeviceService {
     }
 
     /// Writes off the actor, in order (each write waits for the one before), so the command does not wait for the disk
-    /// (a rotation rewrites up to 10 MiB). A failure only reaches the daemon's log (stderr).
+    /// (a rotation reads at most `FlowActionLog.readCap`, 10 MiB, per kept file). A failure only reaches the daemon's log (stderr).
     func record(_ a: FlowAction, to log: FlowActionLog) {
         let prev = flowWrite
         flowWrite = Task.detached {

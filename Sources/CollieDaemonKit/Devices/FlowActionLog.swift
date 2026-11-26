@@ -34,6 +34,9 @@ struct FlowActionLog: Sendable {
     /// The opt-in file, outside the worktree.
     let flag: URL
     var maxBytes = 5 * 1024 * 1024
+    /// The most a rotation reads into memory per file. A bigger kept file (an agent can inflate it in its worktree) is
+    /// only renamed, never read nor filtered by age; it falls off after `keep` rotations.
+    var readCap: Int { 2 * maxBytes }
     var keep = 3
     var maxAge: TimeInterval = 30 * 86_400
 
@@ -90,7 +93,9 @@ struct FlowActionLog: Sendable {
         let cutoff = now.addingTimeInterval(-maxAge)
         for n in 1..<keep {
             guard let fd = try? openFile(d, name(n), O_RDONLY) else { unlinkat(d, name(n), 0); continue }
-            let raw = read(fd); close(fd)
+            if size(fd) > readCap { close(fd); continue }
+            let raw = read(fd, max: readCap); close(fd)
+            if raw.count > readCap { continue }   // grew after fstat
             let kept = String(decoding: raw, as: UTF8.self).split(separator: "\n").filter { l in
                 guard let o = try? JSONSerialization.jsonObject(with: Data(l.utf8)) as? [String: Any],
                       let t = (o["t"] as? String).flatMap(Self.date) else { return false }   // unreadable: dropped
@@ -141,14 +146,16 @@ struct FlowActionLog: Sendable {
             }
         }
     }
-    private func read(_ fd: Int32) -> Data {
+    /// At most `max + 1` bytes, so the caller sees the file went past `max`.
+    private func read(_ fd: Int32, max: Int) -> Data {
         var out = Data(), buf = [UInt8](repeating: 0, count: 64 * 1024)
-        while true {
-            let n = Darwin.read(fd, &buf, buf.count)
+        while out.count <= max {
+            let n = Darwin.read(fd, &buf, Swift.min(buf.count, max + 1 - out.count))
             if n < 0, errno == EINTR { continue }
             if n <= 0 { return out }
             out.append(contentsOf: buf[0..<n])
         }
+        return out
     }
     private func fail(_ what: String) -> ProtocolError {
         ProtocolError(code: .internal, message: "\(what): \(String(cString: strerror(errno)))")

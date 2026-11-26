@@ -18,7 +18,7 @@ private func failure(_ json: String) -> String? {
     do { _ = try ThemeFile.parse(Data(json.utf8)); return nil } catch { return error.message }
 }
 
-@Test func parsesDesignExample() throws {
+@Test(.themePT) func parsesDesignExample() throws {
     let t = try ThemeFile.parse(Data(example.utf8))
     #expect(t.name == "Tinta")
     #expect(t.extends == .dark)
@@ -26,7 +26,7 @@ private func failure(_ json: String) -> String? {
     #expect(t.colors["accent"] == RGB(hex: 0x6E9BFF))
 }
 
-@Test func rgbHexString() throws {
+@Test(.themePT) func rgbHexString() throws {
     #expect(RGB(hexString: "#6e9bff") == RGB(hex: 0x6E9BFF))
     #expect(RGB(hexString: "#6E9BFF") == RGB(hex: 0x6E9BFF))
     #expect(RGB(hex: 0x6E9BFF).hexString == "#6E9BFF")
@@ -34,7 +34,7 @@ private func failure(_ json: String) -> String? {
     for bad in ["6E9BFF", "#6E9BF", "#6E9BFFF", "#GGGGGG", "#+12345", ""] { #expect(RGB(hexString: bad) == nil) }
 }
 
-@Test func reportsEachError() {
+@Test(.themePT) func reportsEachError() {
     #expect(failure("nope") == "JSON inválido")
     #expect(failure("[1]") == "JSON inválido")
     #expect(failure(#"{"extends":"dark"}"#) == #"falta "name""#)
@@ -48,21 +48,21 @@ private func failure(_ json: String) -> String? {
     #expect(failure(#"{"name":"A","extends":"dark","colors":[]}"#) == #""colors": use um objeto"#)
 }
 
-@Test func nameLimits() {
+@Test(.themePT) func nameLimits() {
     #expect(failure(#"{"name":"\#(String(repeating: "a", count: 48))","extends":"dark"}"#) == nil)
     #expect(failure(#"{"name":"\#(String(repeating: "a", count: 49))","extends":"dark"}"#) != nil)
 }
 
-@Test func ignoresUnknownTopLevelAndTerminal() throws {
+@Test(.themePT) func ignoresUnknownTopLevelAndTerminal() throws {
     let t = try ThemeFile.parse(Data(#"{"name":"A","extends":"light","terminal":{"x":1},"futuro":true}"#.utf8))
     #expect(t.colors.isEmpty)
 }
 
-@Test func refusesOver64KiB() {
+@Test(.themePT) func refusesOver64KiB() {
     #expect(failure(String(repeating: " ", count: 64 * 1024 + 1)) == "arquivo grande demais")
 }
 
-@Test func roundTripAndKeyOrder() throws {
+@Test(.themePT) func roundTripAndKeyOrder() throws {
     let t = try ThemeFile.parse(Data(example.utf8))
     #expect(try ThemeFile.parse(t.data) == t)
     #expect(String(decoding: t.data, as: UTF8.self) == example + "\n")
@@ -70,7 +70,7 @@ private func failure(_ json: String) -> String? {
     #expect(try ThemeFile.parse(empty.data) == empty)
 }
 
-@Test func paletteInheritsFromBase() throws {
+@Test(.themePT) func paletteInheritsFromBase() throws {
     let dark = try ThemeFile.parse(Data(example.utf8)).palette
     #expect(dark.background == RGB(hex: 0x15171C))
     #expect(dark.text == Palette.dark.text)
@@ -79,12 +79,12 @@ private func failure(_ json: String) -> String? {
     #expect(light.background == Palette.light.background)
 }
 
-@Test func validIds() {
+@Test(.themePT) func validIds() {
     for ok in ["tinta", "meu-tema-2", "0", String(repeating: "a", count: 48)] { #expect(ThemeFile.validId(ok)) }
     for bad in ["", "Tinta", "../x", "-a", "a b", String(repeating: "a", count: 49)] { #expect(!ThemeFile.validId(bad)) }
 }
 
-@Test func readingsFlagLowContrast() throws {
+@Test(.themePT) func readingsFlagLowContrast() throws {
     let t = ThemeFile(name: "M", extends: .dark, colors: ["muted": Palette.dark.surface])
     let r = t.readings
     #expect(r.count == 8)

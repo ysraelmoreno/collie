@@ -3,6 +3,7 @@ import Foundation
 import Darwin
 import os
 import CollieCore
+import CollieDevice
 import CollieProtocol
 @testable import CollieDaemonKit
 

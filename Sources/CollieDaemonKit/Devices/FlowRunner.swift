@@ -201,7 +201,7 @@ enum FlowClassifier {
             let id = String(t.dropFirst(3))
             return [humanizeId(id)] + hits(text: nil, id: id)
         }
-        if t.hasPrefix("ref:") { return nodes.indices.filter { nodes[$0].ref == String(t.dropFirst(4)) }.flatMap(subtree) }
+        if t.hasPrefix("ref:") { return nodes.indices.filter { nodes[$0].ref == String(t.dropFirst(4)) }.flatMap { subtree($0) } }
         return [t] + hits(text: t, id: nil)
     }
 }

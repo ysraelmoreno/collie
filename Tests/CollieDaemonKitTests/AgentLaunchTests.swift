@@ -255,6 +255,7 @@ import CollieProtocol
         #expect(text.hasPrefix("---\n") && text.contains("alwaysApply: true"))
         #expect(text.contains("collie summon <name>") && text.contains("collie ask <name>") && text.contains("--no-wait"))
         #expect(text.contains("Do not do that work yourself") && text.contains("Do not use your own subagents"))
+        #expect(text.contains("Do not sleep or poll") && text.contains("collie wait <name>"))   // a busy Cursor reads a reply only when its turn ends
         #expect(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int == 0o600)
         r.isShepherd = false   // relaunched as a plain terminal: the rule goes
         _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")

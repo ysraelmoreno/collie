@@ -89,7 +89,7 @@ public enum AgentLaunch {
     When the user asks you to open, create or start a terminal or an agent, that is a request to DELEGATE:
     1. `collie summon <name>` (no --preset: it is the same kind of agent as you).
     2. Hand that terminal the whole task: `collie ask <name> "<the task, with what it needs to know>" --no-wait`.
-    3. Wait for its reply (it comes back as a message; `collie ask result <id>`), check it, and answer the user.
+    3. Do not sleep or poll: a reply cannot reach you in the middle of a command, only when your turn ends. Either end your turn (the reply arrives as a new message; `collie ask result <id>` lists your asks) or, to stay in this turn, block with `collie wait <name>`. Then check what came back and answer the user.
 
     Do not do that work yourself, in parallel or before it answers: no shell commands, no file reads for the task. Do not use your own subagents. Do not edit the files you asked it to change.
     Your part is only to summon, ask, check, review what comes back, and report.

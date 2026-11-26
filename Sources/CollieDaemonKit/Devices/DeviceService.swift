@@ -59,6 +59,8 @@ actor DeviceService {
     private var crash: [String: CrashWatch] = [:]
     /// Crash lines per device since its last `device screen` (d2), fed by the crash watchers above.
     var screenErrors = ScreenErrors()
+    /// Android pixels per dp per serial (`wm density`, d3); nil inside: unreadable, so target sizes are not judged.
+    var densities: [String: Double?] = [:]
 
     private let scrcpyServer: URL?
     /// How long a session outlives its last viewer.
@@ -96,6 +98,15 @@ actor DeviceService {
 
     /// The session's one `adb start-server` (shared by concurrent first callers; retried after a failure).
     private var server: Task<Bool, Never>?
+
+    /// Pixels per dp of an Android serial, read once (`wm density`); nil: unreadable.
+    func density(_ serial: String) async -> Double? {
+        if let d = densities[serial] { return d }
+        let out = try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
+        let d = out.flatMap(ScreenAccessibility.density(wm:))
+        densities[serial] = .some(d)
+        return d
+    }
 
     /// The adb tool, with the server started (`Adb.startServer`) before its first use in this daemon session.
     func tool() async throws(ProtocolError) -> Adb {
@@ -192,6 +203,11 @@ actor DeviceService {
             if let read, read.nodes == nil {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
+            }
+            let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: await density(serial))
+            if let a11y = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
+                o["accessibility"] = .string(a11y)
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + a11y) }
             }
             if !closed.contains(panel.id), let lines = screenErrors.read(serial) {   // d2: ERROS DESDE A ÚLTIMA LEITURA, only when any
                 o["errors"] = .array(lines.map { .string($0) })

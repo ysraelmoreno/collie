@@ -29,9 +29,8 @@ public struct PluginCatalog: Codable, Sendable, Equatable {
     public var plugins: [Item], publishers: [Publisher]
 
     /// Base64 of raw Ed25519 public keys (32 bytes). Several allowed for rotation; a new app version drops the old one.
-    /// The placeholder is not valid base64, so until the real key lands no catalog is accepted.
     public static let publicKeys: [String] = [
-        "PLACEHOLDER-chave-publica-do-catalogo", // o dono troca pela real (README, Ações do dono 3)
+        "OIEgfTHgUxNlZGzQOA+VwZQ8szK6uuDEAJztyELcBLQ=",   // catalog key, 2026-11-25 (private half: secret PLUGIN_CATALOG_KEY)
     ]
     public static let staleAfter: TimeInterval = 30 * 24 * 3600
     static let urlPrefix = "https://github.com/ysraelmoreno/collie/releases/download/plugin-"

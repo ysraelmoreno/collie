@@ -80,7 +80,9 @@ extension CommandRouter {
         }
         let flow = caller.flatMap { me in flowLog(me.paddockId ?? target.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
         let devices = devices, cwd = r.cwd
-        return try await FlowRunner(confirmed: confirmed, nodes: { await devices.flowNodes(target.id) }) { c, a async throws(ProtocolError) in
+        return try await FlowRunner(confirmed: confirmed, classify: { s async throws(ProtocolError) in
+            try await devices.flowDestructive(s, panel: target, cwd: cwd)
+        }) { c, a async throws(ProtocolError) in
             try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
         }.run(plan)
     }

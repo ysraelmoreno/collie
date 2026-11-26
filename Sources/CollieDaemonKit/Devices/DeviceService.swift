@@ -613,8 +613,14 @@ actor DeviceService {
         if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
     }
 
-    /// The nodes of the panel's last tree read (`device.ui`/`screen`/`find`), for `FlowClassifier` (b3); [] before any.
-    func flowNodes(_ panel: UUID) -> [UINode] { refs[panel] ?? [] }
+    /// c1: whether plan step `s` acts on a destructive node of `panel` (`FlowClassifier.classify`), the screen read
+    /// again (the `device.ui` path, refs updated) for a point or when an action came after the last read.
+    func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> Bool {
+        try await FlowClassifier.classify(s, fresh: flowFresh.contains(panel.id), nodes: refs[panel.id] ?? []) { () async throws(ProtocolError) -> [UINode] in
+            _ = try await tracked("device.ui", panel: panel, args: [:], cwd: cwd)
+            return refs[panel.id] ?? []
+        }
+    }
 
     /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.
     func flowSig(_ panel: UUID) -> String { flowSpent.contains(panel) ? "" : lastScreen[panel].map(ScreenSignature.compute) ?? "" }

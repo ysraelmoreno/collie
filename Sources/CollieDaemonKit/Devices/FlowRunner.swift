@@ -77,20 +77,23 @@ extension FlowPlan.Step {
     }
 }
 
-/// b3: the server's own call on whether a step is destructive, besides the plan's `destructive: true`. A tap's target
-/// resolves to labels (the `tap` text and the node it finds, `id:` humanized and its node, `ref:` its node, `x,y` the
-/// smallest labeled node under it) in `nodes`, the panel's last tree read; a label is destructive when, ignoring case
-/// and accents, it holds one of `destructiveLabels` as whole words. A target that cannot be resolved (`x,y` with no
-/// read, a `ref:` not in it) is not classified. Only taps are classified: keys, swipes, typing and launches are not.
-/// ponytail: `nodes` is the last read, maybe from before earlier steps of the plan; a stale node can classify a tap
-/// either way. Upgrade: read the screen before each unmarked coordinate tap.
+/// b3/c1: the server's own call on whether a step is destructive, besides the plan's `destructive: true`. A tap's target
+/// resolves the way `device.tap` resolves it (`UITree.target`: text by equal then "contains", or `id:`, climbing to the
+/// clickable ancestor; `ref:` its node; `x,y` the smallest node under it and its clickable ancestor), and a swipe's start
+/// point the way `x,y` does. Its labels are the node's and, when the node is clickable (a click on it acts for all of
+/// them), every descendant's: text, description and humanized id; a tap's text and `id:` humanized count too. A label is
+/// destructive when, ignoring case and accents, it holds one of `destructiveLabels` as whole words. A target that
+/// resolves to nothing is classified by its own text only. Keys, typing and launches are not classified.
+/// ponytail: a `key Enter` or `text "…\n"` right after a tap on a password or payment field submits it unclassified;
+/// a tap the tree misses and the OCR fallback finds is classified by its text only. Upgrade: remember the last tapped field.
 enum FlowClassifier {
-    /// Verbs and labels (pt and en) that spend money, delete, or leave the account. Extend here.
+    /// Verbs and labels (pt and en) that spend money, send, delete, or leave the account. Extend here.
     static let destructiveLabels: [String] = [
-        "pagar", "finalizar", "comprar", "confirmar pedido", "confirmar compra", "confirmar pagamento",
-        "excluir", "apagar", "remover", "deletar", "sair da conta", "desinstalar", "assinar plano",
-        "pay", "buy", "purchase", "place order", "checkout", "check out", "delete", "remove", "erase",
-        "sign out", "log out", "logout", "confirm", "uninstall", "subscribe",
+        "pagar", "pague", "pagamento", "finalizar", "concluir", "comprar", "confirmar", "confirmar pedido", "confirmar compra",
+        "confirmar pagamento", "excluir", "apagar", "remover", "deletar", "sair", "sair da conta", "transferir", "enviar",
+        "desinstalar", "assinar plano",
+        "pay", "buy", "purchase", "order", "place order", "checkout", "check out", "delete", "remove", "erase",
+        "sign out", "log out", "logout", "submit", "send", "transfer", "confirm", "uninstall", "subscribe",
     ]
 
     /// Lowercased, without accents, words joined by one space.
@@ -106,23 +109,57 @@ enum FlowClassifier {
 
     static func destructive(_ s: FlowPlan.Step, nodes: [UINode]) -> Bool { labels(s, nodes: nodes).contains(where: destructive) }
 
-    /// What a tap step's target is called, for `destructive`; empty for other actions or an unresolved target.
+    /// c1: `s` classified against the screen its command will act on. `nodes` is the last read; `dump` reads the screen
+    /// again (the `device.ui` path). A `ref:` keeps `nodes` (a new read renumbers the refs the tap will use); a point
+    /// (`x,y`, a swipe) or a read that is not `fresh` (an action since) reads first.
+    static func classify(_ s: FlowPlan.Step, fresh: Bool, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
+                         dump: () async throws(ProtocolError) -> [UINode]) async throws(ProtocolError) -> Bool {
+        guard s.action == "tap" || s.action == "swipe" else { return false }
+        let ref = s.action == "tap" && s.target.hasPrefix("ref:")
+        let read = ref || (fresh && point(s) == nil) ? nodes : try await dump()
+        return destructive(s, nodes: read)
+    }
+
+    /// The point a tap `x,y` or a swipe `x1,y1,…` starts at; nil for other targets.
+    static func point(_ s: FlowPlan.Step) -> CGPoint? {
+        let p = s.target.split(separator: ",", omittingEmptySubsequences: false).compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard (s.action == "tap" && p.count == 2) || (s.action == "swipe" && p.count == 4) else { return nil }
+        return CGPoint(x: p[0], y: p[1])
+    }
+
+    /// What a tap or swipe step's target is called, for `destructive`; empty for other actions or an unresolved point.
     static func labels(_ s: FlowPlan.Step, nodes: [UINode]) -> [String] {
         func names(_ n: UINode) -> [String] { [n.text, n.desc, humanizeId(n.id)].filter { !$0.isEmpty } }
+        /// Node `i` and, when it is clickable, its descendants (pre-order: the deeper nodes right after it).
+        func subtree(_ i: Int) -> [String] {
+            var out = names(nodes[i]), j = i + 1
+            while nodes[i].clickable, j < nodes.count, nodes[j].depth > nodes[i].depth { out += names(nodes[j]); j += 1 }
+            return out
+        }
+        /// Every node `device.tap --text/--id` could pick (its clickable ancestor), as `UITree.target` finds them.
+        func hits(text: String?, id: String?) -> [String] {
+            var found: [String] = []
+            _ = try? UITree.target(nodes, text: text, id: id, nth: 1, keep: { found.append($0.ref); return true })
+            return nodes.indices.filter { found.contains(nodes[$0].ref) }.flatMap(subtree)
+        }
+        if let pt = point(s) {
+            let area = { (i: Int) in nodes[i].bounds.width * nodes[i].bounds.height }
+            guard var i = nodes.indices.filter({ nodes[$0].bounds.contains(pt) }).min(by: { area($0) < area($1) }) else { return [] }
+            var d = nodes[i].depth
+            for j in nodes.indices.prefix(i).reversed() where !nodes[i].clickable && nodes[j].depth < d {   // as UITree.target climbs
+                if nodes[j].clickable { i = j; break }
+                d = nodes[j].depth
+            }
+            return subtree(i)
+        }
         guard s.action == "tap" else { return [] }
         let t = s.target
         if t.hasPrefix("id:") {
             let id = String(t.dropFirst(3))
-            return [humanizeId(id)] + nodes.filter { $0.id == id }.flatMap(names)
+            return [humanizeId(id)] + hits(text: nil, id: id)
         }
-        if t.hasPrefix("ref:") { return nodes.filter { $0.ref == String(t.dropFirst(4)) }.flatMap(names) }
-        let xy = t.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        if xy.count == 2, let x = Int(xy[0]), let y = Int(xy[1]) {
-            let pt = CGPoint(x: x, y: y)
-            let under = nodes.filter { $0.bounds.contains(pt) && !names($0).isEmpty }
-            return under.min(by: { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }).map(names) ?? []
-        }
-        return [t] + ((try? UITree.target(nodes, text: t, id: nil, nth: nil)).map(names) ?? [])
+        if t.hasPrefix("ref:") { return nodes.indices.filter { nodes[$0].ref == String(t.dropFirst(4)) }.flatMap(subtree) }
+        return [t] + hits(text: t, id: nil)
     }
 }
 
@@ -135,22 +172,28 @@ enum FlowClassifier {
 /// plan (the request gone) stops before the next step: a `timeout` error naming how many steps were done.
 /// d7: a `destructive` step runs only when `confirmed` (the user's `--confirm-destructive`; the router never sets it for
 /// an agent); else the plan stops before it: `{ok:false, refused:"destructive", at (1-based), done}`, the earlier
-/// steps staying run. b3: a step `FlowClassifier` finds destructive (against `nodes`, the panel's last tree read) is
-/// refused the same way, marked or not.
+/// steps staying run. b3/c1: a step `classify` finds destructive (the device service, `DeviceService.flowDestructive`,
+/// on the screen the step acts on) is refused the same way, marked or not; a failing classification stops the plan.
 struct FlowRunner: Sendable {
     typealias Act = @Sendable (_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue
+    typealias Classify = @Sendable (FlowPlan.Step) async throws(ProtocolError) -> Bool
     var confirmed = false
-    let nodes: @Sendable () async -> [UINode]
+    let classify: Classify
     let act: Act
 
-    init(confirmed: Bool = false, nodes: @escaping @Sendable () async -> [UINode] = { [] }, act: @escaping Act) {
-        self.confirmed = confirmed; self.nodes = nodes; self.act = act
+    init(confirmed: Bool = false, classify: @escaping Classify = { _ in false }, act: @escaping Act) {
+        self.confirmed = confirmed; self.classify = classify; self.act = act
     }
 
-    /// Marked by the plan, or a tap the server classifies.
-    func destructive(_ s: FlowPlan.Step) async -> Bool {
+    /// ponytail: a fixed screen (`nodes`, never read again), for tests of `FlowClassifier.labels`.
+    init(confirmed: Bool = false, nodes: @escaping @Sendable () async -> [UINode], act: @escaping Act) {
+        self.init(confirmed: confirmed, classify: { s in FlowClassifier.destructive(s, nodes: await nodes()) }, act: act)
+    }
+
+    /// Marked by the plan, or a step the server classifies.
+    func destructive(_ s: FlowPlan.Step) async throws(ProtocolError) -> Bool {
         if s.destructive == true { return true }
-        return s.action == "tap" ? FlowClassifier.destructive(s, nodes: await nodes()) : false
+        return try await classify(s)
     }
 
     func run(_ plan: FlowPlan) async throws(ProtocolError) -> JSONValue {
@@ -165,7 +208,11 @@ struct FlowRunner: Sendable {
             if Task.isCancelled {
                 throw ProtocolError(code: .timeout, message: "plan cancelled before step \(i + 1) (done: \(i))")
             }
-            if !confirmed, await destructive(step) {
+            let refuse: Bool
+            do { refuse = confirmed ? false : try await destructive(step) } catch {
+                throw ProtocolError(code: error.code, message: "step \(i + 1) (\(step.action) \(step.target)): \(error.message)")
+            }
+            if refuse {
                 return result(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
                                "done": .number(Double(i))])
             }

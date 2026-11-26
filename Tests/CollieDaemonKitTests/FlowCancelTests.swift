@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 

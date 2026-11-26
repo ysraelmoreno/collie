@@ -45,20 +45,20 @@ public enum FactoryBait {
         /// One line, in Portuguese, with the path. Values come from the file: whoever shows them cleans them.
         public var message: String {
             switch self {
-            case .badJSON(let f): "\(f) não é JSON válido"
-            case .unknownField(let p): "campo desconhecido '\(p)'"
-            case .missingField(let p): "falta o campo obrigatório '\(p)'"
-            case .wrongType(let p, let e): "'\(p)' precisa ser \(e)"
-            case .unsupportedVersion(let v): "version é \(v); só a version 1 é aceita"
-            case .badName(let p, let n): "nome inválido '\(n)' em '\(p)': use a-z, 0-9 e '-', de 1 a \(ProjectWorkConfig.maxAreaName) caracteres"
-            case .duplicate(let p, let v): "'\(v)' aparece repetido em '\(p)'"
-            case .tooMany(let p, let n, let l): "'\(p)' tem \(n) itens; o limite é \(l)"
-            case .badPath(let p): "'\(p)' precisa ser caminho relativo ao repositório (sem '..', sem '/' inicial, sem controle, até \(FactoryProfile.maxBaseline) caracteres)"
-            case .badChoice(let p, let v, let a): "'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))"
-            case .badText(let p): "'\(p)' precisa ser texto não vazio de até \(maxText) caracteres, sem controle"
-            case .outOfRange(let p, let v): "'\(p)' é \(v); precisa ser inteiro de 0 a \(maxCost)"
-            case .caughtWithoutLayer(let p): "'\(p)': caught true precisa de layer (a camada que pegou)"
-            case .escapedWithoutLayer(let p): "'\(p)': caught false precisa de layer (a camada que devia ter pegado)"
+            case .badJSON(let f): tr("\(f) não é JSON válido", "\(f) is not valid JSON")
+            case .unknownField(let p): tr("campo desconhecido '\(p)'", "unknown field '\(p)'")
+            case .missingField(let p): tr("falta o campo obrigatório '\(p)'", "required field '\(p)' is missing")
+            case .wrongType(let p, let e): tr("'\(p)' precisa ser \(e)", "'\(p)' must be \(e)")
+            case .unsupportedVersion(let v): tr("version é \(v); só a version 1 é aceita", "version is \(v); only version 1 is accepted")
+            case .badName(let p, let n): tr("nome inválido '\(n)' em '\(p)': use a-z, 0-9 e '-', de 1 a \(ProjectWorkConfig.maxAreaName) caracteres", "invalid name '\(n)' in '\(p)': use a-z, 0-9 and '-', 1 to \(ProjectWorkConfig.maxAreaName) characters")
+            case .duplicate(let p, let v): tr("'\(v)' aparece repetido em '\(p)'", "'\(v)' appears twice in '\(p)'")
+            case .tooMany(let p, let n, let l): tr("'\(p)' tem \(n) itens; o limite é \(l)", "'\(p)' has \(n) items; the limit is \(l)")
+            case .badPath(let p): tr("'\(p)' precisa ser caminho relativo ao repositório (sem '..', sem '/' inicial, sem controle, até \(FactoryProfile.maxBaseline) caracteres)", "'\(p)' must be a path relative to the repository (no '..', no leading '/', no control characters, up to \(FactoryProfile.maxBaseline) characters)")
+            case .badChoice(let p, let v, let a): tr("'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))", "'\(p)' is '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " or "))")
+            case .badText(let p): tr("'\(p)' precisa ser texto não vazio de até \(maxText) caracteres, sem controle", "'\(p)' must be non-empty text of up to \(maxText) characters, no control characters")
+            case .outOfRange(let p, let v): tr("'\(p)' é \(v); precisa ser inteiro de 0 a \(maxCost)", "'\(p)' is \(v); must be an integer from 0 to \(maxCost)")
+            case .caughtWithoutLayer(let p): tr("'\(p)': caught true precisa de layer (a camada que pegou)", "'\(p)': caught true needs a layer (the layer that caught it)")
+            case .escapedWithoutLayer(let p): tr("'\(p)': caught false precisa de layer (a camada que devia ter pegado)", "'\(p)': caught false needs a layer (the layer that should have caught it)")
             }
         }
     }
@@ -102,16 +102,16 @@ public enum FactoryBait {
     }
     static func version(_ root: [String: Any]) throws {
         guard let v = root["version"] else { throw BaitError.missingField("version") }
-        guard let n = v as? NSNumber, !isBool(n) else { throw BaitError.wrongType(path: "version", expected: "número") }
+        guard let n = v as? NSNumber, !isBool(n) else { throw BaitError.wrongType(path: "version", expected: tr("número", "a number")) }
         guard n.doubleValue == 1 else { throw BaitError.unsupportedVersion(n.stringValue) }
     }
     static func object(_ v: Any, _ path: String, known: Set<String>) throws -> [String: Any] {
-        guard let o = v as? [String: Any] else { throw BaitError.wrongType(path: path.isEmpty ? "raiz" : path, expected: "objeto") }
+        guard let o = v as? [String: Any] else { throw BaitError.wrongType(path: path.isEmpty ? tr("raiz", "root") : path, expected: tr("objeto", "an object")) }
         if let k = o.keys.filter({ !known.contains($0) }).sorted().first { throw BaitError.unknownField(path.isEmpty ? k : "\(path).\(k)") }
         return o
     }
     static func list(_ v: Any, _ path: String, limit: Int) throws -> [Any] {
-        guard let a = v as? [Any] else { throw BaitError.wrongType(path: path, expected: "lista") }
+        guard let a = v as? [Any] else { throw BaitError.wrongType(path: path, expected: tr("lista", "a list")) }
         guard a.count <= limit else { throw BaitError.tooMany(path: path, count: a.count, limit: limit) }
         return a
     }
@@ -120,7 +120,7 @@ public enum FactoryBait {
         return v
     }
     static func string(_ v: Any, _ path: String) throws -> String {
-        guard let s = v as? String else { throw BaitError.wrongType(path: path, expected: "texto") }
+        guard let s = v as? String else { throw BaitError.wrongType(path: path, expected: tr("texto", "text")) }
         return s
     }
     static func name(_ v: Any, _ path: String) throws -> String {
@@ -170,11 +170,11 @@ public struct BaitResults: Codable, Sendable, Equatable {
             for (i, item) in try F.list(try F.required(root, "runs", ""), "runs", limit: F.maxRuns).enumerated() {
                 let p = "runs[\(i)]"
                 let o = try F.object(item, p, known: ["bait", "date", "caught", "layer", "persona", "costSeconds"])
-                guard let c = try F.required(o, "caught", p) as? NSNumber, F.isBool(c) else { throw F.BaitError.wrongType(path: "\(p).caught", expected: "booleano") }
+                guard let c = try F.required(o, "caught", p) as? NSNumber, F.isBool(c) else { throw F.BaitError.wrongType(path: "\(p).caught", expected: tr("booleano", "a boolean")) }
                 let layer: FactoryDoctor.Layer? = try o["layer"].flatMap { $0 is NSNull ? nil : $0 }.map { try F.choice($0, "\(p).layer") }
                 let persona = try o["persona"].flatMap { $0 is NSNull ? nil : $0 }.map { try F.name($0, "\(p).persona") }
                 guard let n = try F.required(o, "costSeconds", p) as? NSNumber, !F.isBool(n), let cost = Int(exactly: n.doubleValue)
-                else { throw F.BaitError.wrongType(path: "\(p).costSeconds", expected: "número inteiro") }
+                else { throw F.BaitError.wrongType(path: "\(p).costSeconds", expected: tr("número inteiro", "an integer")) }
                 guard cost >= 0, cost <= F.maxCost else { throw F.BaitError.outOfRange(path: "\(p).costSeconds", value: cost) }
                 if layer == nil { throw c.boolValue ? F.BaitError.caughtWithoutLayer(path: p) : F.BaitError.escapedWithoutLayer(path: p) }
                 out.runs.append(Run(bait: try F.name(try F.required(o, "bait", p), "\(p).bait"), date: try F.text(try F.required(o, "date", p), "\(p).date"),
@@ -254,11 +254,11 @@ public struct BaitResults: Codable, Sendable, Equatable {
     /// The `report` text: rate per layer and per persona, the baits that got past, total cost.
     public func report() -> String {
         func rows(_ m: [String: Rate]) -> [String] { m.keys.sorted().map { "  \($0): \(m[$0]!.text)" } }
-        var lines = ["execuções: \(runs.count), custo: \(totalCost) s", "por camada:"] + rows(captureRateByLayer())
-        lines += ["por persona:"] + rows(captureRateByPersona())
+        var lines = [tr("execuções: \(runs.count), custo: \(totalCost) s", "runs: \(runs.count), cost: \(totalCost) s"), tr("por camada:", "by layer:")] + rows(captureRateByLayer())
+        lines += [tr("por persona:", "by persona:")] + rows(captureRateByPersona())
         let gone = runs.filter { !$0.caught }
-        lines.append(gone.isEmpty ? "nenhuma isca passou" : "iscas que passaram:")
-        lines += gone.map { "  \($0.bait) (\($0.date), camada \($0.layer?.rawValue ?? "?"))" }
+        lines.append(gone.isEmpty ? tr("nenhuma isca passou", "no bait got through") : tr("iscas que passaram:", "baits that got through:"))
+        lines += gone.map { "  \($0.bait) (\($0.date), \(tr("camada", "layer")) \($0.layer?.rawValue ?? "?"))" }
         return lines.joined(separator: "\n") + "\n"
     }
 }

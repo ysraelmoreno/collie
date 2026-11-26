@@ -105,21 +105,21 @@ public enum ConfinedDir {
     /// The project root as a fd (a link as the root is refused). The caller closes it.
     public static func openRoot(_ path: String) throws(Failure) -> Int32 {
         let fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard fd >= 0 else { throw Failure(message: "não consegui abrir a raiz do projeto") }
+        guard fd >= 0 else { throw Failure(message: tr("não consegui abrir a raiz do projeto", "could not open the project root")) }
         return fd
     }
 
     /// The folder of `rel` (its last component is the file) below the open `root` fd, which stays open. The caller closes the result.
     public static func openDir(_ root: Int32, rel: String) throws(Failure) -> Int32 {
         var fd = dup(root)
-        guard fd >= 0 else { throw Failure(message: "não consegui abrir a raiz do projeto") }
+        guard fd >= 0 else { throw Failure(message: tr("não consegui abrir a raiz do projeto", "could not open the project root")) }
         for c in rel.split(separator: "/").dropLast() {
             let next = openat(fd, String(c), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             let e = errno
             close(fd)
             guard next >= 0 else {
-                throw Failure(message: e == ENOENT ? "a pasta do baseline '\(rel)' não existe"
-                              : "a pasta do baseline '\(rel)' não é uma pasta comum (link simbólico?)")
+                throw Failure(message: e == ENOENT ? tr("a pasta do baseline '\(rel)' não existe", "the baseline folder '\(rel)' does not exist")
+                              : tr("a pasta do baseline '\(rel)' não é uma pasta comum (link simbólico?)", "the baseline folder '\(rel)' is not a regular folder (symlink?)"))
             }
             fd = next
         }
@@ -154,22 +154,22 @@ public enum BaselineWriter {
 
     public static func write(_ text: String, root: String, rel: String) throws(Failure) {
         guard root.hasPrefix("/"), FactoryProfile.confinedPath(rel), let name = rel.split(separator: "/").last.map(String.init)
-        else { throw Failure(message: "caminho do baseline inválido: \(rel)") }
+        else { throw Failure(message: tr("caminho do baseline inválido: \(rel)", "invalid baseline path: \(rel)")) }
         let bytes = Array(text.utf8)
-        guard bytes.count <= maxBytes else { throw Failure(message: "o baseline novo passa de \(maxBytes) bytes") }
+        guard bytes.count <= maxBytes else { throw Failure(message: tr("o baseline novo passa de \(maxBytes) bytes", "the new baseline is over \(maxBytes) bytes")) }
         let dir: Int32
         do { dir = try ConfinedDir.openDir(root: root, rel: rel) } catch { throw Failure(message: error.message) }
         defer { close(dir) }
         var st = stat(), mode: mode_t = 0o644
         if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0 {
-            guard st.st_mode & S_IFMT == S_IFREG else { throw Failure(message: "\(rel) não é um arquivo regular (link simbólico?)") }
+            guard st.st_mode & S_IFMT == S_IFREG else { throw Failure(message: tr("\(rel) não é um arquivo regular (link simbólico?)", "\(rel) is not a regular file (symlink?)")) }
             mode = st.st_mode & 0o777
         } else if errno != ENOENT {
-            throw Failure(message: "não consegui ler \(rel): \(String(cString: strerror(errno)))")
+            throw Failure(message: tr("não consegui ler \(rel): \(String(cString: strerror(errno)))", "could not read \(rel): \(String(cString: strerror(errno)))"))
         }
         let tmp = ".\(name).\(UUID().uuidString).tmp"
         let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw Failure(message: "não consegui gravar o temporário de \(rel): \(String(cString: strerror(errno)))") }
+        guard fd >= 0 else { throw Failure(message: tr("não consegui gravar o temporário de \(rel): \(String(cString: strerror(errno)))", "could not write the temporary file for \(rel): \(String(cString: strerror(errno)))")) }
         var off = 0
         while off < bytes.count {
             let n = bytes[off...].withUnsafeBytes { Foundation.write(fd, $0.baseAddress, $0.count) }
@@ -178,14 +178,14 @@ public enum BaselineWriter {
         }
         let synced = off == bytes.count && fchmod(fd, mode) == 0 && fsync(fd) == 0
         close(fd)
-        guard synced else { unlinkat(dir, tmp, 0); throw Failure(message: "não consegui gravar o temporário de \(rel)") }
+        guard synced else { unlinkat(dir, tmp, 0); throw Failure(message: tr("não consegui gravar o temporário de \(rel)", "could not write the temporary file for \(rel)")) }
         // the destination is checked again right before: a link put there meanwhile is refused, not replaced
         if fstatat(dir, name, &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT != S_IFREG {
-            unlinkat(dir, tmp, 0); throw Failure(message: "\(rel) não é um arquivo regular (link simbólico?)")
+            unlinkat(dir, tmp, 0); throw Failure(message: tr("\(rel) não é um arquivo regular (link simbólico?)", "\(rel) is not a regular file (symlink?)"))
         }
         guard renameat(dir, tmp, dir, name) == 0 else {
             let e = errno; unlinkat(dir, tmp, 0)
-            throw Failure(message: "rename do baseline falhou: \(String(cString: strerror(e)))")
+            throw Failure(message: tr("rename do baseline falhou: \(String(cString: strerror(e)))", "baseline rename failed: \(String(cString: strerror(e)))"))
         }
         fsync(dir)   // nit F (round 3): the rename itself reaches the disk
     }

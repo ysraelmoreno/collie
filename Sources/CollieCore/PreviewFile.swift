@@ -11,17 +11,17 @@ public enum PreviewFile {
     /// `requested` (relative to `projectRoot`, or absolute); symlinks resolved, inside the project, `.html`/`.htm`, ≤ 8 MiB.
     public static func resolve(_ requested: String, projectRoot: URL) throws(ProtocolError) -> URL {
         let path = requested.trimmingCharacters(in: .whitespaces)
-        guard !path.isEmpty else { throw bad("informe a página (--file)") }
+        guard !path.isEmpty else { throw bad(tr("informe a página (--file)", "give the page (--file)")) }
         let root = DiagramFile.real(projectRoot)
         let url = DiagramFile.real(path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path))
         guard ["html", "htm"].contains(url.pathExtension.lowercased()), !path.hasSuffix("/") else {
-            throw bad("a página precisa ser um arquivo .html: \(path)")
+            throw bad(tr("a página precisa ser um arquivo .html: \(path)", "the page must be an .html file: \(path)"))
         }
         guard url.pathComponents.count > root.pathComponents.count, url.pathComponents.starts(with: root.pathComponents) else {
-            throw bad("a página precisa ficar dentro do projeto \(root.path): \(path)")
+            throw bad(tr("a página precisa ficar dentro do projeto \(root.path): \(path)", "the page must be inside the project \(root.path): \(path)"))
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > DiagramFile.maxBytes {
-            throw bad("página grande demais (máximo \(DiagramFile.maxBytes >> 20) MiB): \(path)")
+            throw bad(tr("página grande demais (máximo \(DiagramFile.maxBytes >> 20) MiB): \(path)", "page too large (max \(DiagramFile.maxBytes >> 20) MiB): \(path)"))
         }
         return url
     }

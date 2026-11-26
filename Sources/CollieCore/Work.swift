@@ -157,8 +157,9 @@ public struct TokenCount: Codable, Sendable, Equatable {
     /// "1,2 M (índice relativo) · 14 msgs": decimal comma; "mil" and "M" past a thousand and a million.
     public var label: String {
         let i = index
-        let n = i >= 1e6 ? String(format: "%.1f M", i / 1e6) : i >= 1e3 ? String(format: "%.1f mil", i / 1e3) : String(Int(i.rounded()))
-        return n.replacingOccurrences(of: ".", with: ",") + " (índice relativo) · \(messages) " + (messages == 1 ? "msg" : "msgs")
+        let en = L10n.current == .en
+        let n = i >= 1e6 ? String(format: "%.1f M", i / 1e6) : i >= 1e3 ? String(format: en ? "%.1f k" : "%.1f mil", i / 1e3) : String(Int(i.rounded()))
+        return (en ? n : n.replacingOccurrences(of: ".", with: ",")) + tr(" (índice relativo) · \(messages) ", " (relative index) · \(messages) ") + (messages == 1 ? "msg" : "msgs")
     }
 }
 
@@ -265,8 +266,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// C5c: `preCheck`, the loop's first phase (the open tasks' checks before any attempt).
         case agent, check, gate, review, preCheck
         public var label: String {
-            switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão"
-            case .preCheck: "verificando checks que já passam" }
+            switch self { case .agent: tr("agente trabalhando", "agent working"); case .check: tr("rodando o check", "running the check"); case .gate: tr("rodando o portão", "running the gate"); case .review: tr("revisão", "review")
+            case .preCheck: tr("verificando checks que já passam", "verifying checks that already pass") }
         }
     }
     public var phase: Phase?
@@ -321,41 +322,41 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// For the owner, short.
         public var label: String {
             switch code {
-            case .requested: "pedido pelo dono (work stop)"
-            case .workGone: "trabalho fechado ou parado por fora"
-            case .starterGone: "o Pastor que iniciou sumiu"
-            case .maxReached: detail.map { "teto do auto-land atingido (\($0))" } ?? "limite de tentativas (--max) atingido"
-            case .budgetSpent: "orçamento de tempo esgotado"
-            case .gitFailed: "git falhou"
-            case .dirtyTree: "arquivos rastreados modificados fora do laço"
-            case .othersWorking: "'\(detail ?? "outro terminal")' trabalhando no cercado"
-            case .cancelled: "o daemon parou"
-            case .daemonRestart: "o daemon reiniciou durante o laço"
-            case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
-            case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
-            case .usageLimit: "o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>"
-            case .landed: "integrado (auto-land, merge local; sem push)" + (detail.map { ": \($0)" } ?? "")
-            case .landGateRed: "auto-land: portão vermelho no HEAD do cercado; nada integrado"
-            case .landReviewVeto: "auto-land: revisão com veto ou sem parecer em \(detail ?? "uma tarefa"); nada integrado"
-            case .landCiRed: "auto-land: CI local vermelho; nada integrado"
-            case .landDirty: "auto-land: árvore suja ou outro agente trabalhando (\(detail ?? "cercado")); nada integrado"
-            case .landConflict: "auto-land: o land (merge) falhou (\(detail ?? "conflito")); nada integrado"
-            case .landNotFactory: "auto-land: o cercado não está marcado como fábrica; nada integrado"
-            case .queueEmpty: "auto-land: nenhum outro trabalho aprovado na fila do cercado"
-            case .landDailyCap: "auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono"
-            case .landAcceptRed: "auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado"
-            case .landNothing: "auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)"
-            case .landBaseMoved: "auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova"
-            case .landRegistryFailed: "auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono"
-            case .landTasksNotDone: "auto-land: tarefa(s) não feitas (\(detail ?? "alguma tarefa")); nada integrado"
-            case .landDoctorRegressed: "auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou"
-            case .checkAlreadyGreen: "o check já passa antes da tarefa (\(detail ?? "uma tarefa")); nenhuma tentativa; reescreva o check ou marque --green-ok"
-            case .unknown: "motivo desconhecido"
+            case .requested: tr("pedido pelo dono (work stop)", "requested by the owner (work stop)")
+            case .workGone: tr("trabalho fechado ou parado por fora", "work closed or stopped from outside")
+            case .starterGone: tr("o Pastor que iniciou sumiu", "the Shepherd that started it is gone")
+            case .maxReached: detail.map { tr("teto do auto-land atingido (\($0))", "auto-land cap reached (\($0))") } ?? tr("limite de tentativas (--max) atingido", "attempt limit (--max) reached")
+            case .budgetSpent: tr("orçamento de tempo esgotado", "time budget spent")
+            case .gitFailed: tr("git falhou", "git failed")
+            case .dirtyTree: tr("arquivos rastreados modificados fora do laço", "tracked files modified outside the loop")
+            case .othersWorking: tr("'\(detail ?? "outro terminal")' trabalhando no cercado", "'\(detail ?? "another terminal")' is working in the paddock")
+            case .cancelled: tr("o daemon parou", "the daemon stopped")
+            case .daemonRestart: tr("o daemon reiniciou durante o laço", "the daemon restarted during the loop")
+            case .internal: tr("estado inesperado do motor (bug); a tarefa foi reaberta", "unexpected engine state (bug); the task was reopened")
+            case .adoptionFailed: tr("a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir", "adopting the interrupted commit failed; the tree was left untouched for you to decide")
+            case .usageLimit: tr("o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>", "the agent hit the model usage limit (\(detail ?? "no text")); relaunch with work run --model <other>")
+            case .landed: tr("integrado (auto-land, merge local; sem push)", "landed (auto-land, local merge; no push)") + (detail.map { ": \($0)" } ?? "")
+            case .landGateRed: tr("auto-land: portão vermelho no HEAD do cercado; nada integrado", "auto-land: gate red at the paddock HEAD; nothing landed")
+            case .landReviewVeto: tr("auto-land: revisão com veto ou sem parecer em \(detail ?? "uma tarefa"); nada integrado", "auto-land: review vetoed or missing for \(detail ?? "a task"); nothing landed")
+            case .landCiRed: tr("auto-land: CI local vermelho; nada integrado", "auto-land: local CI red; nothing landed")
+            case .landDirty: tr("auto-land: árvore suja ou outro agente trabalhando (\(detail ?? "cercado")); nada integrado", "auto-land: dirty tree or another agent working (\(detail ?? "paddock")); nothing landed")
+            case .landConflict: tr("auto-land: o land (merge) falhou (\(detail ?? "conflito")); nada integrado", "auto-land: the land (merge) failed (\(detail ?? "conflict")); nothing landed")
+            case .landNotFactory: tr("auto-land: o cercado não está marcado como fábrica; nada integrado", "auto-land: the paddock is not marked as a factory; nothing landed")
+            case .queueEmpty: tr("auto-land: nenhum outro trabalho aprovado na fila do cercado", "auto-land: no other approved work in the paddock queue")
+            case .landDailyCap: tr("auto-land: teto diário do cercado atingido (\(detail ?? "factory.guardrails.autoLandPerDay")); chame o dono", "auto-land: paddock daily cap reached (\(detail ?? "factory.guardrails.autoLandPerDay")); call the owner")
+            case .landAcceptRed: tr("auto-land: aceite em runtime sem passar em \(detail ?? "uma tarefa"); nada integrado", "auto-land: runtime acceptance not passing for \(detail ?? "a task"); nothing landed")
+            case .landNothing: tr("auto-land: nada a integrar (o cercado não tem commits novos ou já foi integrado)", "auto-land: nothing to land (the paddock has no new commits or was already landed)")
+            case .landBaseMoved: tr("auto-land: a base mudou desde o início da tentativa (\(detail ?? "base")); nada integrado; refaça sobre a base nova", "auto-land: the base moved since the attempt began (\(detail ?? "base")); nothing landed; redo it on the new base")
+            case .landRegistryFailed: tr("auto-land: merge feito, mas o registro do teto diário não foi gravado (\(detail ?? "erro de gravação")); o laço parou; chame o dono", "auto-land: merge done, but the daily cap record was not written (\(detail ?? "write error")); the loop stopped; call the owner")
+            case .landTasksNotDone: tr("auto-land: tarefa(s) não feitas (\(detail ?? "alguma tarefa")); nada integrado", "auto-land: task(s) not done (\(detail ?? "some task")); nothing landed")
+            case .landDoctorRegressed: tr("auto-land: o factory doctor do cercado não passa mais o mínimo (\(detail ?? "static e judge ≥ 1")); a corrente parou", "auto-land: the paddock's factory doctor no longer meets the minimum (\(detail ?? "static and judge ≥ 1")); the chain stopped")
+            case .checkAlreadyGreen: tr("o check já passa antes da tarefa (\(detail ?? "uma tarefa")); nenhuma tentativa; reescreva o check ou marque --green-ok", "the check already passes before the task (\(detail ?? "a task")); no attempt made; rewrite the check or mark --green-ok")
+            case .unknown: tr("motivo desconhecido", "unknown reason")
             }
         }
         /// The note every stopped loop leaves (A4: a landed one is no stop).
         /// A5: nor is the end of a chain (`queueEmpty`, `maxReached` of the auto-land).
-        public var note: String { finishes ? "[loop] laço terminou: \(label)" : "[loop] laço parado: \(label)" }
+        public var note: String { finishes ? tr("[loop] laço terminou: \(label)", "[loop] loop finished: \(label)") : tr("[loop] laço parado: \(label)", "[loop] loop stopped: \(label)") }
         /// A4/A5: the codes a loop `finished` with (a land made, nothing failed).
         public var finishes: Bool { Self.finishes(code: code.rawValue, detail: detail) }
         /// The one rule of "finished" over a stop's two raw fields (the app's history rows have only those): `landed`,

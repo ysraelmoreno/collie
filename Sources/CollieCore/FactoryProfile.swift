@@ -57,33 +57,33 @@ public struct FactoryProfile: Sendable, Equatable {
         /// One line, in Portuguese, with the path. Values come from the file: the renderer cleans them.
         public var message: String {
             switch self {
-            case .unknownField(let p): "campo desconhecido '\(p)' no perfil de fábrica"
-            case .missingField(let p): "falta o campo obrigatório '\(p)' no perfil de fábrica"
-            case .wrongType(let p, let e): "'\(p)' precisa ser \(e)"
-            case .unsupportedVersion(let v): "factory.version é \(v); só a version 1 é aceita"
+            case .unknownField(let p): tr("campo desconhecido '\(p)' no perfil de fábrica", "unknown field '\(p)' in the factory profile")
+            case .missingField(let p): tr("falta o campo obrigatório '\(p)' no perfil de fábrica", "required field '\(p)' is missing from the factory profile")
+            case .wrongType(let p, let e): tr("'\(p)' precisa ser \(e)", "'\(p)' must be \(e)")
+            case .unsupportedVersion(let v): tr("factory.version é \(v); só a version 1 é aceita", "factory.version is \(v); only version 1 is accepted")
             case .badCommand(let e): e.message
-            case .badName(let p, let n): "nome inválido '\(n)' em '\(p)': use a-z, 0-9 e '-', de 1 a \(ProjectWorkConfig.maxAreaName) caracteres"
-            case .duplicate(let p, let v): "'\(v)' aparece repetido em '\(p)'"
-            case .tooMany(let p, let n, let l): "'\(p)' tem \(n) itens; o limite é \(l)"
-            case .badBaseline(let p): "'\(p)' precisa ser caminho relativo ao repositório (sem '..', '.', parte vazia, '.git', '.collie' ou 'collie-work.json', sem '/' inicial, sem controle, até \(maxBaseline) caracteres)"
-            case .badChoice(let p, let v, let a): "'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))"
-            case .outOfRange(let p, let v, let r): "'\(p)' é \(v); precisa ser inteiro de \(r.lowerBound) a \(r.upperBound)"
-            case .badText(let p): "'\(p)' precisa ser texto não vazio de até \(maxDestructiveText) caracteres, sem controle"
-            case .badTrap(let p, let v): "id de armadilha inválido '\(v)' em '\(p)': use 8 caracteres hexadecimais minúsculos"
+            case .badName(let p, let n): tr("nome inválido '\(n)' em '\(p)': use a-z, 0-9 e '-', de 1 a \(ProjectWorkConfig.maxAreaName) caracteres", "invalid name '\(n)' in '\(p)': use a-z, 0-9 and '-', 1 to \(ProjectWorkConfig.maxAreaName) characters")
+            case .duplicate(let p, let v): tr("'\(v)' aparece repetido em '\(p)'", "'\(v)' appears twice in '\(p)'")
+            case .tooMany(let p, let n, let l): tr("'\(p)' tem \(n) itens; o limite é \(l)", "'\(p)' has \(n) items; the limit is \(l)")
+            case .badBaseline(let p): tr("'\(p)' precisa ser caminho relativo ao repositório (sem '..', '.', parte vazia, '.git', '.collie' ou 'collie-work.json', sem '/' inicial, sem controle, até \(maxBaseline) caracteres)", "'\(p)' must be a path relative to the repository (no '..', '.', empty part, '.git', '.collie' or 'collie-work.json', no leading '/', no control characters, up to \(maxBaseline) characters)")
+            case .badChoice(let p, let v, let a): tr("'\(p)' é '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " ou "))", "'\(p)' is '\(v)'; use \(a.map { "'\($0)'" }.joined(separator: " or "))")
+            case .outOfRange(let p, let v, let r): tr("'\(p)' é \(v); precisa ser inteiro de \(r.lowerBound) a \(r.upperBound)", "'\(p)' is \(v); must be an integer from \(r.lowerBound) to \(r.upperBound)")
+            case .badText(let p): tr("'\(p)' precisa ser texto não vazio de até \(maxDestructiveText) caracteres, sem controle", "'\(p)' must be non-empty text of up to \(maxDestructiveText) characters, no control characters")
+            case .badTrap(let p, let v): tr("id de armadilha inválido '\(v)' em '\(p)': use 8 caracteres hexadecimais minúsculos", "invalid pitfall id '\(v)' in '\(p)': use 8 lowercase hexadecimal characters")
             }
         }
     }
 
     /// Strict parse of the already decoded value of `factory`.
     public static func parse(_ factory: Any) -> Result<FactoryProfile, ProfileError> {
-        do { return .success(try read(factory)) } catch let e as ProfileError { return .failure(e) } catch { return .failure(.wrongType(path: "factory", expected: "objeto")) }
+        do { return .success(try read(factory)) } catch let e as ProfileError { return .failure(e) } catch { return .failure(.wrongType(path: "factory", expected: tr("objeto", "an object"))) }
     }
 
     private static func read(_ factory: Any) throws -> FactoryProfile {
         var p = FactoryProfile()
         let f = try object(factory, "factory", known: ["version", "static", "verification", "review", "guardrails", "prose", "autoland"])
         guard let v = f["version"] else { throw ProfileError.missingField("factory.version") }
-        guard let n = v as? NSNumber, !isBool(n) else { throw ProfileError.wrongType(path: "factory.version", expected: "número") }
+        guard let n = v as? NSNumber, !isBool(n) else { throw ProfileError.wrongType(path: "factory.version", expected: tr("número", "a number")) }
         guard n.doubleValue == 1 else { throw ProfileError.unsupportedVersion(n.stringValue) }
 
         if let s = f["static"] {
@@ -129,7 +129,7 @@ public struct FactoryProfile: Sendable, Equatable {
             }
             if let t = r["threshold"] { p.threshold = try choice(t, "factory.review.threshold") }
             if let c = r["callOwner"] {
-                guard let b = c as? NSNumber, isBool(b) else { throw ProfileError.wrongType(path: "factory.review.callOwner", expected: "booleano") }
+                guard let b = c as? NSNumber, isBool(b) else { throw ProfileError.wrongType(path: "factory.review.callOwner", expected: tr("booleano", "a boolean")) }
                 p.callOwner = b.boolValue
             }
         }
@@ -140,7 +140,7 @@ public struct FactoryProfile: Sendable, Equatable {
             if let d = g["destructive"] {
                 p.destructive = try list(d, "factory.guardrails.destructive", limit: maxDestructive).enumerated().map { i, x in
                     let ip = "factory.guardrails.destructive[\(i)]"
-                    guard let s = x as? String else { throw ProfileError.wrongType(path: ip, expected: "texto") }
+                    guard let s = x as? String else { throw ProfileError.wrongType(path: ip, expected: tr("texto", "text")) }
                     // ponytail: empty refused too, an empty pattern would match every command
                     guard !s.isEmpty, s.count <= maxDestructiveText, !hasControl(s) else { throw ProfileError.badText(path: ip) }
                     return s
@@ -159,7 +159,7 @@ public struct FactoryProfile: Sendable, Equatable {
             if let t = pr["traps"] {
                 let path = "factory.prose.traps"
                 for (i, x) in try list(t, path, limit: maxTraps).enumerated() {
-                    guard let s = x as? String else { throw ProfileError.wrongType(path: "\(path)[\(i)]", expected: "texto") }
+                    guard let s = x as? String else { throw ProfileError.wrongType(path: "\(path)[\(i)]", expected: tr("texto", "text")) }
                     guard s.unicodeScalars.count == 8, s.unicodeScalars.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) })
                     else { throw ProfileError.badTrap(path: "\(path)[\(i)]", value: s) }
                     guard !p.traps.contains(s) else { throw ProfileError.duplicate(path: path, value: s) }
@@ -171,13 +171,13 @@ public struct FactoryProfile: Sendable, Equatable {
     }
 
     private static func object(_ v: Any, _ path: String, known: Set<String>) throws -> [String: Any] {
-        guard let o = v as? [String: Any] else { throw ProfileError.wrongType(path: path, expected: "objeto") }
+        guard let o = v as? [String: Any] else { throw ProfileError.wrongType(path: path, expected: tr("objeto", "an object")) }
         if let k = o.keys.filter({ !known.contains($0) }).sorted().first { throw ProfileError.unknownField("\(path).\(k)") }
         return o
     }
 
     private static func list(_ v: Any, _ path: String, limit: Int) throws -> [Any] {
-        guard let a = v as? [Any] else { throw ProfileError.wrongType(path: path, expected: "lista") }
+        guard let a = v as? [Any] else { throw ProfileError.wrongType(path: path, expected: tr("lista", "a list")) }
         guard a.count <= limit else { throw ProfileError.tooMany(path: path, count: a.count, limit: limit) }
         return a
     }
@@ -190,17 +190,17 @@ public struct FactoryProfile: Sendable, Equatable {
     private static func command(_ v: Any, _ path: String) throws -> String {
         do { return try ProjectWorkConfig.command(v, key: path) }
         catch let e as ProjectWorkConfig.ConfigError { throw ProfileError.badCommand(e) }
-        catch { throw ProfileError.wrongType(path: path, expected: "texto") }
+        catch { throw ProfileError.wrongType(path: path, expected: tr("texto", "text")) }
     }
 
     private static func areaName(_ v: Any, _ path: String) throws -> String {
-        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: "texto") }
+        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: tr("texto", "text")) }
         guard ProjectWorkConfig.validAreaName(s) else { throw ProfileError.badName(path: path, name: s) }
         return s
     }
 
     private static func baseline(_ v: Any, _ path: String) throws -> String {
-        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: "texto") }
+        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: tr("texto", "text")) }
         guard confinedPath(s) else { throw ProfileError.badBaseline(path: path) }
         return s
     }
@@ -218,13 +218,13 @@ public struct FactoryProfile: Sendable, Equatable {
     }
 
     private static func choice<T: RawRepresentable & CaseIterable>(_ v: Any, _ path: String) throws -> T where T.RawValue == String {
-        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: "texto") }
+        guard let s = v as? String else { throw ProfileError.wrongType(path: path, expected: tr("texto", "text")) }
         guard let c = T(rawValue: s) else { throw ProfileError.badChoice(path: path, value: s, allowed: T.allCases.map(\.rawValue)) }
         return c
     }
 
     private static func integer(_ v: Any, _ path: String, _ range: ClosedRange<Int>) throws -> Int {
-        guard let n = v as? NSNumber, !isBool(n), let i = Int(exactly: n.doubleValue) else { throw ProfileError.wrongType(path: path, expected: "número inteiro") }
+        guard let n = v as? NSNumber, !isBool(n), let i = Int(exactly: n.doubleValue) else { throw ProfileError.wrongType(path: path, expected: tr("número inteiro", "an integer")) }
         guard range.contains(i) else { throw ProfileError.outOfRange(path: path, value: i, range: range) }
         return i
     }

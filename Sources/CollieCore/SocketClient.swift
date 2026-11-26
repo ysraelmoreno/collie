@@ -60,7 +60,7 @@ public enum UnixSocketClient {
         let rc = try withAddr(path) { connect(fd, $0, $1) }
         if rc != 0 {
             switch Darwin.errno {
-            case ENOENT, ECONNREFUSED: throw ProtocolError(code: .daemonUnavailable, message: "daemon não está rodando (collied)")
+            case ENOENT, ECONNREFUSED: throw ProtocolError(code: .daemonUnavailable, message: tr("daemon não está rodando (collied)", "daemon is not running (collied)"))
             case EINPROGRESS, EAGAIN:
                 var p = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
                 while true {
@@ -71,7 +71,7 @@ public enum UnixSocketClient {
                 }
                 var soErr: Int32 = 0; var len = socklen_t(MemoryLayout<Int32>.size)
                 getsockopt(fd, SOL_SOCKET, SO_ERROR, &soErr, &len)
-                if soErr == ENOENT || soErr == ECONNREFUSED { throw ProtocolError(code: .daemonUnavailable, message: "daemon não está rodando (collied)") }
+                if soErr == ENOENT || soErr == ECONNREFUSED { throw ProtocolError(code: .daemonUnavailable, message: tr("daemon não está rodando (collied)", "daemon is not running (collied)")) }
                 if soErr != 0 { Darwin.errno = soErr; throw sysError("connect") }
             default: throw sysError("connect")
             }

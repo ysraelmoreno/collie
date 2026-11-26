@@ -61,30 +61,30 @@ public enum FactoryDoctor {
 
     public static func staticLayer(_ s: Snapshot) -> LayerScore {
         guard let c = s.config, let gate = c.gate else {
-            return LayerScore(layer: .static, score: 0, evidence: [s.config == nil ? "sem collie-work.json" : "collie-work.json: sem gate"],
-                              nextAction: ["defina 'gate' em collie-work.json com o comando que roda os testes"])
+            return LayerScore(layer: .static, score: 0, evidence: [s.config == nil ? tr("sem collie-work.json", "no collie-work.json") : tr("collie-work.json: sem gate", "collie-work.json: no gate")],
+                              nextAction: [tr("defina 'gate' em collie-work.json com o comando que roda os testes", "set 'gate' in collie-work.json to the command that runs the tests")])
         }
         var ev = ["collie-work.json: gate = \"\(gate)\""]
         guard let where_ = testRunnerSource(gate, s.scripts) else {
-            let what = buildOnly.contains(gate.trimmingCharacters(in: .whitespaces)) ? "só compila" : "não roda testes"
-            ev.append("o gate \(what): nenhum runner de teste (test, pytest, jest, vitest, go test, cargo test, swift test...) no comando nem nos scripts que ele cita")
-            return LayerScore(layer: .static, score: 1, evidence: ev, nextAction: ["ponha um runner de teste no gate (ex.: swift test, npm test, pytest)"])
+            let what = buildOnly.contains(gate.trimmingCharacters(in: .whitespaces)) ? tr("só compila", "only compiles") : tr("não roda testes", "does not run tests")
+            ev.append(tr("o gate \(what): nenhum runner de teste (test, pytest, jest, vitest, go test, cargo test, swift test...) no comando nem nos scripts que ele cita", "the gate \(what): no test runner (test, pytest, jest, vitest, go test, cargo test, swift test...) in the command or in the scripts it cites"))
+            return LayerScore(layer: .static, score: 1, evidence: ev, nextAction: [tr("ponha um runner de teste no gate (ex.: swift test, npm test, pytest)", "put a test runner in the gate (e.g. swift test, npm test, pytest)")])
         }
-        ev.append("o gate roda testes: \(where_)")
+        ev.append(tr("o gate roda testes: \(where_)", "the gate runs tests: \(where_)"))
         var plus: [String] = [], next: [String] = []
         func extra(_ ok: Bool, _ yes: String, _ no: String) { if ok { plus.append(yes) } else { next.append(no) } }
-        extra(c.precheck != nil, "precheck = \"\(c.precheck ?? "")\"", "defina 'precheck' (rápido, ex.: compilar os testes)")
-        extra(c.smoke != nil, "smoke = \"\(c.smoke ?? "")\"", "defina 'smoke'")
-        extra(!c.areas.isEmpty, "áreas: \(c.areas.keys.sorted().joined(separator: ", "))", "defina 'areas' com o check de cada parte do projeto")
+        extra(c.precheck != nil, "precheck = \"\(c.precheck ?? "")\"", tr("defina 'precheck' (rápido, ex.: compilar os testes)", "set 'precheck' (fast, e.g. compile the tests)"))
+        extra(c.smoke != nil, "smoke = \"\(c.smoke ?? "")\"", tr("defina 'smoke'", "set 'smoke'"))
+        extra(!c.areas.isEmpty, tr("áreas: \(c.areas.keys.sorted().joined(separator: ", "))", "areas: \(c.areas.keys.sorted().joined(separator: ", "))"), tr("defina 'areas' com o check de cada parte do projeto", "set 'areas' with the check for each part of the project"))
         let baseline = s.paths.first { ($0.split(separator: "/").last ?? "").lowercased().contains("baseline") }
         let ratchets = c.factory?.ratchets.map(\.name) ?? []
         extra(!ratchets.isEmpty || baseline != nil,
-              ratchets.isEmpty ? "arquivo de baseline: \(baseline ?? "")" : "catracas: \(ratchets.joined(separator: ", "))",
-              "defina uma catraca (factory.static.ratchets)")
+              ratchets.isEmpty ? tr("arquivo de baseline: \(baseline ?? "")", "baseline file: \(baseline ?? "")") : tr("catracas: \(ratchets.joined(separator: ", "))", "ratchets: \(ratchets.joined(separator: ", "))"),
+              tr("defina uma catraca (factory.static.ratchets)", "define a ratchet (factory.static.ratchets)"))
         let arch = c.factory?.architecture ?? []
-        extra(!arch.isEmpty, "regras de arquitetura: \(arch.count)", "defina regras de arquitetura (factory.static.architecture)")
+        extra(!arch.isEmpty, tr("regras de arquitetura: \(arch.count)", "architecture rules: \(arch.count)"), tr("defina regras de arquitetura (factory.static.architecture)", "define architecture rules (factory.static.architecture)"))
         let ci = ciCiting(gate, s.ci)
-        extra(ci != nil, "o CI roda o mesmo gate: \(ci ?? "")", "faça o CI rodar o mesmo comando do gate")
+        extra(ci != nil, tr("o CI roda o mesmo gate: \(ci ?? "")", "CI runs the same gate: \(ci ?? "")"), tr("faça o CI rodar o mesmo comando do gate", "make CI run the same gate command"))
         ev += plus.map { "+ \($0)" }
         return LayerScore(layer: .static, score: plus.count >= 2 ? 3 : 2, evidence: ev, nextAction: next)
     }
@@ -133,8 +133,8 @@ public enum FactoryDoctor {
 
     public static func judge(_ s: Snapshot) -> LayerScore {
         guard let c = s.config else {
-            return LayerScore(layer: .judge, score: 1, evidence: ["sem collie-work.json: o juiz só tem o --check de cada tarefa"],
-                              nextAction: ["crie collie-work.json com gate versionado no repositório"])
+            return LayerScore(layer: .judge, score: 1, evidence: [tr("sem collie-work.json: o juiz só tem o --check de cada tarefa", "no collie-work.json: the judge only has each task's --check")],
+                              nextAction: [tr("crie collie-work.json com gate versionado no repositório", "create collie-work.json with a gate versioned in the repository")])
         }
         var warn: [String] = [], ev: [String] = [], gateCited: Set<String> = []
         let cmds = [("gate", c.gate), ("precheck", c.precheck), ("smoke", c.smoke)].compactMap { k, v in v.map { (k, $0) } }
@@ -143,42 +143,42 @@ public enum FactoryDoctor {
         for (k, cmd) in cmds {
             let cited = citedPaths(cmd)
             for p in cited {
-                if outsideRepo(p) { warn.append("\(k) cita script fora do repositório: \(p)") }
-                else if ignored(p, s.gitignore) { warn.append("\(k) cita script ignorado pelo git (.gitignore): \(p)") }
-                else if !present(p) { warn.append("\(k) cita \(p), que não existe no repositório") }
-                else { ev.append("\(k) cita \(p), versionado: lido do commit base"); if k == "gate" { gateCited.insert(p) } }
+                if outsideRepo(p) { warn.append(tr("\(k) cita script fora do repositório: \(p)", "\(k) cites a script outside the repository: \(p)")) }
+                else if ignored(p, s.gitignore) { warn.append(tr("\(k) cita script ignorado pelo git (.gitignore): \(p)", "\(k) cites a script ignored by git (.gitignore): \(p)")) }
+                else if !present(p) { warn.append(tr("\(k) cita \(p), que não existe no repositório", "\(k) cites \(p), which does not exist in the repository")) }
+                else { ev.append(tr("\(k) cita \(p), versionado: lido do commit base", "\(k) cites \(p), versioned: read from the base commit")); if k == "gate" { gateCited.insert(p) } }
             }
             // a file the command names that the reader saw (`package.json`, `Package.swift`): it controls the runner
             for w in simpleCommands(cmd).flatMap({ $0 }) where !cited.contains(w) {
                 if present(w) && !ignored(w, s.gitignore) {
-                    ev.append("\(k) cita \(w), versionado: lido do commit base"); if k == "gate" { gateCited.insert(w) }
+                    ev.append(tr("\(k) cita \(w), versionado: lido do commit base", "\(k) cites \(w), versioned: read from the base commit")); if k == "gate" { gateCited.insert(w) }
                 } else if isRunnerConfig(w) && !present(w) {   // F6b (n2): pytest.ini absent warns like jest.config.js absent
-                    warn.append("\(k) cita \(w), que não existe no repositório")
+                    warn.append(tr("\(k) cita \(w), que não existe no repositório", "\(k) cites \(w), which does not exist in the repository"))
                 }
             }
         }
         for p in s.scripts.keys.sorted() where isTaskCheck(p) && onlyLooksForFiles(s.scripts[p]!) {
-            warn.append("\(p) só faz grep/test -f: passa sem o código funcionar")
+            warn.append(tr("\(p) só faz grep/test -f: passa sem o código funcionar", "\(p) only greps/tests -f: it passes without the code working"))
         }
         if !warn.isEmpty {
-            return LayerScore(layer: .judge, score: 1, evidence: ev + warn.map { "aviso: \($0)" },
-                              nextAction: ["versione no repositório os scripts que o gate cita", "faça os checks rodarem teste, não só procurar texto"])
+            return LayerScore(layer: .judge, score: 1, evidence: ev + warn.map { tr("aviso: \($0)", "warning: \($0)") },
+                              nextAction: [tr("versione no repositório os scripts que o gate cita", "version the scripts the gate cites in the repository"), tr("faça os checks rodarem teste, não só procurar texto", "make the checks run tests, not just look for text")])
         }
         if cmds.isEmpty {
-            return LayerScore(layer: .judge, score: 2, evidence: ["sem gate, precheck nem smoke: o juiz é só o --check de cada tarefa"],
-                              nextAction: ["defina 'gate' em collie-work.json"])
+            return LayerScore(layer: .judge, score: 2, evidence: [tr("sem gate, precheck nem smoke: o juiz é só o --check de cada tarefa", "no gate, precheck or smoke: the judge is only each task's --check")],
+                              nextAction: [tr("defina 'gate' em collie-work.json", "set 'gate' in collie-work.json")])
         }
         // N3 (round 2): only the gate's citations guard the judge (precheck and smoke do not judge the task)
         if gateCited.isEmpty {   // a bare gate (`npm test`): an agent can neutralize the runner through its config, which nothing guards
             return LayerScore(layer: .judge, score: 2,
-                              evidence: ev + ["o gate não cita nenhum arquivo versionado: um agente pode neutralizar o runner pela config (ex.: o script test do package.json)"],
-                              nextAction: ["faça o gate chamar um script versionado (ex.: scripts/gate.sh) ou citar os arquivos que controlam o runner"])
+                              evidence: ev + [tr("o gate não cita nenhum arquivo versionado: um agente pode neutralizar o runner pela config (ex.: o script test do package.json)", "the gate cites no versioned file: an agent can neutralize the runner through its config (e.g. the test script in package.json)")],
+                              nextAction: [tr("faça o gate chamar um script versionado (ex.: scripts/gate.sh) ou citar os arquivos que controlam o runner", "make the gate call a versioned script (e.g. scripts/gate.sh) or cite the files that control the runner")])
         }
         // N4 (round 2): a gate script that hands over to `npm test` runs the package.json's script, which an agent can edit;
         // unless the gate's text cites package.json (then the judge guards it too, as rev-2 N1 suggests for the configs)
         if let src = c.gate.flatMap({ testRunnerSources($0, s.scripts).first(where: viaPackageScript) }), !gateCited.contains("package.json") {
-            return LayerScore(layer: .judge, score: 2, evidence: ev + ["o runner do gate passa pelo script test do package.json: \(src)"],
-                              nextAction: ["chame o runner direto no gate (ex.: npx --no-install jest), não npm/yarn/pnpm test"])
+            return LayerScore(layer: .judge, score: 2, evidence: ev + [tr("o runner do gate passa pelo script test do package.json: \(src)", "the gate runner goes through the test script in package.json: \(src)")],
+                              nextAction: [tr("chame o runner direto no gate (ex.: npx --no-install jest), não npm/yarn/pnpm test", "call the runner directly in the gate (e.g. npx --no-install jest), not npm/yarn/pnpm test")])
         }
         return LayerScore(layer: .judge, score: 3, evidence: ev, nextAction: [])
     }
@@ -268,32 +268,32 @@ public enum FactoryDoctor {
         let scenarios = s.config?.factory?.scenarios ?? []
         let covered = Set(scenarios.map(\.area))
         let uiAreas = (s.config?.areas.keys.sorted() ?? []).filter { a in uiWords.contains(a) || a.split(separator: "-").contains { uiWords.contains(String($0)) } }
-        let bare = uiAreas.filter { !covered.contains($0) }.map { "aviso: área de UI '\($0)' sem cenário" }
+        let bare = uiAreas.filter { !covered.contains($0) }.map { tr("aviso: área de UI '\($0)' sem cenário", "warning: UI area '\($0)' has no scenario") }
         guard !scenarios.isEmpty else {
-            return LayerScore(layer: .verification, score: 0, evidence: ["sem verificação em runtime ainda (factory.verification.scenarios vazio)"] + bare,
-                              nextAction: ["defina factory.verification.scenarios para as áreas que têm tela ou serviço"])
+            return LayerScore(layer: .verification, score: 0, evidence: [tr("sem verificação em runtime ainda (factory.verification.scenarios vazio)", "no runtime verification yet (factory.verification.scenarios is empty)")] + bare,
+                              nextAction: [tr("defina factory.verification.scenarios para as áreas que têm tela ou serviço", "define factory.verification.scenarios for the areas that have a screen or a service")])
         }
-        let ev = ["cenários: " + scenarios.map(\.area).joined(separator: ", ")] + bare
+        let ev = [tr("cenários: ", "scenarios: ") + scenarios.map(\.area).joined(separator: ", ")] + bare
         return LayerScore(layer: .verification, score: bare.isEmpty ? 3 : 2, evidence: ev,
-                          nextAction: bare.isEmpty ? [] : ["dê um cenário a cada área de UI"])
+                          nextAction: bare.isEmpty ? [] : [tr("dê um cenário a cada área de UI", "give each UI area a scenario")])
     }
 
     // MARK: review
 
     public static func review(_ s: Snapshot) -> LayerScore {
         guard let f = s.config?.factory, !f.personas.isEmpty else {
-            return LayerScore(layer: .review, score: 0, evidence: ["sem personas de revisão (factory.review.personas)"],
-                              nextAction: ["defina personas em factory.review.personas, com arquivo em docs/fabrica/personas/<nome>.md"])
+            return LayerScore(layer: .review, score: 0, evidence: [tr("sem personas de revisão (factory.review.personas)", "no review personas (factory.review.personas)")],
+                              nextAction: [tr("defina personas em factory.review.personas, com arquivo em docs/fabrica/personas/<nome>.md", "define personas in factory.review.personas, with a file at docs/fabrica/personas/<name>.md")])
         }
-        var ev = ["personas: " + f.personas.joined(separator: ", ")], next: [String] = [], score = 1
+        var ev = [tr("personas: ", "personas: ") + f.personas.joined(separator: ", ")], next: [String] = [], score = 1
         let missing = f.personas.filter { personaFile($0, s.paths) == nil }
         if missing.isEmpty { score += 1; ev += f.personas.map { "persona \($0): \(personaFile($0, s.paths)!)" } }
-        else { ev += missing.map { "aviso: persona '\($0)' sem arquivo em docs/fabrica/personas ou num caminho personas/" }
-               next.append("crie docs/fabrica/personas/<nome>.md para cada persona") }
+        else { ev += missing.map { tr("aviso: persona '\($0)' sem arquivo em docs/fabrica/personas ou num caminho personas/", "warning: persona '\($0)' has no file in docs/fabrica/personas or under a personas/ path") }
+               next.append(tr("crie docs/fabrica/personas/<nome>.md para cada persona", "create docs/fabrica/personas/<name>.md for each persona")) }
         ev.append("threshold: \(f.threshold.rawValue)")
         // ponytail: threshold always has a value (major by default), so only callOwner can raise the score
-        if f.callOwner { score += 1; ev.append("callOwner: o dono é chamado quando a revisão barra") }
-        else { next.append("ligue factory.review.callOwner para o dono ser chamado quando a revisão barra") }
+        if f.callOwner { score += 1; ev.append(tr("callOwner: o dono é chamado quando a revisão barra", "callOwner: the owner is called when the review blocks")) }
+        else { next.append(tr("ligue factory.review.callOwner para o dono ser chamado quando a revisão barra", "turn on factory.review.callOwner so the owner is called when the review blocks")) }
         return LayerScore(layer: .review, score: score, evidence: ev, nextAction: next)
     }
 
@@ -312,13 +312,13 @@ public enum FactoryDoctor {
     public static func prose(_ s: Snapshot) -> LayerScore {
         let traps = s.config?.factory?.traps ?? []
         guard !traps.isEmpty else {
-            return LayerScore(layer: .prose, score: 1, evidence: ["nenhuma armadilha nomeada (factory.prose.traps): não há o que converter em check"],
-                              nextAction: ["liste em factory.prose.traps os ids das armadilhas da memória que valem um check"])
+            return LayerScore(layer: .prose, score: 1, evidence: [tr("nenhuma armadilha nomeada (factory.prose.traps): não há o que converter em check", "no named pitfall (factory.prose.traps): nothing to turn into a check")],
+                              nextAction: [tr("liste em factory.prose.traps os ids das armadilhas da memória que valem um check", "list in factory.prose.traps the ids of the memory pitfalls worth a check")])
         }
         return LayerScore(layer: .prose, score: 2,
-                          evidence: ["\(traps.count) armadilha(s) nomeada(s): " + traps.joined(separator: ", "),
-                                     "nota máxima 2: sem rodar nada não dá para saber se alguma armadilha virou check"],
-                          nextAction: ["converta ao menos uma armadilha em check"])
+                          evidence: [tr("\(traps.count) armadilha(s) nomeada(s): ", "\(traps.count) named pitfall(s): ") + traps.joined(separator: ", "),
+                                     tr("nota máxima 2: sem rodar nada não dá para saber se alguma armadilha virou check", "max score 2: without running anything there is no telling whether a pitfall became a check")],
+                          nextAction: [tr("converta ao menos uma armadilha em check", "turn at least one pitfall into a check")])
     }
 
     // MARK: guardrails
@@ -327,13 +327,13 @@ public enum FactoryDoctor {
         let f = s.config?.factory ?? FactoryProfile()
         var ev: [String] = [], next: [String] = []
         func item(_ ok: Bool, _ yes: String, _ no: String) { if ok { ev.append(yes) } else { next.append(no) } }
-        item(f.budgetSeconds != nil, "budgetSeconds: \(f.budgetSeconds ?? 0)", "defina factory.guardrails.budgetSeconds")
-        item(f.maxTries != nil, "maxTries: \(f.maxTries ?? 0)", "defina factory.guardrails.maxTries")
-        item(!f.destructive.isEmpty, "destructive: \(f.destructive.count) padrão(ões)", "liste comandos destrutivos em factory.guardrails.destructive")
+        item(f.budgetSeconds != nil, "budgetSeconds: \(f.budgetSeconds ?? 0)", tr("defina factory.guardrails.budgetSeconds", "set factory.guardrails.budgetSeconds"))
+        item(f.maxTries != nil, "maxTries: \(f.maxTries ?? 0)", tr("defina factory.guardrails.maxTries", "set factory.guardrails.maxTries"))
+        item(!f.destructive.isEmpty, tr("destructive: \(f.destructive.count) padrão(ões)", "destructive: \(f.destructive.count) pattern(s)"), tr("liste comandos destrutivos em factory.guardrails.destructive", "list destructive commands in factory.guardrails.destructive"))
         // ponytail: `manual` is the default too, so only `factory-paddock` reads as an explicit land
         if f.land != .manual { ev.append("land: \(f.land.rawValue)") }
         guard !ev.isEmpty else {
-            return LayerScore(layer: .guardrails, score: 1, evidence: ["sem guardrails: valem os padrões do motor"], nextAction: next)
+            return LayerScore(layer: .guardrails, score: 1, evidence: [tr("sem guardrails: valem os padrões do motor", "no guardrails: the engine defaults apply")], nextAction: next)
         }
         return LayerScore(layer: .guardrails, score: ev.count >= 3 ? 3 : 2, evidence: ev, nextAction: next)
     }
@@ -343,12 +343,12 @@ public enum FactoryDoctor {
     /// A bait that got past the layer meant to catch it takes 1 off that layer; so does an invalid results file, on the layers it hides.
     public static func escaped(_ l: LayerScore, _ baits: BaitResults?) -> LayerScore {
         if let m = baits?.errors[l.layer.rawValue] {
-            return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + ["erro: \(m)"],
-                              nextAction: l.nextAction + ["corrija \(FactoryBait.resultsPath) (collie factory bait report mostra o erro)"])
+            return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + [tr("erro: \(m)", "error: \(m)")],
+                              nextAction: l.nextAction + [tr("corrija \(FactoryBait.resultsPath) (collie factory bait report mostra o erro)", "fix \(FactoryBait.resultsPath) (collie factory bait report shows the error)")])
         }
         guard let n = baits?.escapedBaits[l.layer.rawValue], n > 0 else { return l }
-        return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + ["\(n) isca(s) passaram por esta camada"],
-                          nextAction: l.nextAction + ["reforce a camada contra as iscas que escaparam"])
+        return LayerScore(layer: l.layer, score: l.score - 1, evidence: l.evidence + [tr("\(n) isca(s) passaram por esta camada", "\(n) bait(s) got through this layer")],
+                          nextAction: l.nextAction + [tr("reforce a camada contra as iscas que escaparam", "strengthen the layer against the baits that escaped")])
     }
 
     // MARK: text
@@ -362,8 +362,8 @@ public enum FactoryDoctor {
             lines += l.nextAction.map { "    → \($0)" }
         }
         let low = r.layers.filter { $0.score < min }.map(\.layer.rawValue)
-        lines.append(low.isEmpty ? "toda camada tem nota >= \(min)" : "abaixo de \(min): \(low.joined(separator: ", "))")
-        lines.append("Só leitura: nenhum comando do projeto foi executado.")
+        lines.append(low.isEmpty ? tr("toda camada tem nota >= \(min)", "every layer scores >= \(min)") : tr("abaixo de \(min): \(low.joined(separator: ", "))", "below \(min): \(low.joined(separator: ", "))"))
+        lines.append(tr("Só leitura: nenhum comando do projeto foi executado.", "Read-only: no project command was run."))
         return lines.joined(separator: "\n")
     }
 }

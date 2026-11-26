@@ -51,22 +51,22 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         /// One line, in words. Names and keys come from the file: the renderer cleans them.
         public var message: String {
             switch self {
-            case .tooLarge(let n): "collie-work.json tem \(n) bytes; o limite é 16 KB"
-            case .notJSON: "collie-work.json não é JSON válido"
-            case .notObject: "collie-work.json precisa ser um objeto JSON ({ ... })"
-            case .wrongType(let k, let e): "'\(k)' em collie-work.json precisa ser \(e)"
-            case .unsupportedVersion(let v): "collie-work.json tem version \(v); só a version 1 é aceita"
-            case .commandTooLong(let k, let n): "o comando '\(k)' tem \(n) caracteres; o limite é \(maxCommand)"
-            case .controlCharacter(let k): "o comando '\(k)' tem caractere de controle (quebra de linha, tab, NUL...)"
-            case .emptyCommand(let k): "o comando '\(k)' está vazio"
-            case .notChainable(let k, let t): "o comando '\(k)' tem '\(t)', que muda o sentido do check montado (área && smoke); ponha isso num script do projeto e chame o script"
-            case .badAreaName(let n): "nome de área inválido '\(n)': use a-z, 0-9 e '-', de 1 a \(maxAreaName) caracteres"
-            case .tooManyAreas(let n): "collie-work.json tem \(n) áreas; o limite é \(maxAreas)"
+            case .tooLarge(let n): tr("collie-work.json tem \(n) bytes; o limite é 16 KB", "collie-work.json is \(n) bytes; the limit is 16 KB")
+            case .notJSON: tr("collie-work.json não é JSON válido", "collie-work.json is not valid JSON")
+            case .notObject: tr("collie-work.json precisa ser um objeto JSON ({ ... })", "collie-work.json must be a JSON object ({ ... })")
+            case .wrongType(let k, let e): tr("'\(k)' em collie-work.json precisa ser \(e)", "'\(k)' in collie-work.json must be \(e)")
+            case .unsupportedVersion(let v): tr("collie-work.json tem version \(v); só a version 1 é aceita", "collie-work.json has version \(v); only version 1 is accepted")
+            case .commandTooLong(let k, let n): tr("o comando '\(k)' tem \(n) caracteres; o limite é \(maxCommand)", "the command '\(k)' has \(n) characters; the limit is \(maxCommand)")
+            case .controlCharacter(let k): tr("o comando '\(k)' tem caractere de controle (quebra de linha, tab, NUL...)", "the command '\(k)' has a control character (line break, tab, NUL...)")
+            case .emptyCommand(let k): tr("o comando '\(k)' está vazio", "the command '\(k)' is empty")
+            case .notChainable(let k, let t): tr("o comando '\(k)' tem '\(t)', que muda o sentido do check montado (área && smoke); ponha isso num script do projeto e chame o script", "the command '\(k)' has '\(t)', which changes the meaning of the assembled check (area && smoke); put that in a project script and call the script")
+            case .badAreaName(let n): tr("nome de área inválido '\(n)': use a-z, 0-9 e '-', de 1 a \(maxAreaName) caracteres", "invalid area name '\(n)': use a-z, 0-9 and '-', 1 to \(maxAreaName) characters")
+            case .tooManyAreas(let n): tr("collie-work.json tem \(n) áreas; o limite é \(maxAreas)", "collie-work.json has \(n) areas; the limit is \(maxAreas)")
             case .unknownArea(let n, let all):
-                "área '\(n)' não existe em collie-work.json; " + (all.isEmpty ? "o arquivo não define nenhuma área" : "existem: \(all.joined(separator: ", "))")
-            case .noAreas: "nenhuma área pedida"
+                tr("área '\(n)' não existe em collie-work.json; ", "area '\(n)' does not exist in collie-work.json; ") + (all.isEmpty ? tr("o arquivo não define nenhuma área", "the file defines no areas") : tr("existem: \(all.joined(separator: ", "))", "available: \(all.joined(separator: ", "))"))
+            case .noAreas: tr("nenhuma área pedida", "no area requested")
             case .invalidFactory(let e): e.message
-            case .fieldsMax(let n): "'fields.max' em collie-work.json é \(n); use de \(FieldsConfig.maxRange.lowerBound) a \(FieldsConfig.maxRange.upperBound)"
+            case .fieldsMax(let n): tr("'fields.max' em collie-work.json é \(n); use de \(FieldsConfig.maxRange.lowerBound) a \(FieldsConfig.maxRange.upperBound)", "'fields.max' in collie-work.json is \(n); use \(FieldsConfig.maxRange.lowerBound) to \(FieldsConfig.maxRange.upperBound)")
             }
         }
     }
@@ -81,7 +81,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         var c = ProjectWorkConfig(), warnings: [String] = []
         do {
             if let v = o["version"] {
-                guard let n = v as? NSNumber, !isBool(n) else { throw ConfigError.wrongType(key: "version", expected: "número") }
+                guard let n = v as? NSNumber, !isBool(n) else { throw ConfigError.wrongType(key: "version", expected: tr("número", "a number")) }
                 guard n.doubleValue == 1 else { throw ConfigError.unsupportedVersion(n.stringValue) }
             }
             for k in commandKeys {
@@ -95,7 +95,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 }
             }
             if let v = o["areas"] {
-                guard let a = v as? [String: Any] else { throw ConfigError.wrongType(key: "areas", expected: "objeto") }
+                guard let a = v as? [String: Any] else { throw ConfigError.wrongType(key: "areas", expected: tr("objeto", "an object")) }
                 guard a.count <= maxAreas else { throw ConfigError.tooManyAreas(a.count) }
                 for name in a.keys.sorted() {
                     guard validAreaName(name) else { throw ConfigError.badAreaName(name) }
@@ -111,25 +111,25 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 }
             }
             if let v = o["fields"] {
-                guard let f = v as? [String: Any] else { throw ConfigError.wrongType(key: "fields", expected: "objeto") }
+                guard let f = v as? [String: Any] else { throw ConfigError.wrongType(key: "fields", expected: tr("objeto", "an object")) }
                 var fc = FieldsConfig()
                 if let d = f["default"] {
-                    guard let n = d as? NSNumber, isBool(n) else { throw ConfigError.wrongType(key: "fields.default", expected: "true ou false") }
+                    guard let n = d as? NSNumber, isBool(n) else { throw ConfigError.wrongType(key: "fields.default", expected: tr("true ou false", "true or false")) }
                     fc.default = n.boolValue
                 }
                 if let m = f["max"] {
                     guard let n = m as? NSNumber, !isBool(n), n.doubleValue == n.doubleValue.rounded(), abs(n.doubleValue) < 1e9
-                    else { throw ConfigError.wrongType(key: "fields.max", expected: "número inteiro") }
+                    else { throw ConfigError.wrongType(key: "fields.max", expected: tr("número inteiro", "an integer")) }
                     guard FieldsConfig.maxRange.contains(n.intValue) else { throw ConfigError.fieldsMax(n.intValue) }
                     fc.max = n.intValue
                 }
                 c.fields = fc
-                warnings += f.keys.filter { $0 != "default" && $0 != "max" }.sorted().map { "chave desconhecida ignorada: fields.\($0)" }
+                warnings += f.keys.filter { $0 != "default" && $0 != "max" }.sorted().map { tr("chave desconhecida ignorada: fields.\($0)", "unknown key ignored: fields.\($0)") }
             }
         } catch let e as ConfigError { return .failure(e) }
         catch { return .failure(.notJSON) }
         let known = Set(commandKeys + ["version", "areas", "factory", "fields"])
-        warnings = o.keys.filter { !known.contains($0) }.sorted().map { "chave desconhecida ignorada: \($0)" } + warnings
+        warnings = o.keys.filter { !known.contains($0) }.sorted().map { tr("chave desconhecida ignorada: \($0)", "unknown key ignored: \($0)") } + warnings
         return .success((c, warnings))
     }
 
@@ -166,7 +166,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
     }
 
     static func command(_ v: Any, key: String) throws(ConfigError) -> String {
-        guard let s = v as? String else { throw .wrongType(key: key, expected: "texto") }
+        guard let s = v as? String else { throw .wrongType(key: key, expected: tr("texto", "text")) }
         guard s.count <= maxCommand else { throw .commandTooLong(key: key, length: s.count) }
         // control (newline, tab, NUL, DEL, C1) and format characters (bidi overrides, zero-width): what runs is what shows
         guard !s.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) || $0.properties.generalCategory == .format })

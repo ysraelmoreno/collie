@@ -233,6 +233,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>`; cada cartão tem tipo (`impl`, `bug`, `refactor`, `spike`, `test`, `docs`, `chore`; padrão `impl`) e prioridade (`high`, `medium`, `low`; padrão `medium`), que `create-card`/`update-card` aceitam e `list-cards` filtra (quadros de `schema` 1 migram para 2 com cópia `board.json.v1.bak`) (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
 - **Como verificar:** `scripts/check-onda11.sh q11-4`, `scripts/check-onda12.sh q12-2`.
 
+### Fluxos (app de exemplo: grafo do app no device)
+
+- **Para que serve:** lê o log de ações `<cercado>/.collie/flows/actions.jsonl` (escrito por `collie device` com o log ligado) e monta o grafo do app (`Examples/apps/fluxos/store.py`, Python 3.9 sem dependências): nó = `sig` da tela, aresta = ação (`action`, `target`) de `sigBefore` para `sigAfter` com contagem, `app`, `appVersion` e `obsolete` (aresta de versão antiga contradita por uma nova fica obsoleta, não apagada); metas nomeadas apontam para nós. Grava `<cercado>/.collie/flows/graph.json` (0600, atômico); linha malformada conta em `skipped`.
+- **Como verificar:** `scripts/check-device-flows.sh d8`.
+
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 
 - **Para que serve:** (1) `edit`: depois que um terminal Claude escreve um arquivo, o helper olha os irmãos (mesma pasta,

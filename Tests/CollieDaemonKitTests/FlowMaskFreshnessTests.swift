@@ -57,6 +57,17 @@ private final class Lines: @unchecked Sendable {
     func add(_ s: String) { lock.withLock { all.append(s) } }
 }
 
+/// wf3: `first` raced against `ceiling`, a signal the test raises (no clock, no yields): `first`'s value, or nil when the
+/// ceiling came first. The loser is left running unawaited, so a regression's never-resumed `wait` fails the test
+/// instead of hanging the suite (the leaked task dies with the test process).
+func race<T: Sendable>(_ first: @escaping @Sendable () async -> T, ceiling: @escaping @Sendable () async -> Void) async -> T? {
+    let (s, k) = AsyncStream.makeStream(of: T?.self)
+    Task { k.yield(await first()) }
+    Task { await ceiling(); k.yield(nil) }
+    for await v in s { return v }
+    return nil
+}
+
 private actor Steps {
     var commands: [String] = []
     func add(_ c: String) -> Int { commands.append(c); return commands.count }
@@ -191,19 +202,33 @@ extension DeviceCommandTests {
 
                 let steps = Steps()
                 let (responses, responded) = AsyncStream.makeStream(of: Response.self)
+                let (probes, probed) = AsyncStream.makeStream(of: Void.self)
+                let (overruns, overran) = AsyncStream.makeStream(of: Void.self)
                 let fd = OSAllocatedUnfairLock<Int32>(initialState: -1)
-                await d.router.devices.stageFresh { c, _, _ async throws(ProtocolError) -> JSONValue in
-                    if await steps.add(c) == 2 {
-                        close(fd.withLock { $0 })   // ctrl-C on `collie device run` while step 2 is in flight
-                        await ClientHangup.current?.wait()   // we2: signalled by the hangup, no polling
-                    }
-                    return .object([:])
-                }
                 // A socket of the test's own in front of the daemon's router, as the daemon's socket is
                 let sock = URL(fileURLWithPath: "/tmp/colliet-\(UUID().uuidString.prefix(8))/s.sock")
                 defer { try? FileManager.default.removeItem(at: sock.deletingLastPathComponent()) }
+                let probe = try JSONEncoder().encode(Request(id: "probe", token: d.adminToken, command: "probe")) + Data([10])
+                await d.router.devices.stageFresh { c, _, _ async throws(ProtocolError) -> JSONValue in
+                    let n = await steps.add(c)
+                    if n > 2 { overran.yield() }   // the plan went on past the hangup: next()'s ceiling
+                    guard n == 2 else { return .object([:]) }
+                    close(fd.withLock { $0 })   // ctrl-C on `collie device run` while step 2 is in flight
+                    // wf3: the ceiling of `wait`, a probe on a second connection. The server reads every connection on one
+                    // serial queue and the EOF was pending before the probe even connected, so by the probe's reply the
+                    // hangup has been read: a `wait` still pending then is a regression, failed here instead of hung.
+                    let p = makeSocket()
+                    try? UnixSocketClient.connectSocket(p, sock.path) { 10_000 }
+                    _ = writeAll(p, probe, deadline: Date().addingTimeInterval(10))
+                    guard let gone = ClientHangup.current else { Issue.record("device.run runs with no ClientHangup"); return .object([:]) }
+                    _ = await race({ await gone.wait() }, ceiling: { for await _ in probes { return } })   // we2: no polling
+                    close(p)
+                    #expect(gone.isSet, "the hangup was read (the probe was served after it) but never signalled")
+                    return .object([:])
+                }
                 let router = d.router
                 let server = UnixSocketServer(path: sock) { r, peer in
+                    if r.id == "probe" { probed.yield(); return Response(id: r.id, ok: true) }
                     let res = await router.handle(r, peer: peer.pid)
                     responded.yield(res)
                     return res
@@ -218,8 +243,9 @@ extension DeviceCommandTests {
                 line.append(10)
                 #expect(writeAll(c, line, deadline: Date().addingTimeInterval(10)))
 
-                var it = responses.makeAsyncIterator()
-                let res = await it.next()   // we2: the router's reply, no polling nor wall-clock ceiling
+                // we2: the router's reply, no polling; wf3: its ceiling is the plan running a step past the hangup
+                let res = await race({ var it = responses.makeAsyncIterator(); return await it.next() },
+                                     ceiling: { for await _ in overruns { return } }) ?? nil
                 #expect(res?.ok == false && res?.error?.message == "plan cancelled before step 3 (done: 2)", "\(String(describing: res))")
                 #expect(await steps.commands == ["device.key", "device.key"])
             }

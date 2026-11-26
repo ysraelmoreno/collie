@@ -178,8 +178,11 @@ enum FlowClassifier {
         func area(_ i: Int) -> CGFloat { nodes[i].bounds.width * nodes[i].bounds.height }
         /// we2: a node of ≥ 90 % of the root's area (Android's clickable root, a content view under the status bar) is the
         /// screen itself: it lends no labels to what lies in it, or a scroll swipe on a screen with "Sair" would be refused.
-        // ponytail: fixed 90 % cut; a real full-screen button (rare) is still classified by its own names
-        func screen(_ i: Int) -> Bool { area(0) > 0 && area(i) >= 0.9 * area(0) }
+        /// wf3: a clickable one is the screen only as the tree's real root (`depth == 0`: the depth counts the nodes the
+        /// parser drops, so a full-screen overlay under dropped containers is not mistaken for it); any other clickable
+        /// full-screen node (a confirmation overlay whose `onClick` deletes) lends its whole subtree.
+        // ponytail: fixed 90 % cut
+        func screen(_ i: Int) -> Bool { area(0) > 0 && area(i) >= 0.9 * area(0) && (!nodes[i].clickable || nodes[i].depth == 0) }
         /// Node `i` when clickable, else its clickable ancestor (as `UITree.target` climbs), never the screen itself; nil: none.
         func clickable(_ i: Int) -> Int? { nodes[i].clickable ? i : ancestors(i).first { nodes[$0].clickable && !screen($0) } }
         /// wd1: what a touch at `pt` can act on, fail-closed (see the type's doc).

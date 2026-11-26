@@ -343,7 +343,7 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             done = true
             timer?.cancel(); timer = nil
-            handler = nil
+            onHangup = nil
             let cb: (@Sendable () -> Void)? = lock.withLock {
                 closed = true; out = Data(); outOff = 0
                 defer { onClose = nil }; return onClose

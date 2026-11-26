@@ -661,7 +661,8 @@ public enum Commands {
         CommandSpec(name: "device.run", summary: "Run a plan of device steps in order ({steps:[{action: tap|text|swipe|key|launch, target, text?, expectSig?, destructive?}]}, at most 200); after a step with expectSig, reads the screen and stops at the first other sig: {ok:false, stoppedAt, expected, got, screen}; else {ok:true, steps}",
                     params: [ParamSpec("plan", .string, required: true, help: "Plan JSON file in your project (regular file, at most 256 KiB)"),
                              ParamSpec("panel", .string, help: "Device panel (default: the only one you reach)"),
-                             ParamSpec("serial", .string, help: "Without --panel: the device panel showing this serial")], timeoutSeconds: 600),
+                             ParamSpec("serial", .string, help: "Without --panel: the device panel showing this serial"),
+                             ParamSpec("confirm-destructive", .flag, help: "Run destructive steps too (the user only, never from a terminal); without it the plan stops before one: {ok:false, refused:\"destructive\", at, done}")], timeoutSeconds: 600),
         // the design engine download (DesignEngineCommands): the app's or the owner's CLI, never a terminal's or MCP's
         CommandSpec(name: "design.engine.status",
                     summary: "Design engine state (app only): {state: absent|installed|needsUpdate, installed?:{version,source}, reinstall?, pinned?:{version,size}, job?}",

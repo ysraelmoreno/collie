@@ -11,7 +11,7 @@ struct FlowPlan: Codable, Sendable, Equatable {
         var target: String = ""
         var text: String? = nil
         var expectSig: String? = nil
-        var destructive: Bool? = nil   // d7 asks the user before it; d6 only reads it
+        var destructive: Bool? = nil   // d7: runs only with the user's confirmation (FlowRunner.confirmed)
     }
     var steps: [Step]
 
@@ -53,12 +53,22 @@ struct FlowPlan: Codable, Sendable, Equatable {
 /// an agent calls, so the flow log records them too. After a step with `expectSig` it reads `device.screen` and
 /// stops at the first signature that differs: `{ok:false, stoppedAt (1-based), expected, got, screen}`; else
 /// `{ok:true, steps:N}`. A failing command stops the plan with its error, naming the step.
+/// d7: a `destructive` step runs only when `confirmed` (the user's `--confirm-destructive`; the router never sets it for
+/// an agent); else the plan stops before it: `{ok:false, refused:"destructive", at (1-based), done}`, the earlier
+/// steps staying run.
 struct FlowRunner: Sendable {
     typealias Act = @Sendable (_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue
+    var confirmed = false
     let act: Act
+
+    init(confirmed: Bool = false, act: @escaping Act) { self.confirmed = confirmed; self.act = act }
 
     func run(_ plan: FlowPlan) async throws(ProtocolError) -> JSONValue {
         for (i, step) in plan.steps.enumerated() {
+            if step.destructive == true, !confirmed {
+                return .object(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
+                                "done": .number(Double(i))])
+            }
             let (command, args) = try Self.command(step)
             do { _ = try await act(command, args) } catch {
                 throw ProtocolError(code: error.code, message: "step \(i + 1) (\(step.action) \(step.target)): \(error.message)")

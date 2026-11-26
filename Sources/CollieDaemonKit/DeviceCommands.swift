@@ -61,6 +61,11 @@ extension CommandRouter {
     /// the reachable device panel showing that serial.
     func deviceRunCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
+        // d7: confirming a destructive step is the user's alone (principal: admin token, not from inside a terminal)
+        let confirmed = flag(r, "confirm-destructive")
+        if confirmed, caller != nil {
+            throw ProtocolError(code: .unauthorized, message: "--confirm-destructive is the user's: an agent's plan stops at a destructive step")
+        }
         let data = try await ruleBodyFile(try need(r, "plan"), r, caller: caller, flag: "--plan", limit: FlowPlan.maxBytes)
         let plan = try FlowPlan.parse(data)
         let target: Panel
@@ -75,7 +80,7 @@ extension CommandRouter {
         }
         let flow = caller.flatMap { me in flowLog(me.paddockId ?? target.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
         let devices = devices, cwd = r.cwd
-        return try await FlowRunner { c, a async throws(ProtocolError) in
+        return try await FlowRunner(confirmed: confirmed) { c, a async throws(ProtocolError) in
             try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
         }.run(plan)
     }

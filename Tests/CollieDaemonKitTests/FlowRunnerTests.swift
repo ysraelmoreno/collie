@@ -111,7 +111,7 @@ struct FlowRunnerTests {
 
     @Test func commandIsDeclaredWithHelp() throws {
         let spec = try #require(Commands.spec("device.run"))
-        #expect(spec.params.map(\.name) == ["plan", "panel", "serial"] && spec.params[0].required)
+        #expect(spec.params.map(\.name) == ["plan", "panel", "serial", "confirm-destructive"] && spec.params[0].required)
         let help = try #require(ArgvParser.help(["device", "run", "--help"]))
         #expect(help.hasPrefix("usage: collie device run --plan <plan>") && help.contains("--serial"), "\(help)")
         #expect(try ArgvParser.parse(["device", "run", "--plan", "p.json", "--serial", "emulator-5554"]).args

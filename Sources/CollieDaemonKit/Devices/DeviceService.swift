@@ -29,12 +29,16 @@ actor DeviceService {
     var refs: [UUID: [UINode]] = [:]
     /// The last `device.screen` per panel, for its `changed`.
     var lastScreen: [UUID: Screen] = [:]
-    /// b1: panels whose `refs` come from a read made after their last action (agent or viewer); the typed text of a
-    /// `device.text` is written in clear only for these (`flowSecure`).
-    var flowFresh: Set<UUID> = []
-    /// b4: panels whose screen changed (an action, a viewer tap) after their last `device.screen`: their `flowSig` is ""
-    /// ("tela gasta"), not the old read's signature again.
-    var flowSpent: Set<UUID> = []
+    /// c3: each panel's screen generation, moved synchronously by every action and viewer touch down (`FlowGen`).
+    nonisolated let flowGen = FlowGen()
+    /// b1/c3: the generation the panel's `refs` were proven at: a read whose generation did not move while it was in
+    /// flight. The typed text of a `device.text` is written in clear only while it is still the current one (`flowFresh`).
+    var flowFreshAt: [UUID: Int] = [:]
+    /// b4/c3: the generation the panel's last `device.screen` started at; once the generation moved past it (an action,
+    /// a viewer touch down) its `flowSig` is "" ("tela gasta"), not the old read's signature again.
+    var screenAt: [UUID: Int] = [:]
+    /// Tests only: stands in for `perform` (the device) under `tracked`, so a race can be staged without adb.
+    var performSeam: (@Sendable (String, Panel, [String: JSONValue]) async throws(ProtocolError) -> JSONValue)?
     /// The last queued flow log write (d5): the next one waits for it.
     private var flowWrite: Task<Void, Never>?
     /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
@@ -72,6 +76,15 @@ actor DeviceService {
     var densities: [String: Double] = [:]
     /// b5: the `wm density` read in flight per serial; concurrent callers share it.
     private var densityReads: [String: Task<Double?, Never>] = [:]
+    /// c3: when a serial's last `wm density` read failed (timeout or a fast adb error): no new read for `densityBackoff`.
+    var densityFailed: [String: ContinuousClock.Instant] = [:]
+    /// c3: the background read `densityKnown` started per serial (nil once it is done).
+    var densityProbe: [String: Task<Void, Never>] = [:]
+    static let densityBackoff: Duration = .seconds(30)
+    /// The `adb shell wm density` output of a serial (nil: failed); nil here: the real adb.
+    private let wmDensity: (@Sendable (String) async -> String?)?
+    /// The clock of the density backoff (injected by tests).
+    private let now: @Sendable () -> ContinuousClock.Instant
 
     private let scrcpyServer: URL?
     /// How long a session outlives its last viewer.
@@ -95,12 +108,14 @@ actor DeviceService {
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
          helperApk: @escaping @Sendable () -> URL? = { nil },
          ocr: (any OCRProvider)? = nil, ocrLanguages: [String] = VisionOCR.defaultLanguages,
+         wmDensity: (@Sendable (String) async -> String?)? = nil, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
         self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
         self.scrcpyServer = scrcpyServer; self.grace = grace; self.helperApk = helperApk
         self.ocr = ocr; self.ocrLanguages = ocrLanguages
+        self.wmDensity = wmDensity; self.now = now
     }
 
     var screens: URL { root.appendingPathComponent("screens") }
@@ -114,8 +129,11 @@ actor DeviceService {
     /// the next call reads again (b5). One read in flight per serial.
     func density(_ serial: String) async -> Double? {
         if let d = densities[serial] { return d }
+        let wm = wmDensity
         let t = densityReads[serial] ?? Task {
-            let out = try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
+            let out: String? = if let wm { await wm(serial) } else {
+                try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
+            }
             return out.flatMap(ScreenAccessibility.density(wm:))
         }
         densityReads[serial] = t
@@ -124,6 +142,24 @@ actor DeviceService {
         if let d { densities[serial] = d }
         return d
     }
+
+    /// c3: the density for `device screen`, never waited for: the known value, else nil, and one read started in the
+    /// background unless one is in flight or the last one failed less than `densityBackoff` ago (then no Task at all).
+    /// Any failure backs off, a timeout and a fast adb error alike.
+    func densityKnown(_ serial: String) -> Double? {
+        if let d = densities[serial] { return d }
+        if let t = densityFailed[serial], now() - t < Self.densityBackoff { return nil }
+        guard densityProbe[serial] == nil else { return nil }
+        densityProbe[serial] = Task {
+            let d = await self.density(serial)
+            self.densityProbe[serial] = nil
+            self.densityFailed[serial] = d == nil ? self.now() : nil
+        }
+        return nil
+    }
+
+    /// Waits for the background density read of `serial`, if any (tests).
+    func densitySettled(_ serial: String) async { await densityProbe[serial]?.value }
 
     /// The adb tool, with the server started (`Adb.startServer`) before its first use in this daemon session.
     func tool() async throws(ProtocolError) -> Adb {
@@ -189,24 +225,33 @@ actor DeviceService {
         guard let flow, let panel, let action = Self.flowActions[command], flow.log.enabled else { return try await tracked(command, panel: panel, args: args, cwd: cwd) }
         let before = flowSig(panel.id)   // read before the action: `--then screen` updates it
         let nodes = refs[panel.id] ?? []
-        let secure = Self.flowSecure(nodes, fresh: flowFresh.contains(panel.id))
+        // c3: the generation is taken before the action; the text is in clear only when the read was fresh at it and
+        // nothing but the action's own bump moved it until the action ended (a viewer touch meanwhile masks)
+        let gen = flowGen.value(panel.id)
+        let secure = Self.flowSecure(nodes, fresh: flowFreshAt[panel.id] == gen)
         let r = try await tracked(command, panel: panel, args: args, cwd: cwd)
         record(FlowAction(origin: flow.origin, action: action, target: Self.flowTarget(command, args, nodes),
                           text: command == "device.text" ? { if case .string(let t)? = args["text"] { t } else { nil } }() : nil,
-                          secure: secure || (refs[panel.id] ?? []).contains(where: \.password),
+                          secure: secure || flowGen.value(panel.id) != gen + 1 || (refs[panel.id] ?? []).contains(where: \.password),
                           sigBefore: before, sigAfter: Self.screenSig(r)), to: flow.log)
         return r
     }
 
-    /// `perform`, keeping `flowFresh`: an action makes the last read stale (before it runs: one that fails midway stays
-    /// stale) unless it returns its own screen (`--then screen` reads after it); a read makes it fresh.
+    /// `perform`, keeping `flowFreshAt`: an action moves the generation (before it runs: one that fails midway leaves
+    /// the read stale) unless it returns its own screen (`--then screen` reads after it); a read proves the generation
+    /// it started at, only if nothing moved it while the read was in flight (c3).
     private func tracked(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
-        guard let id = panel?.id else { return try await perform(command, panel: panel, args: args, cwd: cwd) }
-        if Self.flowActions[command] != nil { flowFresh.remove(id); flowSpent.insert(id) }
-        let r = try await perform(command, panel: panel, args: args, cwd: cwd)
-        if !closed.contains(id), Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty { flowFresh.insert(id) }
+        guard let panel else { return try await perform(command, panel: nil, args: args, cwd: cwd) }
+        let id = panel.id
+        if Self.flowActions[command] != nil { flowGen.bump(id) }
+        let gen = flowGen.value(id)
+        let r = if let f = performSeam { try await f(command, panel, args) } else { try await perform(command, panel: panel, args: args, cwd: cwd) }
+        if !closed.contains(id), flowGen.value(id) == gen, Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty { flowFreshAt[id] = gen }
         return r
     }
+
+    /// Whether the panel's `refs` come from a read no action or viewer touch came after (b1, c3).
+    func flowFresh(_ id: UUID) -> Bool { flowFreshAt[id] == flowGen.value(id) }
 
     private func perform(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
@@ -225,6 +270,7 @@ actor DeviceService {
             return refs[panel.id] ?? []
         }
         func screen(all: Bool, timing: Bool = false, ocrMode: OCRMode = .auto) async throws(ProtocolError) -> [String: JSONValue] {
+            let gen = flowGen.value(panel.id)   // c3: a touch during this read leaves the screen spent
             let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
             let start = ContinuousClock.now
             var nodes = refs[panel.id] ?? []
@@ -236,12 +282,12 @@ actor DeviceService {
             }
             var screen = ScreenModel.build(nodes)
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
-            if !closed.contains(panel.id) { lastScreen[panel.id] = screen; flowSpent.remove(panel.id) }
+            if !closed.contains(panel.id) { lastScreen[panel.id] = screen; screenAt[panel.id] = gen }
             var o = ScreenModel.json(screen)
             let sig = ScreenSignature.compute(screen)
             o["sig"] = .string(sig)
             if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nsig=\(sig)") }
-            let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: await density(serial))
+            let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: densityKnown(serial))   // c3: never waits for adb
             if let found = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
                 let a11y = "ACESSIBILIDADE: " + found
                 o["accessibility"] = .string(found)
@@ -616,14 +662,14 @@ actor DeviceService {
     /// c1: whether plan step `s` acts on a destructive node of `panel` (`FlowClassifier.classify`), the screen read
     /// again (the `device.ui` path, refs updated) for a point or when an action came after the last read.
     func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> Bool {
-        try await FlowClassifier.classify(s, fresh: flowFresh.contains(panel.id), nodes: refs[panel.id] ?? []) { () async throws(ProtocolError) -> [UINode] in
+        try await FlowClassifier.classify(s, fresh: flowFresh(panel.id), nodes: refs[panel.id] ?? []) { () async throws(ProtocolError) -> [UINode] in
             _ = try await tracked("device.ui", panel: panel, args: [:], cwd: cwd)
             return refs[panel.id] ?? []
         }
     }
 
     /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.
-    func flowSig(_ panel: UUID) -> String { flowSpent.contains(panel) ? "" : lastScreen[panel].map(ScreenSignature.compute) ?? "" }
+    func flowSig(_ panel: UUID) -> String { screenAt[panel] != flowGen.value(panel) ? "" : lastScreen[panel].map(ScreenSignature.compute) ?? "" }
 
     /// What the action acted on, from its args (`nodes`: the refs before it, for `--ref`).
     static func flowTarget(_ command: String, _ a: [String: JSONValue], _ nodes: [UINode]) -> String {
@@ -683,6 +729,29 @@ actor DeviceService {
         return t
     }
 
+    /// c3: whether viewer frame `d` may change the screen. Android: a scrcpy touch only on its down (a move or the up
+    /// belongs to a touch already counted), any other control message (key, text, scroll) always. iOS: the viewer sends
+    /// whole gestures (`DevicePanel` turns a press, its drag and its lift into one tap or swipe at the lift), so each
+    /// decoded `SimInput` is the gesture's down; a frame that is not one (`SimSession` drops it) changes nothing.
+    static func viewerChangesScreen(_ d: Data, ios: Bool, decode: @Sendable (Data) -> SimInput? = decodeSim) -> Bool {
+        if ios { return decode(d) != nil }
+        let b = [UInt8](d)
+        guard let type = b.first else { return false }
+        if type == 2, b.count == 32 { return b[1] == 0 }
+        return true
+    }
+
+    /// c3: one viewer frame, synchronously (no Task per frame): the screen generation moves (`viewerChangesScreen`)
+    /// before the session gets the input (`forward`), so no read that ends after the input counts as fresh; then the
+    /// tap to record (`viewerTap`), nil when none or the log is off.
+    static func viewerFrame(_ d: Data, ios: Bool, panel: UUID, gen: FlowGen, forward: (Data) -> Void, flowLog: FlowActionLog?,
+                            down: OSAllocatedUnfairLock<(x: Int32, y: Int32)?>, decode: @escaping @Sendable (Data) -> SimInput? = decodeSim) -> String? {
+        if viewerChangesScreen(d, ios: ios, decode: decode) { gen.bump(panel) }
+        forward(d)
+        guard let flowLog else { return nil }
+        return viewerTap(d, ios: ios, logOn: { flowLog.enabled }, down: down, decode: decode)
+    }
+
     /// Records a panel tap (origin `panel`); no screen comes back, so `sigAfter` is empty.
     func recordPanelTap(panel: UUID, target: String, log: FlowActionLog) {
         record(FlowAction(origin: "panel", action: "tap", target: target, sigBefore: flowSig(panel)), to: log)
@@ -715,13 +784,13 @@ actor DeviceService {
             }
         }
         let ios = panel.state["platform"] == .string("ios"), down = OSAllocatedUnfairLock<(x: Int32, y: Int32)?>(initialState: nil), id = panel.id
+        let gen = flowGen
         conn.open(ok, onFrame: { [unowned conn, weak s] f in
                       guard case .in(let d) = f else { return }
-                      s?.input(d, from: conn)
-                      // b1: the viewer may have changed the screen; ponytail: one Task per input, unordered with reads
-                      // (a late one only over-masks)
-                      Task { await self.flowStale(id) }
-                      guard let flowLog, let t = Self.viewerTap(d, ios: ios, logOn: { flowLog.enabled }, down: down) else { return }
+                      // c3: the generation moves (lock, in order) before the device gets the touch: a read in flight
+                      // then is never taken as fresh, and a `device.text` around it is masked
+                      guard let t = Self.viewerFrame(d, ios: ios, panel: id, gen: gen, forward: { s?.input($0, from: conn) },
+                                                     flowLog: flowLog, down: down), let flowLog else { return }
                       Task { await self.recordPanelTap(panel: id, target: t, log: flowLog) }
                   },
                   onClose: { [weak s] in Task { if let s { await self.left(s, conn) } } })
@@ -729,8 +798,6 @@ actor DeviceService {
             conn.send(.deviceStatus(state: "ended", message: nil)); conn.closeAfterFlush()
         }
     }
-
-    func flowStale(_ panel: UUID) { flowFresh.remove(panel); flowSpent.insert(panel) }
 
     /// The last viewer gone: the session ends after `grace` unless one comes back.
     private func left(_ s: any ViewerSession, _ c: StreamConn) {
@@ -759,7 +826,8 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
-        flowFresh.remove(id); flowSpent.remove(id)
+        flowFreshAt[id] = nil; screenAt[id] = nil
+        flowGen.bump(id)   // c3: never reset (monotonic): a read still in flight can not match it again
         lastScreen[id] = nil
         simPoints[id] = nil
         idle.removeValue(forKey: id)?.cancel()
@@ -936,7 +1004,8 @@ actor DeviceService {
     /// Daemon stop: ends every session and watcher and waits (≤ 1.5 s) for their groups, so the delayed KILL is not lost
     /// with the process; and for the sessions' `forward --remove` (≤ its 5 s adb timeout).
     func stop() async {
-        refs = [:]; flowFresh = []; flowSpent = []
+        refs = [:]; flowFreshAt = [:]; screenAt = [:]
+        flowGen.bumpAll()   // c3: not zeroed: reads in flight stay stale
         watched = [:]; online = [:]; watchedIOS = [:]; booted = [:]
         poller?.cancel(); poller = nil
         let live = Array(sessions.values); sessions = [:]
@@ -950,4 +1019,16 @@ actor DeviceService {
         let deadline = ContinuousClock.now + .milliseconds(1500)
         while pids.contains(where: { kill(-$0, 0) == 0 }) && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
     }
+}
+
+/// c3: the screen generation per panel, moved under a lock by every action (`tracked`) and every viewer touch down
+/// (`viewerFrame`, on the connection's thread, before the device gets it). Never reset, only moved up: a read or a
+/// `device.text` compares the value it started at with the one it ends at.
+/// ponytail: one Int per panel ever touched for the daemon's life, like `closed`.
+final class FlowGen: Sendable {
+    /// `all`: moved by `bumpAll`, part of every panel's value (also one never bumped yet).
+    private let gens = OSAllocatedUnfairLock<(all: Int, panel: [UUID: Int])>(initialState: (0, [:]))
+    func value(_ id: UUID) -> Int { gens.withLock { $0.all + ($0.panel[id] ?? 0) } }
+    func bump(_ id: UUID) { gens.withLock { $0.panel[id, default: 0] += 1 } }
+    func bumpAll() { gens.withLock { $0.all += 1 } }
 }

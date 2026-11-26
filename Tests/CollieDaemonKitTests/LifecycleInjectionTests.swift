@@ -36,7 +36,10 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
     @Test func earnedLineHasNoTag() async throws {
         let r = x()
         let (mem, repo) = try await setup([r])
-        await mem.lifecycle.update(r.id, now: Date()) { $0.usefulUses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")] }
+        await mem.lifecycle.update(r.id, now: Date()) {
+            $0.usefulUses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")]
+            $0.evidencedUses = [UseKey(day: "2026-11-01", session: "a")]   // ma3: earning needs evidence
+        }
         let out = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
         #expect(out.hasSuffix("] Use Postgres pool: postgres pool sizing"), "\(out)")
     }

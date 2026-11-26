@@ -109,6 +109,7 @@ private let bad = "deadbee1"
             let ago: [Double] = [20, 14, 7, 1]
             await lc.update(next.id, now: now) { e in
                 e.usefulUses = Set((0..<8).map { UseKey(day: dayString(now.addingTimeInterval(-ago[$0 % 4] * 86_400)), session: "u\($0)") })
+                e.evidencedUses = [e.usefulUses.first!]   // ma3: earning needs evidence
             }
             #expect(LifecycleRules.promotionCandidate(try #require(await lc.entry(next.id)), now: now))
             await d.router.memory.applyVerdict(next.id, kind: .verifyPromotion, verdict: .valid, now: now)
@@ -368,7 +369,7 @@ private let bad = "deadbee1"
             let r = dec("Promovida"), c = dec("Revalidada")
             try await put(store, [r, c])
             let mem = d.router.memory, lc = mem.lifecycle, now = Date()
-            await lc.update(r.id, now: now) { $0.usefulUses = self.eightUses(now) }
+            await lc.update(r.id, now: now) { $0.usefulUses = self.eightUses(now); $0.evidencedUses = [$0.usefulUses.first!] }
             #expect(await mem.applyVerdict(r.id, kind: .verifyPromotion, verdict: .valid, now: now))
             let pe = await lc.entry(r.id)
             #expect(pe?.gatedAt == now && pe?.recheckedAt == nil)
@@ -403,10 +404,13 @@ private let bad = "deadbee1"
             let r = dec("Ganhou")
             try await put(store, [r])
             let lc = d.router.memory.lifecycle, now = Date()
-            await lc.update(r.id, now: now) { $0.usefulUses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")] }
+            await lc.update(r.id, now: now) {
+                $0.usefulUses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")]
+                $0.evidencedUses = [UseKey(day: "2026-11-01", session: "a")]
+            }
             await d.router.lifecyclePass(store, now: now)
             let e = await lc.entry(r.id)
-            #expect(e?.tier == .earned && e?.textHash == LifecycleRules.textHash(r))
+            #expect(e?.tier == .earned && e?.earnedBy == "evidence" && e?.textHash == LifecycleRules.textHash(r))
         }
     }
 
@@ -417,7 +421,7 @@ private let bad = "deadbee1"
             let r = dec("Em dois")
             try await put(a, [r]); try await put(b, [r])
             let lc = d.router.memory.lifecycle, now = Date(), uses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")]
-            await lc.update(r.id, now: now) { $0.usefulUses = Set(uses) }
+            await lc.update(r.id, now: now) { $0.usefulUses = Set(uses); $0.evidencedUses = [uses[0]] }
             for s in [a, b, a, b] { await d.router.lifecyclePass(s, now: now.addingTimeInterval(86_400)) }
             let e = await lc.entry(r.id)
             #expect(e?.tier == .earned && e?.usefulUses == Set(uses) && e?.store == b.key)

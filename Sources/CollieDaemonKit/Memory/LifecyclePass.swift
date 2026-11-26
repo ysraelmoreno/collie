@@ -25,7 +25,10 @@ extension CommandRouter {
             if eff != e { e = eff; e.tierSince = now }
             e.store = store.key
             let t = LifecycleRules.tier(for: e, now: now)
-            if e.tier != .longTerm, t != e.tier { e.tier = t; e.tierSince = now }
+            if e.tier != .longTerm, t != e.tier {
+                if e.tier == .provisional, t == .earned { e.earnedBy = "evidence" }   // ma3: `tier` earns only with evidence
+                e.tier = t; e.tierSince = now
+            }
             if e.tier != .provisional, e.textHash == nil { e.textHash = LifecycleRules.textHash(r) }   // earned now (or an older entry)
         }
         var entries = await lc.all()

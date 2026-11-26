@@ -13,3 +13,7 @@ Laço A da revalidação da memória (`.collie/briefs/rev-memoria-rag.md`, ponto
 - `LifecycleRulesTests`, `LifecyclePassTests` e `LifecycleStoreTests` continuam passando.
 ## Resultado
 (o laço preenche)
+
+- `LifecycleRules.tier`: provisional → earned exige ao menos 1 uso de `usefulUses` também em `evidencedUses`; o `lifecyclePass` grava `earnedBy: "evidence"` nessa promoção. `effective` (texto editado) zera `earnedBy`.
+- Earned existentes não são rebaixados (`tier` devolve o tier gravado); ficam com `earnedBy == nil` (= implícito). Quantos não teriam evidência não é mensurável em teste sem ler `lifecycle.json` real: é a contagem de earned com `earnedBy == nil`.
+- `promotionCandidate` segue exigindo tier não provisório: a promoção em massa por uso vácuo fica barrada.

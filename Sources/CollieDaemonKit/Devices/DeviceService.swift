@@ -200,15 +200,15 @@ actor DeviceService {
             let sig = ScreenSignature.compute(screen)
             o["sig"] = .string(sig)
             if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nsig=\(sig)") }
-            if let read, read.nodes == nil {
-                o["ocr"] = .string("unavailable")
-                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
-            }
             let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: await density(serial))
             if let found = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
                 let a11y = "ACESSIBILIDADE: " + found
                 o["accessibility"] = .string(found)
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + a11y) }
+            }
+            if let read, read.nodes == nil {
+                o["ocr"] = .string("unavailable")
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
             }
             if !closed.contains(panel.id), let lines = screenErrors.read(serial) {   // d2: ERROS DESDE A ÚLTIMA LEITURA, only when any
                 o["errors"] = .array(lines.map { .string($0) })

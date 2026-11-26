@@ -43,7 +43,7 @@ struct UsagePopover: View {
         VStack(alignment: .leading, spacing: 14) {
             if let failure { Text(failure).foregroundStyle(Color.collieDanger).font(.collieUI(11)) }
             else if !loaded { ProgressView().controlSize(.small) }
-            else if reports.isEmpty { Text("Nenhum provedor de uso configurado.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+            else if reports.isEmpty { Text(tr("Nenhum provedor de uso configurado.", "No usage provider configured.")).font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
             ForEach(reports, id: \.providerId) { r in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(r.label).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
@@ -57,7 +57,7 @@ struct UsagePopover: View {
                             }
                             ProgressView(value: min(max((w.usedPercent ?? 0) / 100, 0), 1)).tint(Color.collieAccent)
                             if let at = w.resetsAt, let s = Self.resets(at) {
-                                Text("reinicia em \(s)").font(.collieMono(10)).foregroundStyle(Color.collieMuted)
+                                Text(tr("reinicia em \(s)", "resets in \(s)")).font(.collieMono(10)).foregroundStyle(Color.collieMuted)
                             }
                         }
                     }

@@ -16,7 +16,7 @@ private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad
     return w
 }
 
-@MainActor struct ContextPanelLoopsTests {
+@MainActor @Suite(.appPT) struct ContextPanelLoopsTests {
     private func titles(_ w: Work?, paddock: UUID? = pad) -> [String] {
         ContextPanel.sectionTitles(agents: 2, panels: 1, loops: LoopSection.make(work: w, paddock: paddock))
     }

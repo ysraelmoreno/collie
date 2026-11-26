@@ -55,7 +55,7 @@ struct DockView: View {
                 if store.instance(for: current.id) != nil {
                     PanelContent(store: store, panel: current).id(current.id)
                 } else {
-                    Text("Plug-in indisponível").foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Text(tr("Plug-in indisponível", "Plug-in unavailable")).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }

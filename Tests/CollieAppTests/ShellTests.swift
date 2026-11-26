@@ -45,7 +45,7 @@ private struct Host: View {
 }
 
 /// Completa (Trilho: rail, context panel, status bar) mounts over an empty client and leaves room for the content.
-@MainActor @Test func fullShellMountsWithEmptyClient() {
+@MainActor @Test(.appPT) func fullShellMountsWithEmptyClient() {
     let counter = Counter()
     let host = NSHostingView(rootView: Shell(structure: .full, ctx: emptyContext()) { Probe(counter: counter) })
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
@@ -55,7 +55,7 @@ private struct Host: View {
 }
 
 /// Switching Compacta ↔ Completa must not remake the canvas (nor the docked panels around it).
-@MainActor @Test func structureSwitchKeepsContent() {
+@MainActor @Test(.appPT) func structureSwitchKeepsContent() {
     let ctx = emptyContext(), box = Box(), counter = Counter()
     let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter))
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
@@ -67,7 +67,7 @@ private struct Host: View {
 }
 
 /// Canvas ↔ Preferências in Completa: Preferências mounts in the canvas's place and the canvas is never remade.
-@MainActor @Test func mainViewSwitchKeepsCanvas() {
+@MainActor @Test(.appPT) func mainViewSwitchKeepsCanvas() {
     let ctx = emptyContext(), box = Box(), counter = Counter(), prefs = Counter()
     box.structure = .full
     let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter, prefs: prefs))
@@ -83,7 +83,7 @@ private struct Host: View {
     #expect(counter.made == 1 && counter.dismantled == 0)
 }
 
-@MainActor @Test func usageSummary() {
+@MainActor @Test(.appPT) func usageSummary() {
     func r(_ id: String, _ ps: [Double?]) -> UsageReport {
         UsageReport(providerId: id, label: id, windows: ps.enumerated().map { WindowValue(label: "w\($0.offset)", usedPercent: $0.element, resetsAt: nil) })
     }
@@ -92,7 +92,7 @@ private struct Host: View {
     #expect(UsageFeed.summary([r("claude", [nil]), r("codex", [55])]) == "55%")
 }
 
-@MainActor @Test func paletteFilter() {
+@MainActor @Test(.appPT) func paletteFilter() {
     let cs = ["Novo terminal", "Ir para o cercado api", "Ações do Pasto"].map { PaletteCommand(id: $0, title: $0, run: {}) }
     #expect(CommandPalette.filter(cs, "cerc").map(\.title) == ["Ir para o cercado api"])
     #expect(CommandPalette.filter(cs, "ACOES").map(\.title) == ["Ações do Pasto"])   // diacritics and case ignored

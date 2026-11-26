@@ -33,13 +33,13 @@ struct HerdsSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Rebanhos", subtitle: "times prontos: terminais, painéis, guias e cercado") {
+            PanelHeader(tr("Rebanhos", "Herds"), subtitle: tr("times prontos: terminais, painéis, guias e cercado", "ready-made teams: terminals, panels, leashes and paddock")) {
                 if model.preview?.imported != true {
-                    Button("Importar…", action: pickImport).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Importar…", "Import…"), action: pickImport).buttonStyle(CollieButtonStyle(.secondary))
                 }
             }
             if let pv = model.preview, pv.imported { trust(pv) } else { main }
-            PanelFooter(model.error ?? error ?? "\(model.items.count) rebanhos", trailing: model.busy ? "aguarde…" : nil)
+            PanelFooter(model.error ?? error ?? tr("\(model.items.count) rebanhos", "\(model.items.count) herds"), trailing: model.busy ? tr("aguarde…", "wait…") : nil)
         }
         .frame(width: 820, height: 600).background(Color.collieSurface)
         .task {
@@ -73,12 +73,12 @@ struct HerdsSheet: View {
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(model.items) { it in
-                        ChoiceCard(it.name, subtitle: "\(it.terminals) terminais · \(it.panels) painéis\(it.wantsPaddock ? " · cria cercado" : "")",
+                        ChoiceCard(it.name, subtitle: tr("\(it.terminals) terminais · \(it.panels) painéis\(it.wantsPaddock ? " · cria cercado" : "")", "\(it.terminals) terminals · \(it.panels) panels\(it.wantsPaddock ? " · creates a paddock" : "")"),
                                    selected: selected == it.id, action: { Task { await pick(it.id) } }) {
-                            if it.builtIn { HStack { CollieTag("de fábrica", tone: .secondary); Spacer() } }
+                            if it.builtIn { HStack { CollieTag(tr("de fábrica", "built-in"), tone: .secondary); Spacer() } }
                         }
                     }
-                    if model.items.isEmpty { Text("Nenhum rebanho").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                    if model.items.isEmpty { Text(tr("Nenhum rebanho", "No herds")).font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                 }.padding(14)
             }
             .frame(width: 260)
@@ -89,7 +89,7 @@ struct HerdsSheet: View {
                     form(pv)
                 } else {
                     Spacer()
-                    Text(selected == nil ? "Escolha um rebanho" : "carregando…").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+                    Text(selected == nil ? tr("Escolha um rebanho", "Pick a herd") : tr("carregando…", "loading…")).font(.collieUI(13)).foregroundStyle(Color.collieMuted)
                     Spacer()
                 }
             }
@@ -102,25 +102,25 @@ struct HerdsSheet: View {
         let ready = rendered == pv.token && !name.trimmingCharacters(in: .whitespaces).isEmpty && !cwd.isEmpty && !model.busy
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                TextField("Nome (obrigatório)", text: $name).collieField()
-                Toggle("Criar cercado", isOn: $paddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                TextField(tr("Nome (obrigatório)", "Name (required)"), text: $name).collieField()
+                Toggle(tr("Criar cercado", "Create paddock"), isOn: $paddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
             }
             HStack(spacing: 8) {
-                TextField("Pasta", text: $cwd).collieField(mono: true)
-                Button("Escolher…", action: pickFolder)
+                TextField(tr("Pasta", "Folder"), text: $cwd).collieField(mono: true)
+                Button(tr("Escolher…", "Choose…"), action: pickFolder)
             }
             if let error { Text(error).font(.collieUI(12)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true) }
             HStack(spacing: 8) {
-                Button("Exportar…") { export(pv.id) }
+                Button(tr("Exportar…", "Export…")) { export(pv.id) }
                 if item?.builtIn == false {
-                    Button("Remover") { Task { await model.remove(id: pv.id); selected = nil } }
-                        .help("Sai da lista; fica guardado em herds/.removed")
+                    Button(tr("Remover", "Remove")) { Task { await model.remove(id: pv.id); selected = nil } }
+                        .help(tr("Sai da lista; fica guardado em herds/.removed", "Leaves the list; kept in herds/.removed"))
                 }
                 Spacer()
-                if rendered != pv.token { Text("role até o fim da prévia").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
-                Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
+                if rendered != pv.token { Text(tr("role até o fim da prévia", "scroll to the end of the preview")).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
+                Button(tr("Cancelar", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction).disabled(model.busy)
                 // not the default action: Enter never applies
-                Button(model.busy ? "Aplicando…" : "Aplicar") { apply(pv) }
+                Button(model.busy ? tr("Aplicando…", "Applying…") : tr("Aplicar", "Apply")) { apply(pv) }
                     .buttonStyle(CollieButtonStyle(.primary)).disabled(!ready)
             }
         }
@@ -172,25 +172,25 @@ struct HerdsSheet: View {
 
     private func trust(_ pv: HerdPreview) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Arquivo importado: confira cada comando e cada prompt. Importar só guarda o rebanho; nada é criado até você aplicar.")
+            Text(tr("Arquivo importado: confira cada comando e cada prompt. Importar só guarda o rebanho; nada é criado até você aplicar.", "Imported file: check every command and every prompt. Importing only saves the herd; nothing is created until you apply it."))
                 .font(.collieUI(13, .medium)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading).collieCard(highlight: .collieAttention)
             HStack(spacing: 8) {
                 Text(verbatim: pv.herd.name).font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
                 CollieTag(pv.id, tone: .neutral)
             }
-            Text("Este rebanho vai criar:").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("Este rebanho vai criar:", "This herd will create:")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
             HerdPreviewScroll(preview: pv) { rendered = pv.token }
             HStack {
                 Spacer()
-                if rendered != pv.token { Text("role até o fim da prévia").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
-                Button("Cancelar") { model.cancelImport() }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy)
+                if rendered != pv.token { Text(tr("role até o fim da prévia", "scroll to the end of the preview")).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
+                Button(tr("Cancelar", "Cancel")) { model.cancelImport() }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy)
                 // a saved one with this id: importing says it exists; replacing is offered (never over a factory one)
                 if model.items.contains(where: { $0.id == pv.id && !$0.builtIn }) {
-                    Button("Substituir") { confirm(replace: true) }
+                    Button(tr("Substituir", "Replace")) { confirm(replace: true) }
                         .buttonStyle(CollieButtonStyle(.secondary)).disabled(rendered != pv.token || model.busy)
                 }
-                Button("Importar") { confirm(replace: false) }
+                Button(tr("Importar", "Import")) { confirm(replace: false) }
                     .buttonStyle(CollieButtonStyle(.primary)).disabled(rendered != pv.token || model.busy)
             }
         }
@@ -224,22 +224,22 @@ struct HerdPreviewList: View {
         VStack(alignment: .leading, spacing: 14) {
             if !p.summary.isEmpty { Text(verbatim: p.summary).font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true) }
             if !preview.commands.isEmpty {
-                verbatim("Comandos que serão executados", preview.commands.map { ($0.key, $0.command) }, tone: .collieAttention)
+                verbatim(tr("Comandos que serão executados", "Commands that will run"), preview.commands.map { ($0.key, $0.command) }, tone: .collieAttention)
             }
             if !preview.prompts.isEmpty {
-                verbatim("Prompts que serão enviados", preview.prompts.map { ($0.key, $0.role) }, tone: .collieBorder)
+                verbatim(tr("Prompts que serão enviados", "Prompts that will be sent"), preview.prompts.map { ($0.key, $0.role) }, tone: .collieBorder)
             }
-            group("Terminais (\(p.terminals.count))") {
+            group(tr("Terminais (\(p.terminals.count))", "Terminals (\(p.terminals.count))")) {
                 ForEach(p.terminals, id: \.key) { t in
                     HStack(spacing: 6) {
                         Text(t.key).font(.collieMono(12, .medium)).foregroundStyle(Color.collieText)
                         CollieTag(t.preset.rawValue, tone: t.preset == .custom ? .attention : .neutral)
-                        if t.isShepherd { CollieTag("Pastor", tone: .accent) }
-                        if t.role != nil { CollieTag("com prompt", tone: .neutral) }
+                        if t.isShepherd { CollieTag(tr("Pastor", "Shepherd"), tone: .accent) }
+                        if t.role != nil { CollieTag(tr("com prompt", "with prompt"), tone: .neutral) }
                     }
                 }
             }
-            group("Painéis (\(p.panels.count))") {
+            group(tr("Painéis (\(p.panels.count))", "Panels (\(p.panels.count))")) {
                 ForEach(p.panels, id: \.key) { a in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -255,12 +255,12 @@ struct HerdPreviewList: View {
                     }
                 }
             }
-            group("Guias (\(p.leashes.count))") {
+            group(tr("Guias (\(p.leashes.count))", "Leashes (\(p.leashes.count))")) {
                 ForEach(Array(p.leashes.enumerated()), id: \.offset) { _, c in
                     Text(c.joined(separator: " — ")).font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary)
                 }
             }
-            Text(p.wantsPaddock ? "Cercado: cria um cercado novo (branch própria)" : "Cercado: nenhum (no cercado atual)")
+            Text(p.wantsPaddock ? tr("Cercado: cria um cercado novo (branch própria)", "Paddock: creates a new paddock (its own branch)") : tr("Cercado: nenhum (no cercado atual)", "Paddock: none (in the current paddock)"))
                 .font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -309,21 +309,21 @@ struct SaveHerdSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Salvar como rebanho", subtitle: "sem histórico, tokens, variáveis nem caminhos")
+            PanelHeader(tr("Salvar como rebanho", "Save as herd"), subtitle: tr("sem histórico, tokens, variáveis nem caminhos", "no history, tokens, variables or paths"))
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Nome", text: $name).collieField()
-                    TextField("Descrição", text: $summary).collieField()
-                    Toggle("Pede cercado", isOn: $wantsPaddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
-                    Text("TERMINAIS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
+                    TextField(tr("Nome", "Name"), text: $name).collieField()
+                    TextField(tr("Descrição", "Description"), text: $summary).collieField()
+                    Toggle(tr("Pede cercado", "Asks for paddock"), isOn: $wantsPaddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                    Text(tr("TERMINAIS", "TERMINALS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
                     ForEach(terminals) { t in
                         HStack(spacing: 8) {
                             Toggle(t.name, isOn: binding(t.id)).toggleStyle(.checkbox).font(.collieMono(12)).frame(width: 160, alignment: .leading)
                             CollieTag(t.preset.rawValue, tone: .neutral)
-                            TextField("Papel (prompt inicial, opcional)", text: Binding(get: { roles[t.id] ?? "" }, set: { roles[t.id] = $0 })).collieField()
+                            TextField(tr("Papel (prompt inicial, opcional)", "Role (initial prompt, optional)"), text: Binding(get: { roles[t.id] ?? "" }, set: { roles[t.id] = $0 })).collieField()
                         }
                     }
-                    if !panels.isEmpty { Text("PAINÉIS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted) }
+                    if !panels.isEmpty { Text(tr("PAINÉIS", "PANELS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted) }
                     ForEach(panels) { p in
                         HStack(spacing: 8) {
                             Toggle(p.name, isOn: binding(p.id)).toggleStyle(.checkbox).font(.collieMono(12))
@@ -332,7 +332,7 @@ struct SaveHerdSheet: View {
                     }
                     if let warnings, !warnings.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Salva, com avisos:").font(.collieUI(13, .semibold))
+                            Text(tr("Salva, com avisos:", "Saved, with warnings:")).font(.collieUI(13, .semibold))
                             ForEach(warnings, id: \.self) { Text($0).font(.collieUI(12)) }
                         }
                         .foregroundStyle(Color.collieAttention).padding(10).frame(maxWidth: .infinity, alignment: .leading).collieCard(highlight: .collieAttention)
@@ -343,10 +343,10 @@ struct SaveHerdSheet: View {
             HStack {
                 Spacer()
                 if warnings != nil {
-                    Button("Fechar") { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
+                    Button(tr("Fechar", "Close")) { dismiss() }.keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
                 } else {
-                    Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction)
-                    Button(model.busy ? "Salvando…" : "Salvar", action: save).keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
+                    Button(tr("Cancelar", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button(model.busy ? tr("Salvando…", "Saving…") : tr("Salvar", "Save"), action: save).keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
                         .disabled(model.busy || name.trimmingCharacters(in: .whitespaces).isEmpty || !terminals.contains { picked.contains($0.id) })
                 }
             }

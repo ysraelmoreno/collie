@@ -22,7 +22,7 @@ private func work(phase: WorkLoopState.Phase? = .check, tasks: [WorkTask]? = nil
     return w
 }
 
-@MainActor struct LoopCardTests {
+@MainActor @Suite(.appPT) struct LoopCardTests {
     @Test func titleCountAndBar() throws {
         let c = try #require(LoopCard.make(work: work(), paddock: pad))
         #expect(c.title == "Roadmap · onda 6")

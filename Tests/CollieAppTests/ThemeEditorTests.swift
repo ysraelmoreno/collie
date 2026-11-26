@@ -46,7 +46,7 @@ import CollieTheme
 private let base = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": RGB(hex: 0x112233)])
 private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RGB(hex: 0x445566)])
 
-@MainActor @Test func aBurstWritesOnceAfterTheWait() {
+@MainActor @Test(.appPT) func aBurstWritesOnceAfterTheWait() {
     let rig = Rig()
     rig.session.set("muted", RGB(hex: 0x010203))
     rig.session.set("text", RGB(hex: 0x040506))
@@ -65,7 +65,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.disk.saves.count == 1)
 }
 
-@MainActor @Test func invalidJSONNeitherSchedulesNorWrites() {
+@MainActor @Test(.appPT) func invalidJSONNeitherSchedulesNorWrites() {
     let rig = Rig()
     rig.session.setJSON("{")
     #expect(rig.session.model.jsonError == "não aplicado: JSON inválido")
@@ -75,7 +75,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.disk.saves.isEmpty)
 }
 
-@MainActor @Test func validJSONWritesTheNewTheme() {
+@MainActor @Test(.appPT) func validJSONWritesTheNewTheme() {
     let rig = Rig()
     rig.session.setJSON(String(decoding: other.data, as: UTF8.self))
     #expect(rig.session.model.jsonError == nil)
@@ -83,7 +83,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.disk.saves == [other])
 }
 
-@MainActor @Test func leavingWritesWhatIsPendingOnce() {
+@MainActor @Test(.appPT) func leavingWritesWhatIsPendingOnce() {
     let rig = Rig()
     rig.session.set("muted", RGB(hex: 0x010203))
     rig.session.flush()
@@ -94,7 +94,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.disk.saves.count == 1)
 }
 
-@MainActor @Test func aChangeFromDiskReloadsWhenNothingIsPending() {
+@MainActor @Test(.appPT) func aChangeFromDiskReloadsWhenNothingIsPending() {
     let rig = Rig()
     rig.session.external(other)
     #expect(rig.session.model.theme == other)
@@ -109,7 +109,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(!rig.scheduler.hasPending)
 }
 
-@MainActor @Test func theUsersPendingEditWinsOverADiskChange() throws {
+@MainActor @Test(.appPT) func theUsersPendingEditWinsOverADiskChange() throws {
     let rig = Rig()
     rig.session.set("muted", RGB(hex: 0x010203))
     rig.session.external(other)
@@ -122,7 +122,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(saved.name == "Tinta")
 }
 
-@MainActor @Test func textThatIsNotValidYetIsNotReplacedByADiskChange() {
+@MainActor @Test(.appPT) func textThatIsNotValidYetIsNotReplacedByADiskChange() {
     let rig = Rig()
     rig.session.setJSON("{")
     rig.session.external(other)
@@ -130,7 +130,7 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.session.model.theme == base)
 }
 
-@MainActor @Test func aFailedWriteKeepsTheTextAndShowsTheWarning() {
+@MainActor @Test(.appPT) func aFailedWriteKeepsTheTextAndShowsTheWarning() {
     let rig = Rig()
     rig.disk.failing = true
     rig.session.set("muted", RGB(hex: 0xABCDEF))
@@ -146,13 +146,13 @@ private let other = ThemeFile(name: "Fora", extends: .light, colors: ["text": RG
     #expect(rig.disk.saves.count == 1)
 }
 
-@Test func theReadingColumnText() {
+@Test(.appPT) func theReadingColumnText() {
     #expect(ThemeEditorFormat.reading(5.84, low: false) == "5,8")
     #expect(ThemeEditorFormat.reading(3.66, low: true) == "3,7 baixo")
     #expect(ThemeEditorFormat.reading(nil, low: false) == nil)
 }
 
-@Test func hexAcceptsWithOrWithoutTheHash() {
+@Test(.appPT) func hexAcceptsWithOrWithoutTheHash() {
     #expect(ThemeEditorFormat.parseHex("#0a1B2c") == RGB(hex: 0x0A1B2C))
     #expect(ThemeEditorFormat.parseHex(" 0A1B2C ") == RGB(hex: 0x0A1B2C))
     #expect(ThemeEditorFormat.parseHex("0A1B2") == nil)

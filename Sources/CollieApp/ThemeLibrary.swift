@@ -1,6 +1,7 @@
 import AppKit
 import CollieTheme
 import Foundation
+import CollieCore
 
 /// The user's theme folder (`~/Library/Application Support/Collie/themes/`): lists it, watches it, and creates,
 /// saves, imports, deletes and reveals theme files. Owned by the app, not the daemon. Applies nothing, knows no view.
@@ -12,9 +13,9 @@ import Foundation
 
         var message: String {
             switch self {
-            case .invalidId: "nome de arquivo inválido"
-            case .noFreeId: "não há nome livre"
-            case .writeFailed: "não foi possível gravar o arquivo"
+            case .invalidId: tr("nome de arquivo inválido", "invalid file name")
+            case .noFreeId: tr("não há nome livre", "no free name")
+            case .writeFailed: tr("não foi possível gravar o arquivo", "couldn't write the file")
             }
         }
     }
@@ -80,7 +81,7 @@ import Foundation
             } catch let e as ThemeError {
                 broken.append(Entry(id: id, file: url, state: .broken(e.message)))
             } catch {
-                broken.append(Entry(id: id, file: url, state: .broken("não foi possível ler o arquivo")))
+                broken.append(Entry(id: id, file: url, state: .broken(tr("não foi possível ler o arquivo", "couldn't read the file"))))
             }
         }
         good.sort {

@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// One line of the editor's list: a palette role with its color in use.
 public struct ThemeEditorRow: Equatable {
@@ -72,7 +73,7 @@ public struct ThemeEditorModel {
             theme = try ThemeFile.parse(Data(text.utf8))
             jsonError = nil
         } catch {
-            jsonError = "não aplicado: " + error.message
+            jsonError = tr("não aplicado: ", "not applied: ") + error.message
         }
     }
 

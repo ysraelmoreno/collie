@@ -18,9 +18,9 @@ public enum NodeStatus: Equatable, Sendable {
     public var text: String? {
         switch self {
         case .idle: nil
-        case .working: "trabalhando"
-        case .attention: "espera você"
-        case .stopped(let c): c.map { "encerrado (código \($0))" } ?? "encerrado"
+        case .working: tr("trabalhando", "working")
+        case .attention: tr("espera você", "waiting for you")
+        case .stopped(let c): c.map { tr("encerrado (código \($0))", "ended (code \($0))") } ?? tr("encerrado", "ended")
         }
     }
 }

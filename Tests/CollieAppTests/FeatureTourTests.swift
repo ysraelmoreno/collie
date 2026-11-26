@@ -4,7 +4,7 @@ import CollieProtocol
 @testable import CollieApp
 
 /// "O que o Collie faz": the table of cards, the model that walks it and the set of seen cards.
-@Suite struct FeatureTourTests {
+@Suite(.appPT) struct FeatureTourTests {
     private var ids: [String] { FeatureTour.cards.map(\.id) }
 
     // MARK: table

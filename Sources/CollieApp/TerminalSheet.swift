@@ -67,9 +67,9 @@ struct TerminalSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(original == nil ? "Novo terminal" : "Editar terminal").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
+            Text(original == nil ? tr("Novo terminal", "New terminal") : tr("Editar terminal", "Edit terminal")).font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
             VStack(alignment: .leading, spacing: 8) {
-                label("Agente")
+                label(tr("Agente", "Agent"))
                 // one card per preset: a new one (e.g. Cursor) shows up here unchanged
                 HStack(spacing: 8) {
                     ForEach(Preset.allCases, id: \.rawValue) { p in
@@ -77,31 +77,31 @@ struct TerminalSheet: View {
                     }
                 }
             }
-            if preset == .custom { field("Comando") { TextField("Comando", text: $command).collieField(mono: true) } }
+            if preset == .custom { field(tr("Comando", "Command")) { TextField(tr("Comando", "Command"), text: $command).collieField(mono: true) } }
             HStack(alignment: .top, spacing: 14) {
-                field("Nome") { TextField("Nome", text: $name).collieField() }
-                field("Cercado") {
-                    Text(paddock?.name ?? "Pasto").font(.collieUI(14)).foregroundStyle(Color.collieTextSecondary).frame(height: 36)
+                field(tr("Nome", "Name")) { TextField(tr("Nome", "Name"), text: $name).collieField() }
+                field(tr("Cercado", "Paddock")) {
+                    Text(paddock?.name ?? tr("Pasto", "Pasture")).font(.collieUI(14)).foregroundStyle(Color.collieTextSecondary).frame(height: 36)
                 }
             }
-            field("Lote") {
-                Picker("Lote", selection: $lotId) {
+            field(tr("Lote", "Lot")) {
+                Picker(tr("Lote", "Lot"), selection: $lotId) {
                     ForEach(LotChoice.all(client.lots)) { Text($0.title).tag($0.id) }
                 }
                 .labelsHidden().frame(maxWidth: 260, alignment: .leading)
             }
             if paddock == nil {
-                field("Pasta") {
+                field(tr("Pasta", "Folder")) {
                     HStack(spacing: 6) {
-                        TextField("Pasta", text: $cwd).collieField(mono: true)
-                        Button("Escolher", action: pick).buttonStyle(CollieButtonStyle(.secondary))
+                        TextField(tr("Pasta", "Folder"), text: $cwd).collieField(mono: true)
+                        Button(tr("Escolher", "Choose"), action: pick).buttonStyle(CollieButtonStyle(.secondary))
                     }
                 }
             }
             Toggle(isOn: $shepherd) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Pastor").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
-                    Text("Pode chamar agentes, abrir painéis e criar cercados. Só alcança quem estiver ligado a ele por guia.")
+                    Text(tr("Pastor", "Shepherd")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+                    Text(tr("Pode chamar agentes, abrir painéis e criar cercados. Só alcança quem estiver ligado a ele por guia.", "Can summon agents, open panels and create paddocks. It only reaches whoever is connected to it by a leash."))
                         .font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -112,8 +112,8 @@ struct TerminalSheet: View {
             if original == nil {
                 Toggle(isOn: $free) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Terminal livre (sem sandbox)").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
-                        Text("Vê e altera tudo o que você pode; nenhuma guia chega a ele. Só para o seu próprio trabalho.")
+                        Text(tr("Terminal livre (sem sandbox)", "Free terminal (no sandbox)")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+                        Text(tr("Vê e altera tudo o que você pode; nenhuma guia chega a ele. Só para o seu próprio trabalho.", "Sees and changes everything you can; no leash reaches it. Only for your own work."))
                             .font(.collieUI(13)).foregroundStyle(free ? Color.collieDanger : Color.collieTextSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -127,25 +127,25 @@ struct TerminalSheet: View {
                 Text(w).font(.collieUI(12)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
             }
             if needsRestart {
-                Text("Pastor, preset, comando e pasta valem depois de reiniciar").font(.collieUI(12)).foregroundStyle(Color.collieAttention)
+                Text(tr("Pastor, preset, comando e pasta valem depois de reiniciar", "Shepherd, preset, command and folder take effect after a restart")).font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
             if newClaudeFolder {
-                Text("O Claude Code pode pedir para confiar nesta pasta — o nó vai indicar 'precisa de atenção'.")
+                Text(tr("O Claude Code pode pedir para confiar nesta pasta — o nó vai indicar 'precisa de atenção'.", "Claude Code may ask to trust this folder — the node will show 'needs attention'."))
                     .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
             }
             if original != nil, [.claude, .codex, .cursor].contains(preset) {
-                Text("A sessão do agente será reiniciada ao reiniciar").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                Text(tr("A sessão do agente será reiniciada ao reiniciar", "The agent session will restart on restart")).font(.collieUI(12)).foregroundStyle(Color.collieMuted)
             }
             if let error { Text(error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
             HStack(spacing: 10) {
                 Spacer()
-                Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Cancelar", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
                 if original == nil {
-                    Button("Criar terminal", action: create).keyboardShortcut(.defaultAction).disabled(!valid || busy)
+                    Button(tr("Criar terminal", "Create terminal"), action: create).keyboardShortcut(.defaultAction).disabled(!valid || busy)
                         .buttonStyle(CollieButtonStyle(.primary))
                 } else {
-                    Button("Salvar e reiniciar") { save(restart: true) }.disabled(!valid || busy).buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Salvar") { save(restart: false) }.keyboardShortcut(.defaultAction).disabled(!valid || busy)
+                    Button(tr("Salvar e reiniciar", "Save and restart")) { save(restart: true) }.disabled(!valid || busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Salvar", "Save")) { save(restart: false) }.keyboardShortcut(.defaultAction).disabled(!valid || busy)
                         .buttonStyle(CollieButtonStyle(.primary))
                 }
             }
@@ -158,7 +158,7 @@ struct TerminalSheet: View {
     /// R32: a sandboxed terminal at `~` has the whole home as its project (rc files and agent config stay closed).
     static func homeWarning(cwd: String, free: Bool) -> String? {
         guard !free, URL(fileURLWithPath: cwd).standardizedFileURL.path == URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path else { return nil }
-        return "O projeto será toda a sua pasta pessoal: o agente poderá ler e alterar tudo nela (menos segredos, rc do shell e configuração global dos agentes). Prefira a pasta do projeto."
+        return tr("O projeto será toda a sua pasta pessoal: o agente poderá ler e alterar tudo nela (menos segredos, rc do shell e configuração global dos agentes). Prefira a pasta do projeto.", "The project will be your whole home folder: the agent will be able to read and change everything in it (except secrets, shell rc and the agents' global config). Prefer the project folder.")
     }
 
     private func label(_ text: String) -> some View { Text(text).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText) }
@@ -213,6 +213,6 @@ struct TerminalSheet: View {
 
 /// The agent cards' copy: name (Space Grotesk) and command (DM Mono). A preset not listed shows its raw value.
 extension Preset {
-    var cardTitle: String { [.shell: "Shell", .claude: "Claude", .codex: "Codex", .cursor: "Cursor", .custom: "Próprio"][self] ?? rawValue.capitalized }
-    var cardCommand: String { [.shell: "zsh", .cursor: "cursor-agent", .custom: "comando"][self] ?? rawValue }
+    var cardTitle: String { [.shell: "Shell", .claude: "Claude", .codex: "Codex", .cursor: "Cursor", .custom: tr("Próprio", "Custom")][self] ?? rawValue.capitalized }
+    var cardCommand: String { [.shell: "zsh", .cursor: "cursor-agent", .custom: tr("comando", "command")][self] ?? rawValue }
 }

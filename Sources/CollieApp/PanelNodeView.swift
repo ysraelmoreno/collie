@@ -109,7 +109,7 @@ final class PanelBody: NSView, PanelContentSizing {
                 body.addSubview(v)   // moves it here if it was docked
                 mounted = v
             } else if label == nil {
-                label = makeLabel("Plug-in indisponível")
+                label = makeLabel(tr("Plug-in indisponível", "Plug-in unavailable"))
             }
         } else if label == nil {
             detach()
@@ -194,7 +194,7 @@ struct FullscreenButton: View {
     var body: some View {
         Button(action: action) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
             .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
-            .help("Tela cheia ⌘⏎").accessibilityLabel("Tela cheia")
+            .help(tr("Tela cheia ⌘⏎", "Fullscreen ⌘⏎")).accessibilityLabel(tr("Tela cheia", "Fullscreen"))
     }
 }
 
@@ -205,27 +205,29 @@ struct PanelMenu: View {
     /// Canvas title bar only (a docked panel has no fullscreen).
     var fullscreen: (() -> Void)?
 
-    static let labels: [PanelPlacement: String] = [.dockLeft: "Doca esquerda", .dockRight: "Doca direita",
-                                                   .dockBottom: "Doca baixo", .canvas: "Canvas"]
+    static var labels: [PanelPlacement: String] {
+        [.dockLeft: tr("Doca esquerda", "Left dock"), .dockRight: tr("Doca direita", "Right dock"),
+         .dockBottom: tr("Doca baixo", "Bottom dock"), .canvas: "Canvas"]
+    }
     static let order: [PanelPlacement] = [.dockLeft, .dockRight, .dockBottom, .canvas]
 
     var body: some View {
         let allowed = PluginRegistry.spec(panel.pluginId)?.placements ?? Self.order
         Menu {
             if let fullscreen {
-                Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)
+                Button(tr("Tela cheia", "Fullscreen"), action: fullscreen).keyboardShortcut(.return, modifiers: .command)
                 Divider()
             }
-            Menu("Mover para") {
+            Menu(tr("Mover para", "Move to")) {
                 ForEach(Self.order.filter(allowed.contains), id: \.self) { pl in
                     Button(Self.labels[pl] ?? pl.rawValue) { move(to: pl) }.disabled(pl == panel.placement)
                 }
             }
             Divider()
-            Button("Fechar…") { confirmClose() }
+            Button(tr("Fechar…", "Close…")) { confirmClose() }
         } label: { Image(systemName: "ellipsis") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help("Ações do painel").accessibilityLabel("Ações do painel")
+            .help(tr("Ações do painel", "Panel actions")).accessibilityLabel(tr("Ações do painel", "Panel actions"))
     }
 
     private func move(to pl: PanelPlacement) {
@@ -236,11 +238,11 @@ struct PanelMenu: View {
     private func confirmClose() {
         let name = panel.name, client = client
         let a = NSAlert()
-        a.messageText = "Fechar \(name)?"
+        a.messageText = tr("Fechar \(name)?", "Close \(name)?")
         a.informativeText = panel.state["storage"] == .string("isolated")
-            ? "O painel será fechado e os dados isolados dele serão apagados." : "O painel será fechado."
-        a.addButton(withTitle: "Fechar painel")
-        a.addButton(withTitle: "Cancelar")
+            ? tr("O painel será fechado e os dados isolados dele serão apagados.", "The panel will be closed and its isolated data erased.") : tr("O painel será fechado.", "The panel will be closed.")
+        a.addButton(withTitle: tr("Fechar painel", "Close panel"))
+        a.addButton(withTitle: tr("Cancelar", "Cancel"))
         let close = { Task { @MainActor in do { try await client.closePanel(name) } catch { Log.canvas.error("close \(name): \(error)") } } }
         if let w = NSApp.keyWindow {
             a.beginSheetModal(for: w) { if $0 == .alertFirstButtonReturn { _ = close() } }

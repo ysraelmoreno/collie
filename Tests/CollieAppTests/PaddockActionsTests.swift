@@ -14,7 +14,7 @@ private let paddock = Paddock(id: UUID(), name: "api", repoRoot: "/r", path: "/r
 }
 
 /// A short action finishing while a long one (a Land) runs keeps Land / Excluir disabled.
-@MainActor @Test func busyCountsOperations() async {
+@MainActor @Test(.appPT) func busyCountsOperations() async {
     let a = actions()
     let (gate, open) = AsyncStream<Void>.makeStream()
     var shortDone = false
@@ -29,26 +29,26 @@ private let paddock = Paddock(id: UUID(), name: "api", repoRoot: "/r", path: "/r
 }
 
 /// The dialog's paddock is gone (deleted elsewhere): nothing is sent.
-@MainActor @Test func deleteSkipsMissingPaddock() {
+@MainActor @Test(.appPT) func deleteSkipsMissingPaddock() {
     let a = actions()
     a.deleting = paddock
     a.delete(force: false)
     #expect(!a.busy)
 }
 
-@MainActor @Test func paddockPaletteCommands() {
+@MainActor @Test(.appPT) func paddockPaletteCommands() {
     let a = actions()
     #expect(a.commands(for: paddock).map(\.title) == ["Status do cercado api…", "Land api…", "Excluir cercado api…"])
     a.run { try await Task.sleep(for: .seconds(1)) }
     #expect(a.commands(for: paddock).map(\.title) == ["Status do cercado api…"])   // Land / Excluir wait for the running one
 }
 
-@MainActor @Test func folderPaddockHasNoLand() {
+@MainActor @Test(.appPT) func folderPaddockHasNoLand() {
     let a = actions()
     #expect(a.commands(for: .folder(name: "docs", path: "/d")).map(\.title) == ["Status do cercado docs…", "Excluir cercado docs…"])
 }
 
-@Test func newPaddockForm() throws {
+@Test(.appPT) func newPaddockForm() throws {
     let fm = FileManager.default
     let home = fm.temporaryDirectory.appendingPathComponent("collie-form-\(UUID())").resolvingSymlinksInPath()
     defer { try? fm.removeItem(at: home) }

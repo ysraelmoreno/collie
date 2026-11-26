@@ -7,33 +7,33 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
     SandboxDenial(terminal: UUID(), op: "read", path: "/x/\(i)/f", refusal: refused ? "nunca" : nil)
 }
 
-@Test func noCardsNoStrip() {
+@Test(.appPT) func noCardsNoStrip() {
     let m = AccessStrip.Model(cards: [])
     #expect(m.kind == .none)
     #expect(m.text == "")
 }
 
-@Test func pendingText() {
+@Test(.appPT) func pendingText() {
     #expect(AccessStrip.Model(cards: (0..<3).map { card($0) }).text == "3 pedidos de acesso — ver")
     #expect(AccessStrip.Model(cards: [card(0)]).text == "O agente pediu acesso — ver")
 }
 
-@Test func refusedOnly() {
+@Test(.appPT) func refusedOnly() {
     let m = AccessStrip.Model(cards: [card(0, refused: true), card(1, refused: true)])
     #expect(m.kind == .refusedOnly(2))
     #expect(m.text == "2 acessos bloqueados de propósito")
 }
 
-@Test func mixedCountsGrantableOnly() {
+@Test(.appPT) func mixedCountsGrantableOnly() {
     let m = AccessStrip.Model(cards: (0..<2).map { card($0) } + (2..<7).map { card($0, refused: true) })
     #expect(m.kind == .pending(2))
 }
 
-@Test func singularRefusedText() {
+@Test(.appPT) func singularRefusedText() {
     #expect(AccessStrip.Model(cards: [card(0, refused: true)]).text == "1 acesso bloqueado de propósito")
 }
 
-@Test func mixedText() {
+@Test(.appPT) func mixedText() {
     #expect(AccessStrip.Model(cards: [card(0), card(1), card(2, refused: true)]).text == "2 pedidos de acesso — ver")
 }
 
@@ -45,7 +45,7 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
 }
 
 /// Remote API slice 10: a grant made from a phone says so (Preferências → Sandbox, the node's access popover).
-@Test func grantLineNamesThePhone() {
+@Test(.appPT) func grantLineNamesThePhone() {
     let at = ISO8601DateFormatter().date(from: "2026-11-05T12:00:00Z")!
     let mac = SandboxGrant(path: "/x", access: .write, scope: .terminal, owner: UUID(), createdAt: at)
     var phone = mac; phone.by = .init(device: "d", deviceName: "iPhone de Ana", via: "tailscale")
@@ -54,7 +54,7 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
 }
 
 /// The "detecção indisponível" tag names why, and its tooltip says what is lost, what still works and how to fix it.
-@Test func detectionTagSaysWhy() {
+@Test(.appPT) func detectionTagSaysWhy() {
     let admin = AccessCopy.detection(reason: SandboxDetection.notAdmin)
     #expect(admin.tag == "detecção indisponível: requer conta de administrador")
     #expect(admin.help.contains("cartões de liberação") && admin.help.contains("continua protegendo")
@@ -67,7 +67,7 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
 
 /// Not admin: no tag on the bar (the reason lives in the popover and Preferências), one toast ever, until detection
 /// comes back (then the key clears, so losing admin again explains again). The other reasons keep the tag, no toast.
-@Test func notAdminToastsOnceAndHidesTag() {
+@Test(.appPT) func notAdminToastsOnceAndHidesTag() {
     let d = UserDefaults(suiteName: "test.\(UUID())")!
     #expect(!AccessCopy.showsDetectionTag(detection: false, reason: SandboxDetection.notAdmin))
     #expect(AccessCopy.showsDetectionTag(detection: false, reason: "log stream parou: x"))

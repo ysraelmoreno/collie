@@ -14,7 +14,7 @@ private func row(_ state: TaskState, tries: Int, current: Bool = false, max: Int
     return LoopSection.make(work: w, paddock: pad).rows[0]
 }
 
-struct LoopSectionAttemptTests {
+@Suite(.appPT) struct LoopSectionAttemptTests {
     @Test func runningNamesTheAttemptUnderWay() {
         let r = row(.inProgress, tries: 1)
         #expect(r.triesText == "tentativa 2/3")

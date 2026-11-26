@@ -41,17 +41,17 @@ extension Notification.Name {
         func add(_ title: String, _ run: @escaping () -> Void) { m.addItem(ActionItem(title) { run() }) }
         func go(_ a: NodeAction) { run(a, ids: live, client: client, canvas: canvas, edit: edit) }
         if items.count > 1 {
-            let h = NSMenuItem(title: "\(items.count) itens selecionados", action: nil, keyEquivalent: ""); h.isEnabled = false
+            let h = NSMenuItem(title: tr("\(items.count) itens selecionados", "\(items.count) items selected"), action: nil, keyEquivalent: ""); h.isEnabled = false
             m.addItem(h); m.addItem(.separator())
         }
-        if actions.contains(.fullscreen) { add("Tela cheia") { go(.fullscreen) }; m.addItem(.separator()) }
-        if actions.contains(.edit) { add("Editar…") { go(.edit) } }
-        if actions.contains(.restart) { add("Reiniciar") { go(.restart) } }
-        if actions.contains(.kill) { add("Matar") { go(.kill) } }
-        if actions.contains(.endBranch) { add("Encerrar ramo…") { go(.endBranch) } }
-        if actions.contains(.saveMemory) { add("Salvar na memória") { go(.saveMemory) } }
+        if actions.contains(.fullscreen) { add(tr("Tela cheia", "Fullscreen")) { go(.fullscreen) }; m.addItem(.separator()) }
+        if actions.contains(.edit) { add(tr("Editar…", "Edit…")) { go(.edit) } }
+        if actions.contains(.restart) { add(tr("Reiniciar", "Restart")) { go(.restart) } }
+        if actions.contains(.kill) { add(tr("Matar", "Kill")) { go(.kill) } }
+        if actions.contains(.endBranch) { add(tr("Encerrar ramo…", "End branch…")) { go(.endBranch) } }
+        if actions.contains(.saveMemory) { add(tr("Salvar na memória", "Save to memory")) { go(.saveMemory) } }
         if actions.contains(.lot) {
-            let lots = NSMenuItem(title: "Lote", action: nil, keyEquivalent: ""), sub = NSMenu()
+            let lots = NSMenuItem(title: tr("Lote", "Lot"), action: nil, keyEquivalent: ""), sub = NSMenu()
             let mine = Set(live.map { client.lot(of: $0)?.id })   // one element: they all share it
             for choice in LotChoice.all(client.lots) {
                 let item = ActionItem(choice.title) { setLot(choice.lot, ids: live, client: client) }
@@ -63,13 +63,13 @@ extension Notification.Name {
         }
         let moves = actions.compactMap { a -> PanelPlacement? in if case .move(let p) = a { p } else { nil } }
         if !moves.isEmpty {
-            let sub = NSMenu(), parent = NSMenuItem(title: "Mover para", action: nil, keyEquivalent: "")
+            let sub = NSMenu(), parent = NSMenuItem(title: tr("Mover para", "Move to"), action: nil, keyEquivalent: "")
             for p in moves { sub.addItem(ActionItem(PanelMenu.labels[p] ?? p.rawValue) { go(.move(p)) }) }
             parent.submenu = sub
             m.addItem(parent)
         }
         if m.items.last?.isSeparatorItem == false { m.addItem(.separator()) }
-        let title = items.count > 1 ? "Fechar \(items.count) itens…" : items[0].isTerminal ? "Fechar nó…" : "Fechar…"
+        let title = items.count > 1 ? tr("Fechar \(items.count) itens…", "Close \(items.count) items…") : items[0].isTerminal ? tr("Fechar nó…", "Close node…") : tr("Fechar…", "Close…")
         add(title) { go(.close) }
         return m
     }
@@ -111,7 +111,7 @@ extension Notification.Name {
         guard let c = NodeActions.confirmation(for: action, items: items) else { return }
         let a = NSAlert()
         a.messageText = c.title; a.informativeText = c.detail
-        a.addButton(withTitle: c.button); a.addButton(withTitle: "Cancelar")
+        a.addButton(withTitle: c.button); a.addButton(withTitle: tr("Cancelar", "Cancel"))
         if let w = NSApp.keyWindow { a.beginSheetModal(for: w) { if $0 == .alertFirstButtonReturn { go() } } }
         else if a.runModal() == .alertFirstButtonReturn { go() }
     }

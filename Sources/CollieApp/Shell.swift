@@ -75,14 +75,15 @@ struct Shell<Content: View, Preferences: View>: View {
             }
         }
         .background(Color.collieBackground)
-        .alert("Terminais com sandbox", isPresented: Binding(get: { !noticeSeen }, set: { if !$0 { noticeSeen = true } })) {
-            Button("Entendi") { noticeSeen = true }
-            Button("Ler no README") {
+        .alert(tr("Terminais com sandbox", "Sandboxed terminals"), isPresented: Binding(get: { !noticeSeen }, set: { if !$0 { noticeSeen = true } })) {
+            Button(tr("Entendi", "Got it")) { noticeSeen = true }
+            Button(tr("Ler no README", "Read the README")) {
                 noticeSeen = true
                 NSWorkspace.shared.open(URL(string: "https://github.com/ysraelmoreno/collie#sandbox-dos-terminais")!)
             }
         } message: {
-            Text("Os terminais rodam no sandbox aberto (padrão): o agente lê e escreve tudo na sua conta, inclusive chaves e tokens, e pode apagar qualquer coisa; só os dados, o app e o daemon do Collie ficam fechados ao acesso direto. O que ele gravar e você executar depois (rc do shell, LaunchAgents, binários, hooks do git) roda sem sandbox e alcança tudo, o Collie incluído. Em Preferências, \"Modo do sandbox\" muda para Estrito (escrita só no projeto, segredos fechados, cartões para liberar); vale para terminais abertos depois.")
+            Text(tr("Os terminais rodam no sandbox aberto (padrão): o agente lê e escreve tudo na sua conta, inclusive chaves e tokens, e pode apagar qualquer coisa; só os dados, o app e o daemon do Collie ficam fechados ao acesso direto. O que ele gravar e você executar depois (rc do shell, LaunchAgents, binários, hooks do git) roda sem sandbox e alcança tudo, o Collie incluído. Em Preferências, \"Modo do sandbox\" muda para Estrito (escrita só no projeto, segredos fechados, cartões para liberar); vale para terminais abertos depois.",
+                    "Terminals run in the open sandbox (default): the agent reads and writes everything in your account, including keys and tokens, and can delete anything; only Collie's data, app and daemon are closed to direct access. Anything it writes and you run later (shell rc, LaunchAgents, binaries, git hooks) runs without a sandbox and reaches everything, Collie included. In Preferences, \"Sandbox mode\" switches to Strict (write only in the project, secrets closed, cards to grant access); it applies to terminals opened afterwards."))
         }
     }
 }
@@ -144,7 +145,7 @@ struct CanvasChrome<Banners: View>: View {
                     ZoomControls(ctx: ctx).padding(.horizontal, 10).frame(height: 44).floating()
                 }
                 if case .disconnected(let r) = ctx.client.state {
-                    Text("Desconectado: \(r)").font(.collieMono(11, .medium)).foregroundStyle(Color.collieDanger)
+                    Text(tr("Desconectado: \(r)", "Disconnected: \(r)")).font(.collieMono(11, .medium)).foregroundStyle(Color.collieDanger)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(Capsule().fill(Color.collieSurface))
                         .overlay(Capsule().strokeBorder(Color.collieDanger.opacity(0.6), lineWidth: 1))
@@ -192,7 +193,7 @@ private struct PaddockChips: View {
         let client = ctx.client, paddocks = client.paddocks
         let split = chipSplit(paddocks.map(\.id), current: client.currentPaddock, max: 4)
         HStack(spacing: 4) {
-            PaddockChip(title: "Pasto", status: nil, selected: client.currentPaddock == nil) { ctx.paddocks.select(nil) }
+            PaddockChip(title: tr("Pasto", "Pasture"), status: nil, selected: client.currentPaddock == nil) { ctx.paddocks.select(nil) }
             ForEach(split.shown, id: \.self) { id in
                 if let f = paddocks.first(where: { $0.id == id }) {
                     PaddockChip(title: f.name, status: f.status, selected: client.currentPaddock == id) { ctx.paddocks.select(id) }
@@ -202,7 +203,7 @@ private struct PaddockChips: View {
             if let f = paddocks.first(where: { $0.id == client.currentPaddock }) {
                 Menu { PaddockMenu(paddock: f, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Ações do cercado").accessibilityLabel("Ações do cercado")
+                    .help(tr("Ações do cercado", "Paddock actions")).accessibilityLabel(tr("Ações do cercado", "Paddock actions"))
             }
             if ctx.paddocks.busy { ProgressView().controlSize(.small) }
             Menu {
@@ -215,8 +216,8 @@ private struct PaddockChips: View {
                 Text(split.overflow.isEmpty ? "+" : "+\(split.overflow.count)").font(.collieMono(12, .medium))
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help(split.overflow.isEmpty ? "Novo cercado…" : "Mais cercados")
-            .accessibilityLabel(split.overflow.isEmpty ? "Novo cercado…" : "Mais \(split.overflow.count) cercados")
+            .help(split.overflow.isEmpty ? tr("Novo cercado…", "New paddock…") : tr("Mais cercados", "More paddocks"))
+            .accessibilityLabel(split.overflow.isEmpty ? tr("Novo cercado…", "New paddock…") : tr("Mais \(split.overflow.count) cercados", "\(split.overflow.count) more paddocks"))
         }
     }
 }
@@ -253,7 +254,7 @@ private struct CommandField: View {
         Button(action: ctx.openPalette) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                Text("Chamar, abrir painel, ir para cercado…").lineLimit(1).truncationMode(.tail)
+                Text(tr("Chamar, abrir painel, ir para cercado…", "Summon, open panel, go to paddock…")).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Text("⌘K").font(.collieMono(11))
             }
@@ -264,7 +265,7 @@ private struct CommandField: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("Comando (⌘K)").accessibilityLabel("Comando")
+        .help(tr("Comando (⌘K)", "Command (⌘K)")).accessibilityLabel(tr("Comando", "Command"))
     }
 }
 
@@ -277,12 +278,12 @@ private struct UsageButton: View {
         Button { ctx.usageOpen.wrappedValue.toggle() } label: {
             HStack(spacing: 6) {
                 Image(systemName: "gauge")
-                Text(summary ?? "uso").font(.collieMono(12)).monospacedDigit()
+                Text(summary ?? tr("uso", "usage")).font(.collieMono(12)).monospacedDigit()
             }
             .foregroundStyle(Color.collieTextSecondary).padding(.horizontal, 8).frame(height: 28).contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("Uso dos agentes").accessibilityLabel("Uso dos agentes").accessibilityValue(summary ?? "sem dados")
+        .help(tr("Uso dos agentes", "Agent usage")).accessibilityLabel(tr("Uso dos agentes", "Agent usage")).accessibilityValue(summary ?? tr("sem dados", "no data"))
         .popover(isPresented: ctx.usageOpen) { UsagePopover(client: ctx.client, feed: ctx.usage) }
     }
 }
@@ -296,7 +297,7 @@ struct ZoomControls: View {
             let pct = Int((ctx.canvas.zoom * 100).rounded())
             Text("\(pct)%").font(.collieMono(12)).monospacedDigit()
                 .foregroundStyle(Color.collieTextSecondary).accessibilityLabel("Zoom").accessibilityValue("\(pct)%")
-            Button("Ajustar à tela", action: ctx.fit).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            Button(tr("Ajustar à tela", "Fit to screen"), action: ctx.fit).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
         } }
     }
 }
@@ -307,8 +308,8 @@ struct HostNotice: View {
     var body: some View {
         if client.hostStatus == .replaced {
             HStack(spacing: 6) {
-                Text("Outra janela do Collie está hospedando os painéis").foregroundStyle(Color.collieAttention)
-                Button("Retomar") { client.resumeHost() }
+                Text(tr("Outra janela do Collie está hospedando os painéis", "Another Collie window is hosting the panels")).foregroundStyle(Color.collieAttention)
+                Button(tr("Retomar", "Take over")) { client.resumeHost() }
             }
         }
     }
@@ -324,19 +325,19 @@ struct HerdsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("REBANHOS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
+            Text(tr("REBANHOS", "HERDS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
             ForEach(model.items.prefix(6)) { it in
                 Button { ctx.openHerds(it.id) } label: {
                     HStack(spacing: 6) {
                         Text(it.name).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1)
                         Spacer(minLength: 0)
-                        if it.builtIn { CollieTag("de fábrica", tone: .secondary) }
+                        if it.builtIn { CollieTag(tr("de fábrica", "built-in"), tone: .secondary) }
                     }
                     .padding(.horizontal, 8).padding(.vertical, 4).contentShape(.rect)
                 }
                 .buttonStyle(.plain).help(it.summary)
             }
-            Button("Aplicar…") { ctx.openHerds(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            Button(tr("Aplicar…", "Apply…")) { ctx.openHerds(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
         }
         .task(id: ctx.client.state == .connected) { if ctx.client.state == .connected { await model.refresh() } }
     }
@@ -354,40 +355,40 @@ struct LotsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("LOTES").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
+            Text(tr("LOTES", "LOTS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
             ForEach(client.lots) { l in
                 let names = LotSummary.memberNames(l, terminals: client.terminals)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(l.name).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
                     if !l.goal.isEmpty { Text(l.goal).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(2) }
-                    Text(names.isEmpty ? "sem terminais" : names.joined(separator: ", "))
+                    Text(names.isEmpty ? tr("sem terminais", "no terminals") : names.joined(separator: ", "))
                         .font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(2)
                 }
                 .padding(.horizontal, 8).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
                 .help(LotSummary.help(l, names: names))
                 .onTapGesture { opened = l }
                 .contextMenu {
-                    Button("Abrir quadro") { opened = l }
-                    Button("Apagar lote…") { deleting = l }.disabled(!client.isEmpty(l))
+                    Button(tr("Abrir quadro", "Open board")) { opened = l }
+                    Button(tr("Apagar lote…", "Delete lot…")) { deleting = l }.disabled(!client.isEmpty(l))
                 }
             }
-            Button("Novo lote…") { newName = ""; newGoal = ""; creating = true }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            Button(tr("Novo lote…", "New lot…")) { newName = ""; newGoal = ""; creating = true }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
             if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger).lineLimit(3) }
         }
         .sheet(item: $opened) { l in LotView(client: client, lot: l) { opened = nil } }
-        .confirmationDialog("Apagar o lote \(deleting?.name ?? "")?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Apagar lote", role: .destructive) { if let l = deleting { run { try await client.deleteLot(l.name) } } }
-            Button("Cancelar", role: .cancel) {}
-        } message: { Text("As memórias do lote continuam guardadas.") }
-        .alert("Novo lote", isPresented: $creating) {
-            TextField("Nome", text: $newName)
-            TextField("Objetivo", text: $newGoal)
-            Button("Criar") {
+        .confirmationDialog(tr("Apagar o lote \(deleting?.name ?? "")?", "Delete lot \(deleting?.name ?? "")?"), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button(tr("Apagar lote", "Delete lot"), role: .destructive) { if let l = deleting { run { try await client.deleteLot(l.name) } } }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) {}
+        } message: { Text(tr("As memórias do lote continuam guardadas.", "The lot's memories stay saved.")) }
+        .alert(tr("Novo lote", "New lot"), isPresented: $creating) {
+            TextField(tr("Nome", "Name"), text: $newName)
+            TextField(tr("Objetivo", "Goal"), text: $newGoal)
+            Button(tr("Criar", "Create")) {
                 let n = newName.trimmingCharacters(in: .whitespaces), g = newGoal
                 if !n.isEmpty { run { try await client.createLot(name: n, goal: g) } }
             }
-            Button("Cancelar", role: .cancel) {}
-        } message: { Text("Agrupa terminais de um mesmo esforço. Não liga ninguém: só a guia dá alcance.") }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) {}
+        } message: { Text(tr("Agrupa terminais de um mesmo esforço. Não liga ninguém: só a guia dá alcance.", "Groups terminals working on the same effort. It connects no one: only a leash gives reach.")) }
     }
 
     private func run(_ op: @escaping () async throws -> Void) {
@@ -410,12 +411,12 @@ private struct LotView: View {
             HStack {
                 Text(lot.name).font(.collieUI(15, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
                 Spacer()
-                Button("Atualizar") { Task { await load() } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-                Button("Fechar", action: close).keyboardShortcut(.cancelAction).controlSize(.small)
+                Button(tr("Atualizar", "Refresh")) { Task { await load() } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                Button(tr("Fechar", "Close"), action: close).keyboardShortcut(.cancelAction).controlSize(.small)
             }
             TabView {
-                board.tabItem { Text("Quadro") }
-                LotGrantsList(lot: lot, client: client).tabItem { Text("Liberados") }
+                board.tabItem { Text(tr("Quadro", "Board")) }
+                LotGrantsList(lot: lot, client: client).tabItem { Text(tr("Liberados", "Granted")) }
             }
         }
         .padding(12).frame(minWidth: 480, minHeight: 360)
@@ -427,7 +428,7 @@ private struct LotView: View {
             LazyVStack(alignment: .leading, spacing: 8) {
                 if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger) }
                 if posts.isEmpty && error == nil {
-                    Text("Nenhum recado ainda. Os agentes do lote postam com collie lot post.").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                    Text(tr("Nenhum recado ainda. Os agentes do lote postam com collie lot post.", "No messages yet. The lot's agents post with collie lot post.")).font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                 }
                 ForEach(posts) { p in
                     VStack(alignment: .leading, spacing: 2) {
@@ -452,14 +453,19 @@ enum LotSummary {
     static func memberNames(_ l: Lot, terminals: [TerminalRecord]) -> [String] {
         l.members.compactMap { m in terminals.first { $0.id == m }?.name }
     }
-    /// `entrega · A → B · ref x · 14:03` (kind in pt-BR).
+    /// `entrega · A → B · ref x · 14:03` (kind in the active language).
     static func postHeader(_ p: LotPost) -> String {
-        let kind = ["handoff": "entrega", "question": "pergunta", "status": "status", "answer": "resposta"][p.kind] ?? p.kind
+        let kind: String = switch p.kind {
+        case "handoff": tr("entrega", "handoff")
+        case "question": tr("pergunta", "question")
+        case "answer": tr("resposta", "answer")
+        default: p.kind
+        }
         let who = p.from + (p.toName.map { " → \($0)" } ?? "")
         return [kind, who, p.ref.map { "ref \($0)" }, p.at.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · ")
     }
     static func help(_ l: Lot, names: [String]) -> String {
-        [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? "sem terminais" : "\(names.count) terminal\(names.count == 1 ? "" : "is")"]
+        [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? tr("sem terminais", "no terminals") : tr("\(names.count) terminal\(names.count == 1 ? "" : "is")", "\(names.count) terminal\(names.count == 1 ? "" : "s")")]
             .compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -472,7 +478,7 @@ private struct MainTabs: View {
     var body: some View {
         HStack(spacing: 0) {
             tab("Canvas", .canvas)
-            tab("Preferências", .preferences, shortcut: "⌘,")
+            tab(tr("Preferências", "Preferences"), .preferences, shortcut: "⌘,")
             Spacer(minLength: 8)
             CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
             // zoom says nothing about Preferências
@@ -510,12 +516,12 @@ private struct StatusBar: View {
         HStack(spacing: 14) {
             switch ctx.client.state {
             case .connected:
-                HStack(spacing: 6) { Circle().fill(Color.collieAccent).frame(width: 7, height: 7); Text("conectado") }
+                HStack(spacing: 6) { Circle().fill(Color.collieAccent).frame(width: 7, height: 7); Text(tr("conectado", "connected")) }
             case .disconnected(let r):
-                HStack(spacing: 6) { Circle().fill(Color.collieDanger).frame(width: 7, height: 7); Text("desconectado: \(r)").lineLimit(1) }
+                HStack(spacing: 6) { Circle().fill(Color.collieDanger).frame(width: 7, height: 7); Text(tr("desconectado: \(r)", "disconnected: \(r)")).lineLimit(1) }
             }
             PanelMeter(client: ctx.client)
-            if ctx.canvas.fullscreen != nil { Text("tela cheia").foregroundStyle(Color.collieTextSecondary) }
+            if ctx.canvas.fullscreen != nil { Text(tr("tela cheia", "fullscreen")).foregroundStyle(Color.collieTextSecondary) }
             HostNotice(client: ctx.client)
             Spacer(minLength: 0)
         }

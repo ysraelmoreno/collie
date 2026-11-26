@@ -37,13 +37,13 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     }
 }
 
-@MainActor @Test func missingFolderIsAnEmptyList() throws {
+@MainActor @Test(.appPT) func missingFolderIsAnEmptyList() throws {
     let root = try tempRoot()
     let lib = ThemeLibrary(folder: root.appendingPathComponent("themes"))
     #expect(lib.reload().isEmpty)
 }
 
-@MainActor @Test func createMakesFolderAndFileThatReadBack() throws {
+@MainActor @Test(.appPT) func createMakesFolderAndFileThatReadBack() throws {
     let root = try tempRoot()
     let folder = root.appendingPathComponent("themes")
     let lib = ThemeLibrary(folder: folder)
@@ -60,7 +60,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(entries[0].theme == ThemeFile(name: "Meu Tema", extends: .light, colors: ["accent": RGB(hex: 0x6E9BFF)]))
 }
 
-@MainActor @Test func collidingNamesGetNumberedIds() throws {
+@MainActor @Test(.appPT) func collidingNamesGetNumberedIds() throws {
     let lib = ThemeLibrary(folder: try tempRoot().appendingPathComponent("themes"))
     #expect(try lib.create(from: theme("A"), name: "Meu Tema") == "meu-tema")
     #expect(try lib.create(from: theme("A"), name: "Meu Tema") == "meu-tema-2")
@@ -68,7 +68,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(lib.reload().count == 3)
 }
 
-@MainActor @Test func accentedNameBecomesAValidId() throws {
+@MainActor @Test(.appPT) func accentedNameBecomesAValidId() throws {
     let lib = ThemeLibrary(folder: try tempRoot().appendingPathComponent("themes"))
     let id = try lib.create(from: theme("A"), name: "Café Noturno")
     #expect(ThemeFile.validId(id))
@@ -77,7 +77,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(ThemeLibrary.slug("  Dark, Mode!  ") == "dark--mode")
 }
 
-@MainActor @Test func importedLongNameIsCutAt48AndStillCollides() throws {
+@MainActor @Test(.appPT) func importedLongNameIsCutAt48AndStillCollides() throws {
     let root = try tempRoot()
     let src = root.appendingPathComponent(String(repeating: "a", count: 60) + ".json")
     try theme("Longo").data.write(to: src)
@@ -91,7 +91,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(ThemeFile.validId(second))
 }
 
-@MainActor @Test func brokenFilesAreListedLastWithTheirReason() throws {
+@MainActor @Test(.appPT) func brokenFilesAreListedLastWithTheirReason() throws {
     let root = try tempRoot()
     let folder = root.appendingPathComponent("themes")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -111,7 +111,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(broken["Tema"] == "nome de arquivo inválido")
 }
 
-@MainActor @Test func symbolicLinksAreIgnored() throws {
+@MainActor @Test(.appPT) func symbolicLinksAreIgnored() throws {
     let root = try tempRoot()
     let folder = root.appendingPathComponent("themes")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -122,7 +122,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(ThemeLibrary(folder: folder).reload().isEmpty)
 }
 
-@MainActor @Test func onlyTwoHundredFilesAreRead() throws {
+@MainActor @Test(.appPT) func onlyTwoHundredFilesAreRead() throws {
     let folder = try tempRoot().appendingPathComponent("themes")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     for i in 0..<205 { try put(theme("X").data, String(format: "t%03d.json", i), in: folder) }
@@ -134,7 +134,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(entries.last?.id == "t199")
 }
 
-@MainActor @Test func importRefusesInvalidAndLeavesNothing() throws {
+@MainActor @Test(.appPT) func importRefusesInvalidAndLeavesNothing() throws {
     let root = try tempRoot()
     let folder = root.appendingPathComponent("themes")
     let bad = root.appendingPathComponent("ruim.json")
@@ -147,7 +147,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(lib.reload().isEmpty)
 }
 
-@MainActor @Test func importCopiesAValidFile() throws {
+@MainActor @Test(.appPT) func importCopiesAValidFile() throws {
     let root = try tempRoot()
     let src = root.appendingPathComponent("Meu Import.json")
     let original = ThemeFile(name: "Importado", extends: .dark, colors: ["accent": RGB(hex: 0x112233)])
@@ -160,7 +160,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(lib.reload().first?.theme == original)
 }
 
-@MainActor @Test func saveKeepsTheOldFileWhenTheWriteFails() throws {
+@MainActor @Test(.appPT) func saveKeepsTheOldFileWhenTheWriteFails() throws {
     let root = try tempRoot()
     let folder = root.appendingPathComponent("themes")
     let lib = ThemeLibrary(folder: folder)
@@ -176,7 +176,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(lib.reload().first?.theme?.name == "Original")
 }
 
-@MainActor @Test func saveReplacesTheFile() throws {
+@MainActor @Test(.appPT) func saveReplacesTheFile() throws {
     let lib = ThemeLibrary(folder: try tempRoot().appendingPathComponent("themes"))
     let id = try lib.create(from: theme("A"), name: "Tema")
     let edited = ThemeFile(name: "Editado", extends: .light, colors: ["accent": RGB(hex: 0xABCDEF)])
@@ -186,7 +186,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(lib.reload().first?.theme == edited)
 }
 
-@MainActor @Test func idsThatEscapeTheFolderAreRefused() throws {
+@MainActor @Test(.appPT) func idsThatEscapeTheFolderAreRefused() throws {
     let root = try tempRoot()
     let lib = ThemeLibrary(folder: root.appendingPathComponent("themes"))
 
@@ -196,7 +196,7 @@ private func put(_ data: Data, _ name: String, in dir: URL) throws {
     #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("x.json").path))
 }
 
-@MainActor @Test func watchSeesWritesAndDeletes() async throws {
+@MainActor @Test(.appPT) func watchSeesWritesAndDeletes() async throws {
     let folder = try tempRoot().appendingPathComponent("themes")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     let hits = Hits()

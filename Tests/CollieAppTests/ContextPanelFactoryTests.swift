@@ -15,7 +15,7 @@ private func paddock(factory: Bool = false) -> Paddock {
 }
 
 /// A3: the Fábrica switch in the context panel, the paddock menu's item and the rail's badge, as models.
-@MainActor struct ContextPanelFactoryTests {
+@MainActor @Suite(.appPT) struct ContextPanelFactoryTests {
     @Test func switchLabelFollowsThePaddock() {
         let off = FactorySwitch.make(paddock(), busy: false, refusal: nil, note: nil)
         #expect(!off.isOn && off.label == "Ligar fábrica" && off.enabled && off.refusal == nil && off.note.isEmpty)

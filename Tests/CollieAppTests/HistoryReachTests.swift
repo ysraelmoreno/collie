@@ -26,7 +26,7 @@ private func work(_ state: WorkLoopState.State? = .running) -> Work {
 }
 
 /// M9.1 (B1, B2, B7, B8).
-@MainActor struct HistoryReachTests {
+@MainActor @Suite(.appPT) struct HistoryReachTests {
     private let before = ["AGENTES · 1", "PAINÉIS · 0", "REBANHOS", "LOTES"]
 
     /// B1: running → card; only history → header and "Ver tudo"; neither → nothing.

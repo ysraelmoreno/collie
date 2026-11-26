@@ -5,25 +5,25 @@ import CollieProtocol
 @testable import CollieApp
 
 /// One agent card per preset: known presets get the mockup's names; any other falls back to its raw value.
-@Test func presetCards() {
+@Test(.appPT) func presetCards() {
     #expect(Preset.allCases.map(\.cardTitle) == ["Shell", "Claude", "Codex", "Cursor", "Próprio"])
     #expect(Preset.allCases.map(\.cardCommand) == ["zsh", "claude", "codex", "cursor-agent", "comando"])
 }
 
-@Test func designFirstPickerLabels() {
+@Test(.appPT) func designFirstPickerLabels() {
     #expect(DesignFirst.allCases.map(\.label) == ["Página (Prévia)", "FigCraft", "Perguntar"])
     #expect(DesignFirst.from(reply: .object(["designFirst": .string("figcraft")])) == .figcraft)
     #expect(DesignFirst.from(reply: .object(["designFirst": .string("x")])) == nil)
 }
 
-@Test func fontRowsFromReply() {
+@Test(.appPT) func fontRowsFromReply() {
     let r: JSONValue = .array([.object(["family": .string("Inter"), "source": .string("google")]), .object(["family": .string("DM Mono"), "source": .string("bundled")]), .string("x")])
     #expect(FontRow.rows(r) == [FontRow(family: "Inter", downloaded: true), FontRow(family: "DM Mono", downloaded: false)])
     #expect(FontRow.rows(.object([:])).isEmpty)
     #expect(FontRow.download(.object(["download": .bool(false)])) == false && FontRow.download(.null) == nil)
 }
 
-@Test func lotPickerAndSidebarCopy() {
+@Test(.appPT) func lotPickerAndSidebarCopy() {
     let a = TerminalRecord(id: UUID(), name: "a", preset: .shell, command: nil, cwd: "/", isShepherd: false)
     let lots = [Lot(name: "zeta"), Lot(name: "Alfa", goal: "login", members: [a.id, UUID()])]
     #expect(LotChoice.all(lots).map(\.title) == ["Sem lote", "Alfa", "zeta"])
@@ -33,7 +33,7 @@ import CollieProtocol
     #expect(LotSummary.help(lots[0], names: []) == "zeta · sem terminais")
 }
 
-@Test func lotBoardPostHeader() throws {
+@Test(.appPT) func lotBoardPostHeader() throws {
     let p = LotPost(kind: "handoff", from: "A", toName: "B", ref: "w1", text: "pronto")
     let h = LotSummary.postHeader(p)
     #expect(h.hasPrefix("entrega · A → B · ref w1 · "))
@@ -44,7 +44,7 @@ import CollieProtocol
     #expect(try d.decode([LotPost].self, from: Data(json.utf8)).first?.text == "oi")
 }
 
-@Test func accessCardCopy() throws {
+@Test(.appPT) func accessCardCopy() throws {
     #expect(["read", "write", "delete", "exec"].map(AccessCopy.verb) == ["ler", "escrever", "apagar", "executar"])
     let claude = TerminalRecord(id: UUID(), name: "a", preset: .claude, command: nil, cwd: "/", isShepherd: false)
     let codex = TerminalRecord(id: UUID(), name: "b", preset: .codex, command: nil, cwd: "/", isShepherd: false)
@@ -63,7 +63,7 @@ import CollieProtocol
 }
 
 /// R32: a sandboxed terminal whose folder is the home itself warns that the project is the whole home.
-@Test func homeFolderWarning() {
+@Test(.appPT) func homeFolderWarning() {
     let home = NSHomeDirectory()
     #expect(TerminalSheet.homeWarning(cwd: home, free: false)?.contains("toda a sua pasta pessoal") == true)
     #expect(TerminalSheet.homeWarning(cwd: home + "/", free: false) != nil)

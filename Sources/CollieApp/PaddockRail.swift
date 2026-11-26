@@ -64,7 +64,7 @@ struct PaddockRail: View {
                     .frame(width: Self.side, height: 28).contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help("Preferências (⌘,)").accessibilityLabel("Preferências")
+            .help(tr("Preferências (⌘,)", "Preferences (⌘,)")).accessibilityLabel(tr("Preferências", "Preferences"))
         }
         .padding(.vertical, 10)
         .padding(.top, CanvasChrome<EmptyView>.lightsInset)   // below the traffic lights (hidden title bar)
@@ -75,7 +75,7 @@ struct PaddockRail: View {
 
     /// A paddock's square (nil: Pasto). Selected is the accent fill plus the `.isSelected` trait, never color alone.
     private func item(_ f: Paddock?, selected: Bool) -> some View {
-        let name = f?.name ?? "Pasto"
+        let name = f?.name ?? tr("Pasto", "Pasture")
         return Button { ctx.paddocks.select(f?.id) } label: {
             Text(Self.initial(of: name)).font(.collieUI(15, .semibold))
                 .foregroundStyle(selected ? Color.collieOnAccent : .collieTextSecondary)
@@ -108,7 +108,7 @@ struct PaddockRail: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("Novo cercado…").accessibilityLabel("Novo cercado…")
+        .help(tr("Novo cercado…", "New paddock…")).accessibilityLabel(tr("Novo cercado…", "New paddock…"))
     }
 
     /// The highest provider's percent over a mini bar; opens the same usage popover as Compacta's button.
@@ -116,14 +116,14 @@ struct PaddockRail: View {
         let top = Self.topUsage(ctx.usage.reports), text = top.map { "\(Int($0.rounded()))%" }
         return Button { ctx.usageOpen.wrappedValue.toggle() } label: {
             VStack(spacing: 4) {
-                Text(text ?? "uso").font(.collieMono(11)).monospacedDigit().foregroundStyle(Color.collieTextSecondary)
+                Text(text ?? tr("uso", "usage")).font(.collieMono(11)).monospacedDigit().foregroundStyle(Color.collieTextSecondary)
                 ProgressView(value: min(max((top ?? 0) / 100, 0), 1)).tint(Color.collieAccent).frame(width: 32)
                     .accessibilityHidden(true)
             }
             .frame(width: Self.side).padding(.vertical, 4).contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("Uso dos agentes").accessibilityLabel("Uso dos agentes").accessibilityValue(text ?? "sem dados")
+        .help(tr("Uso dos agentes", "Agent usage")).accessibilityLabel(tr("Uso dos agentes", "Agent usage")).accessibilityValue(text ?? tr("sem dados", "no data"))
         .popover(isPresented: ctx.usageOpen, arrowEdge: .trailing) { UsagePopover(client: ctx.client, feed: ctx.usage) }
     }
 }

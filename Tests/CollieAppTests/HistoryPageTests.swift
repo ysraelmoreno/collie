@@ -16,7 +16,7 @@ private func archive(title: String = "Trabalho", events: Int = 0, reconstructed:
                 notes: [evil], loopSummary: evil, reconstructed: reconstructed, truncated: truncated)
 }
 
-@MainActor struct HistoryPageTests {
+@MainActor @Suite(.appPT) struct HistoryPageTests {
     @Test func escapeCoversTheFiveCharacters() {
         #expect(HistoryPage.esc("&<>\"'") == "&amp;&lt;&gt;&quot;&#39;")
         #expect(HistoryPage.esc("&amp;") == "&amp;amp;")

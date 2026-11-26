@@ -29,9 +29,9 @@ struct ContextPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             header(paddock)
             HStack(spacing: 6) {
-                Button(action: ctx.newTerminal) { Text("Novo terminal").frame(maxWidth: .infinity) }.buttonStyle(CollieButtonStyle(.primary))
+                Button(action: ctx.newTerminal) { Text(tr("Novo terminal", "New terminal")).frame(maxWidth: .infinity) }.buttonStyle(CollieButtonStyle(.primary))
                 Button(action: ctx.openPanel) { Image(systemName: "plus.rectangle") }
-                    .buttonStyle(CollieButtonStyle(.secondary)).help("Abrir painel…").accessibilityLabel("Abrir painel…")
+                    .buttonStyle(CollieButtonStyle(.secondary)).help(tr("Abrir painel…", "Open panel…")).accessibilityLabel(tr("Abrir painel…", "Open panel…"))
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -60,7 +60,7 @@ struct ContextPanel: View {
     /// The section titles in the order drawn; LAÇOS while a loop runs or the paddock has history. HISTÓRICO is never
     /// here (M8.2: the modal has it).
     static func sectionTitles(agents: Int, panels: Int, loops: LoopSection, hasHistory: Bool = false) -> [String] {
-        ["AGENTES · \(agents)", "PAINÉIS · \(panels)", "REBANHOS", "LOTES"] + (loops.visible || hasHistory ? [loops.title] : [])
+        [tr("AGENTES · \(agents)", "AGENTS · \(agents)"), tr("PAINÉIS · \(panels)", "PANELS · \(panels)"), tr("REBANHOS", "HERDS"), tr("LOTES", "LOTS")] + (loops.visible || hasHistory ? [loops.title] : [])
     }
 
     enum LoopsHeader: Equatable { case card, historyOnly }
@@ -77,8 +77,8 @@ struct ContextPanel: View {
             HStack {
                 section(title)
                 Spacer(minLength: 0)
-                Button("Ver tudo") { Self.openLoops(ctx: ctx, tab: card == nil ? .history : .running) }
-                    .buttonStyle(.plain).font(.collieUI(11)).foregroundStyle(Color.collieAccent).accessibilityLabel("Ver tudo")
+                Button(tr("Ver tudo", "See all")) { Self.openLoops(ctx: ctx, tab: card == nil ? .history : .running) }
+                    .buttonStyle(.plain).font(.collieUI(11)).foregroundStyle(Color.collieAccent).accessibilityLabel(tr("Ver tudo", "See all"))
             }
             if let card { Button { Self.openLoops(ctx: ctx) } label: {
                 VStack(alignment: .leading, spacing: 8) {
@@ -109,10 +109,10 @@ struct ContextPanel: View {
         let s = FactorySwitch.make(p, busy: actions.busy, refusal: actions.factoryRefusal[p.id], note: actions.factoryNote[p.id])
         return VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: Binding(get: { s.isOn }, set: { actions.setFactory(p, $0) })) {
-                Text("FÁBRICA").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
+                Text(tr("FÁBRICA", "FACTORY")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
             }
             .toggleStyle(.switch).controlSize(.mini).disabled(!s.enabled)
-            .help(s.label).accessibilityLabel("Fábrica").accessibilityHint(s.label)
+            .help(s.label).accessibilityLabel(tr("Fábrica", "Factory")).accessibilityHint(s.label)
             if let r = s.refusal {
                 Text(r).font(.collieMono(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -125,7 +125,7 @@ struct ContextPanel: View {
     private func header(_ paddock: Paddock?) -> some View {
         HStack(alignment: .top, spacing: 6) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(paddock?.name ?? "Pasto").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
+                Text(paddock?.name ?? tr("Pasto", "Pasture")).font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
                 if let paddock {
                     Text(paddock.isFolder ? paddock.path : "\(paddock.branch) ← \(paddock.baseBranch)")
                         .font(.collieMono(12)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle)
@@ -136,7 +136,7 @@ struct ContextPanel: View {
                 if ctx.paddocks.busy { ProgressView().controlSize(.small) }
                 Menu { PaddockMenu(paddock: paddock, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Menu do cercado").accessibilityLabel("Menu do cercado")
+                    .help(tr("Menu do cercado", "Paddock menu")).accessibilityLabel(tr("Menu do cercado", "Paddock menu"))
             }
         }
     }
@@ -157,7 +157,7 @@ struct ContextPanel: View {
                         .foregroundStyle(Color.collieMuted).frame(width: 16, height: 22).contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(r.isCollapsed ? "Expandir \(r.name)" : "Recolher \(r.name)")
+                .accessibilityLabel(r.isCollapsed ? tr("Expandir \(r.name)", "Expand \(r.name)") : tr("Recolher \(r.name)", "Collapse \(r.name)"))
             } else {
                 Color.clear.frame(width: 16, height: 22)
             }
@@ -169,17 +169,17 @@ struct ContextPanel: View {
                     if r.pending > 0 {
                         Text("\(r.pending)").font(.collieMono(10, .medium)).monospacedDigit().foregroundStyle(Color.collieBackground)
                             .padding(.horizontal, 5).padding(.vertical, 1).background(Color.collieAttention, in: .capsule)
-                            .accessibilityLabel(r.pending == 1 ? "1 cartão pendente" : "\(r.pending) cartões pendentes")
+                            .accessibilityLabel(r.pending == 1 ? tr("1 cartão pendente", "1 pending card") : tr("\(r.pending) cartões pendentes", "\(r.pending) pending cards"))
                     }
-                    if r.summonedByName != nil { CollieTag("Pastor", tone: .accent) }
+                    if r.summonedByName != nil { CollieTag(tr("Pastor", "Shepherd"), tone: .accent) }
                     CollieTag(r.preset.rawValue, tone: .neutral)
                 }
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .simultaneousGesture(TapGesture(count: 2).onEnded { ctx.edit(r.id) })
-            .help([r.name, r.summonedByName.map { "convocado por \($0)" }, status.text].compactMap { $0 }.joined(separator: " · "))
-            .accessibilityValue(status.text ?? "ocioso")
+            .help([r.name, r.summonedByName.map { tr("convocado por \($0)", "summoned by \($0)") }, status.text].compactMap { $0 }.joined(separator: " · "))
+            .accessibilityValue(status.text ?? tr("ocioso", "idle"))
             .accessibilityAddTraits(selected ? .isSelected : [])
         }
         .padding(.vertical, 2).padding(.trailing, 4)

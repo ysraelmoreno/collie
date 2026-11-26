@@ -20,16 +20,16 @@ enum HistoryPage {
     }
 
     /// M8.3: the notices the page and the Laços modal show (one text for both).
-    static let reconstructedNotice = "Resumo reconstruído de um trabalho fechado antes do arquivo imutável: o diário é curto."
-    static let truncatedNotice = "A linha do tempo foi cortada nos 500 eventos mais recentes."
+    static var reconstructedNotice: String { tr("Resumo reconstruído de um trabalho fechado antes do arquivo imutável: o diário é curto.", "Summary rebuilt from a work closed before the immutable archive: the journal is short.") }
+    static var truncatedNotice: String { tr("A linha do tempo foi cortada nos 500 eventos mais recentes.", "The timeline was cut to the 500 most recent events.") }
 
     /// M8.3: the work's data as (label, value), raw text (whoever renders escapes): the page's `<dl>` and the modal's detail.
     static func facts(for a: WorkArchive, timeZone: TimeZone = .current) -> [(label: String, value: String)] {
         var dur = "—"
         if let o = a.openedAt, let c = a.closedAt { let s = max(0, Int(c.timeIntervalSince(o))); dur = s >= 3600 ? "\(s / 3600)h\(String(format: "%02d", s % 3600 / 60))" : "\(s / 60)min \(s % 60)s" }
         let stop = a.stopReason.map { WorkLoopState.Stop(WorkLoopState.Stop.Code(rawValue: $0) ?? .unknown).label + " (\($0))" } ?? "—"
-        return [("Cercado", a.paddock), ("Branch", a.branch), ("Abertura", format("dd/MM/yyyy HH:mm:ss", a.openedAt, timeZone)),
-                ("Fechamento", format("dd/MM/yyyy HH:mm:ss", a.closedAt, timeZone)), ("Duração", dur), ("Motivo de parada", stop)]
+        return [(tr("Cercado", "Paddock"), a.paddock), ("Branch", a.branch), (tr("Abertura", "Opened"), format("dd/MM/yyyy HH:mm:ss", a.openedAt, timeZone)),
+                (tr("Fechamento", "Closed"), format("dd/MM/yyyy HH:mm:ss", a.closedAt, timeZone)), (tr("Duração", "Duration"), dur), (tr("Motivo de parada", "Stop reason"), stop)]
     }
 
     static func format(_ pattern: String, _ d: Date?, _ timeZone: TimeZone) -> String {
@@ -41,7 +41,7 @@ enum HistoryPage {
     static func html(for a: WorkArchive, timeZone: TimeZone = .current) -> String {
         func clock(_ d: Date?) -> String { format("HH:mm:ss", d, timeZone) }
         var h = """
-        <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <!doctype html><html lang="\(tr("pt-BR", "en"))"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
         <title>\(esc(a.title))</title><style>
         :root{color-scheme:light dark;--bg:#faf9f7;--fg:#1f1d1a;--mute:#6b665f;--line:#ddd8d0;--warn:#fff3d6}
@@ -59,17 +59,17 @@ enum HistoryPage {
         h += "<dl>" + facts(for: a, timeZone: timeZone).map { f in
             "<dt>\(f.label)</dt><dd>" + (f.label == "Branch" ? "<code>\(esc(f.value))</code>" : esc(f.value)) + "</dd>"
         }.joined() + "</dl>"
-        h += "<h2>Tarefas</h2><table><tr><th>Tarefa</th><th>Estado</th><th>Tentativas</th><th>Commits</th><th>Razão / nota</th></tr>"
+        h += tr("<h2>Tarefas</h2><table><tr><th>Tarefa</th><th>Estado</th><th>Tentativas</th><th>Commits</th><th>Razão / nota</th></tr>", "<h2>Tasks</h2><table><tr><th>Task</th><th>State</th><th>Attempts</th><th>Commits</th><th>Reason / note</th></tr>")
         for t in a.tasks {
             let commits = t.commits.map { "<code>\(esc(String($0.prefix(8))))</code>" }.joined(separator: " ")
             let why = [t.failure, t.evidenceNote].compactMap { $0 }.map(esc).joined(separator: "<br>")
             h += "<tr><td>\(esc(t.id)) \(esc(t.title))</td><td>\(esc(t.state))</td><td>\(t.tries)</td><td>\(commits)</td><td>\(why)</td></tr>"
         }
-        h += "</table><h2>Linha do tempo</h2><table><tr><th>Hora</th><th>Tarefa</th><th>Tipo</th><th>Detalhe</th></tr>"
+        h += tr("</table><h2>Linha do tempo</h2><table><tr><th>Hora</th><th>Tarefa</th><th>Tipo</th><th>Detalhe</th></tr>", "</table><h2>Timeline</h2><table><tr><th>Time</th><th>Task</th><th>Kind</th><th>Detail</th></tr>")
         for e in a.timeline { h += "<tr><td>\(esc(clock(e.at)))</td><td>\(esc(e.task ?? ""))</td><td>\(esc(e.kind))</td><td>\(esc(e.detail))</td></tr>" }
         h += "</table>"
-        if !a.loopSummary.isEmpty { h += "<h2>Resumo do laço</h2><p>\(esc(a.loopSummary))</p>" }
-        if !a.notes.isEmpty { h += "<h2>Notas</h2><ul>" + a.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>" }
+        if !a.loopSummary.isEmpty { h += "<h2>\(tr("Resumo do laço", "Loop summary"))</h2><p>\(esc(a.loopSummary))</p>" }
+        if !a.notes.isEmpty { h += "<h2>\(tr("Notas", "Notes"))</h2><ul>" + a.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>" }
         return h + "</body></html>"
     }
 
@@ -91,7 +91,7 @@ enum HistoryPage {
     @ObservationIgnored var focus: (UUID) -> Void
     /// A short notice for the section (fixed text, never the protocol's message nor a path); nil once a detail opens.
     private(set) var message: String?
-    nonisolated static let failure = "Não foi possível abrir o histórico"
+    nonisolated static var failure: String { tr("Não foi possível abrir o histórico", "Couldn't open the history") }
     @ObservationIgnored private var panels: [String: UUID] = [:]
 
     init(fetch: @escaping (String) async throws -> WorkArchive, add: @escaping (String, String, String) async throws -> String,
@@ -101,7 +101,7 @@ enum HistoryPage {
 
     func show(_ id: String) async {
         message = nil   // a notice is about the last try only
-        guard let source = HistoryPage.source(id: id) else { message = "Histórico: id inválido"; return }
+        guard let source = HistoryPage.source(id: id) else { message = tr("Histórico: id inválido", "History: invalid id"); return }
         if let p = panels[source], isOpen(p) { return focus(p) }
         do {
             let a = try await fetch(id)

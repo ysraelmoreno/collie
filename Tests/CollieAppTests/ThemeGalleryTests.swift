@@ -41,7 +41,7 @@ private struct Call: Equatable {
 
 private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": RGB(hex: 0xFF00AA)])
 
-@MainActor @Test func cardsComeInOrder() throws {
+@MainActor @Test(.appPT) func cardsComeInOrder() throws {
     let rig = try Rig()
     try rig.put(ThemeFile(name: "Beta", extends: .dark), id: "b")
     try rig.put(ThemeFile(name: "Alfa", extends: .light), id: "a")
@@ -56,7 +56,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.isSelected(dark))
 }
 
-@MainActor @Test func selectingStoresThePreferenceAndApplies() throws {
+@MainActor @Test(.appPT) func selectingStoresThePreferenceAndApplies() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -73,7 +73,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls.last == Call(selection: .light, theme: nil))
 }
 
-@MainActor @Test func aBrokenCardDoesNotSelect() throws {
+@MainActor @Test(.appPT) func aBrokenCardDoesNotSelect() throws {
     let rig = try Rig()
     try rig.put(raw: "{", id: "bad")
     rig.model.start()
@@ -85,7 +85,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.selection == .dark)
 }
 
-@MainActor @Test func newFromBuiltInCreatesNamesAndSelects() throws {
+@MainActor @Test(.appPT) func newFromBuiltInCreatesNamesAndSelects() throws {
     let rig = try Rig()
     rig.model.start()
 
@@ -100,7 +100,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls.last == Call(selection: selection, theme: theme))
 }
 
-@MainActor @Test func newFromACustomThemeKeepsItsColors() throws {
+@MainActor @Test(.appPT) func newFromACustomThemeKeepsItsColors() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -112,7 +112,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.entries.count == 2)
 }
 
-@MainActor @Test func newFromIsNotOfferedForSistemaOrABrokenCard() throws {
+@MainActor @Test(.appPT) func newFromIsNotOfferedForSistemaOrABrokenCard() throws {
     let rig = try Rig()
     try rig.put(raw: "{", id: "bad")
     rig.model.start()
@@ -126,7 +126,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.stored == nil)
 }
 
-@MainActor @Test func deletingTheSelectedGoesBackToEscuro() throws {
+@MainActor @Test(.appPT) func deletingTheSelectedGoesBackToEscuro() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -141,7 +141,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(!FileManager.default.fileExists(atPath: rig.folder.appendingPathComponent("tinta.json").path))
 }
 
-@MainActor @Test func deletingAnotherThemeKeepsTheSelection() throws {
+@MainActor @Test(.appPT) func deletingAnotherThemeKeepsTheSelection() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     try rig.put(ThemeFile(name: "Outro", extends: .light), id: "outro")
@@ -155,7 +155,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls.count == before)
 }
 
-@MainActor @Test func changingTheSelectedFileOnDiskAppliesAgain() throws {
+@MainActor @Test(.appPT) func changingTheSelectedFileOnDiskAppliesAgain() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -171,7 +171,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.stored == "custom:tinta")
 }
 
-@MainActor @Test func reloadingTwiceForOneChangeAppliesOnce() throws {
+@MainActor @Test(.appPT) func reloadingTwiceForOneChangeAppliesOnce() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -186,7 +186,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls.count == before + 1)
 }
 
-@MainActor @Test func reloadingWithoutChangeAppliesNothing() throws {
+@MainActor @Test(.appPT) func reloadingWithoutChangeAppliesNothing() throws {
     let rig = try Rig()
     rig.model.start()
     rig.model.reload()
@@ -194,7 +194,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls == [Call(selection: .dark, theme: nil)])
 }
 
-@MainActor @Test func deletingTheSelectedFileOnDiskGoesBackToEscuro() throws {
+@MainActor @Test(.appPT) func deletingTheSelectedFileOnDiskGoesBackToEscuro() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -208,7 +208,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.selection == .dark)
 }
 
-@MainActor @Test func breakingTheSelectedFileOnDiskGoesBackToEscuroAndTheCardIsBroken() throws {
+@MainActor @Test(.appPT) func breakingTheSelectedFileOnDiskGoesBackToEscuroAndTheCardIsBroken() throws {
     let rig = try Rig()
     try rig.put(tinta, id: "tinta")
     rig.model.start()
@@ -222,7 +222,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.cards.contains { $0.id == "broken:tinta" })
 }
 
-@MainActor @Test func startWithTheSavedCustomThemeAppliesItFirst() throws {
+@MainActor @Test(.appPT) func startWithTheSavedCustomThemeAppliesItFirst() throws {
     let rig = try Rig(preference: "custom:tinta")
     try rig.put(tinta, id: "tinta")
 
@@ -231,7 +231,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls == [Call(selection: .custom("tinta"), theme: tinta)])
 }
 
-@MainActor @Test func startWithAMissingCustomThemeAppliesEscuroAndKeepsThePreference() throws {
+@MainActor @Test(.appPT) func startWithAMissingCustomThemeAppliesEscuroAndKeepsThePreference() throws {
     let rig = try Rig(preference: "custom:fantasma")
 
     rig.model.start()
@@ -247,7 +247,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.calls.last == Call(selection: .custom("fantasma"), theme: tinta))
 }
 
-@MainActor @Test func importingAnInvalidFileShowsTheReasonAndDoesNotEnter() throws {
+@MainActor @Test(.appPT) func importingAnInvalidFileShowsTheReasonAndDoesNotEnter() throws {
     let rig = try Rig()
     rig.model.start()
     let outside = rig.folder.deletingLastPathComponent().appendingPathComponent("x.json")
@@ -259,7 +259,7 @@ private let tinta = ThemeFile(name: "Tinta", extends: .dark, colors: ["accent": 
     #expect(rig.model.entries.isEmpty)
 }
 
-@MainActor @Test func importingAValidFileAddsACardWithoutSelectingIt() throws {
+@MainActor @Test(.appPT) func importingAValidFileAddsACardWithoutSelectingIt() throws {
     let rig = try Rig()
     rig.model.start()
     let outside = rig.folder.deletingLastPathComponent().appendingPathComponent("gruvbox.json")

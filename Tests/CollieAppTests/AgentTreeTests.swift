@@ -14,7 +14,7 @@ private func rows(_ terminals: [TerminalRecord], _ connections: [Connection] = [
     AgentTree.rows(terminals: terminals, connections: connections, badges: badges, pending: pending, paddock: paddock, collapsed: collapsed)
 }
 
-@Suite struct AgentTreeTests {
+@Suite(.appPT) struct AgentTreeTests {
     @Test func shepherdWithTwoChildrenAndALooseTerminal() {
         let loose = term("solto", preset: .shell), a = term("a"), main = term("Main", shepherd: true), b = term("b", preset: .codex)
         // The leash's direction doesn't matter; children keep creation order (a before b), not connection order.

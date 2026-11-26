@@ -1,5 +1,6 @@
 import SwiftUI
 import CollieTheme
+import CollieCore
 
 /// A small canvas (rail, terminal node with an approval, memory card) drawn only from the palette it is given, so it
 /// can show a theme that is not the one applied. Reads no app-wide color.
@@ -73,18 +74,18 @@ struct ThemePreview: View {
             .overlay(alignment: .bottom) { c(palette.border).frame(height: 1) }
             VStack(alignment: .leading, spacing: 1) {
                 line("$ collie summon dev", palette.text)
-                line("● lendo CollieTheme", palette.accent)
-                line("  3 arquivos, 412 linhas", palette.muted)
-                line("→ guia: design-1", palette.secondary)
-                line("✗ teste falhou (2)", palette.danger)
-                line("! aguardando aprovação", palette.attention)
+                line(tr("● lendo CollieTheme", "● reading CollieTheme"), palette.accent)
+                line(tr("  3 arquivos, 412 linhas", "  3 files, 412 lines"), palette.muted)
+                line(tr("→ guia: design-1", "→ leash: design-1"), palette.secondary)
+                line(tr("✗ teste falhou (2)", "✗ test failed (2)"), palette.danger)
+                line(tr("! aguardando aprovação", "! waiting for approval"), palette.attention)
             }
             .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 3)
             HStack(spacing: 6) {
-                Text("Permitir").font(.collieUI(10.5, .semibold)).foregroundStyle(c(palette.onAccent))
+                Text(tr("Permitir", "Allow")).font(.collieUI(10.5, .semibold)).foregroundStyle(c(palette.onAccent))
                     .padding(.horizontal, 9).padding(.vertical, 2)
                     .background(RoundedRectangle(cornerRadius: 6).fill(c(palette.accent)))
-                Text("Negar").font(.collieUI(10.5)).foregroundStyle(c(palette.text))
+                Text(tr("Negar", "Deny")).font(.collieUI(10.5)).foregroundStyle(c(palette.text))
                     .padding(.horizontal, 9).padding(.vertical, 2)
                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(c(palette.border), lineWidth: 1))
             }
@@ -98,13 +99,13 @@ struct ThemePreview: View {
 
     private var memoryNode: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Memória").font(.collieUI(10.5)).foregroundStyle(c(palette.textSecondary))
+            Text(tr("Memória", "Memory")).font(.collieUI(10.5)).foregroundStyle(c(palette.textSecondary))
                 .padding(.horizontal, 8).padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .overlay(alignment: .bottom) { c(palette.borderSoft).frame(height: 1) }
             VStack(alignment: .leading, spacing: 1) {
-                Text("Tema é um arquivo").font(.collieUI(10.5, .semibold)).foregroundStyle(c(palette.text))
-                Text("decisão · há 2 dias").font(.collieUI(10.5)).foregroundStyle(c(palette.muted))
+                Text(tr("Tema é um arquivo", "A theme is a file")).font(.collieUI(10.5, .semibold)).foregroundStyle(c(palette.text))
+                Text(tr("decisão · há 2 dias", "decision · 2 days ago")).font(.collieUI(10.5)).foregroundStyle(c(palette.muted))
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
         }

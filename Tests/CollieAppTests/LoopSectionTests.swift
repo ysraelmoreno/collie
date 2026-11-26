@@ -22,7 +22,7 @@ private func work(_ state: WorkLoopState.State? = .running, phase: WorkLoopState
     return w
 }
 
-struct LoopSectionTests {
+@Suite(.appPT) struct LoopSectionTests {
     @Test func visibility() {
         func vis(_ w: Work?, _ p: UUID? = pad) -> Bool { LoopSection.make(work: w, paddock: p, timeZone: utc).visible }
         #expect(!vis(nil))
@@ -60,7 +60,7 @@ struct LoopSectionTests {
     }
 }
 
-struct HistoryRowTests {
+@Suite(.appPT) struct HistoryRowTests {
     private func row(_ e: HistoryEntry) -> HistoryRow { HistoryRow(e, timeZone: utc) }
     private let t = Date(timeIntervalSince1970: 1_763_690_520)   // 2025-11-21 02:02:00 UTC
 
@@ -111,7 +111,7 @@ struct HistoryRowTests {
     }
 }
 
-@MainActor struct WorkFeedTests {
+@MainActor @Suite(.appPT) struct WorkFeedTests {
     private func iso(_ d: Date) -> JSONValue {
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
         return try! JSONDecoder().decode(JSONValue.self, from: e.encode(d))

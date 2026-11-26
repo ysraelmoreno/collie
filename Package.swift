@@ -25,7 +25,7 @@ let package = Package(
         .target(name: "CollieDaemonKit", dependencies: ["CollieProtocol", "CollieCore", "CollieTerminal", "CollieDevice", "CollieNetwork"]),
         .target(name: "CollieClient", dependencies: ["CollieCore", "CollieProtocol"]),
         .target(name: "CollieCanvas", dependencies: ["CollieCore"]),
-        .target(name: "CollieTheme"),
+        .target(name: "CollieTheme", dependencies: ["CollieCore"]),
         .target(name: "VizinhoKit"),
         .target(name: "ColliePlugins", dependencies: ["CollieCore", "CollieProtocol", "CollieDevice", "CollieNetwork", "CollieTheme"]),
         .executableTarget(name: "collied", dependencies: ["CollieCore", "CollieDaemonKit", "CollieScreen"]),

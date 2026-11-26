@@ -22,7 +22,7 @@ private func loopWork() -> Work {
     return w
 }
 
-@MainActor struct ContextPanelHistoryTests {
+@MainActor @Suite(.appPT) struct ContextPanelHistoryTests {
     @Test func sectionOnlyWithAtLeastOneItem() {
         #expect(!HistorySection.make([]).visible)
         #expect(HistorySection.make(entries(1)).visible)

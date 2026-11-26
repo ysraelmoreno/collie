@@ -62,21 +62,21 @@ enum NodeActions {
     static func confirmation(for action: NodeAction, items: [NodeInfo]) -> Confirmation? {
         guard let first = items.first else { return nil }
         if action == .endBranch {
-            return Confirmation(title: "Encerrar o ramo de \(first.name)?",
-                                detail: "\(first.name) e todos os terminais que ele convocou, e os que eles convocaram, serão encerrados.",
-                                button: "Encerrar ramo")
+            return Confirmation(title: tr("Encerrar o ramo de \(first.name)?", "End \(first.name)'s branch?"),
+                                detail: tr("\(first.name) e todos os terminais que ele convocou, e os que eles convocaram, serão encerrados.", "\(first.name) and every terminal it summoned, and the ones they summoned, will be ended."),
+                                button: tr("Encerrar ramo", "End branch"))
         }
         guard action == .close else { return nil }
         let isolated = items.contains { if case .panel(_, _, true) = $0.kind { true } else { false } }
-        let note = isolated ? " Os dados isolados dos painéis serão apagados." : ""
+        let note = isolated ? tr(" Os dados isolados dos painéis serão apagados.", " The panels' isolated data will be erased.") : ""
         if items.count == 1 {
-            let detail = first.isTerminal ? "O terminal será encerrado." : isolated ? "O painel será fechado e os dados isolados dele serão apagados." : "O painel será fechado."
-            return Confirmation(title: "Fechar \(first.name)?", detail: detail, button: first.isTerminal ? "Fechar nó" : "Fechar painel")
+            let detail = first.isTerminal ? tr("O terminal será encerrado.", "The terminal will be ended.") : isolated ? tr("O painel será fechado e os dados isolados dele serão apagados.", "The panel will be closed and its isolated data erased.") : tr("O painel será fechado.", "The panel will be closed.")
+            return Confirmation(title: tr("Fechar \(first.name)?", "Close \(first.name)?"), detail: detail, button: first.isTerminal ? tr("Fechar nó", "Close node") : tr("Fechar painel", "Close panel"))
         }
         let t = items.filter(\.isTerminal).count, p = items.count - t
         var parts: [String] = []
-        if t > 0 { parts.append(t == 1 ? "1 terminal será encerrado" : "\(t) terminais serão encerrados") }
-        if p > 0 { parts.append(p == 1 ? "1 painel será fechado" : "\(p) painéis serão fechados") }
-        return Confirmation(title: "Fechar \(items.count) itens?", detail: parts.joined(separator: " e ") + "." + note, button: "Fechar \(items.count) itens")
+        if t > 0 { parts.append(t == 1 ? tr("1 terminal será encerrado", "1 terminal will be ended") : tr("\(t) terminais serão encerrados", "\(t) terminals will be ended")) }
+        if p > 0 { parts.append(p == 1 ? tr("1 painel será fechado", "1 panel will be closed") : tr("\(p) painéis serão fechados", "\(p) panels will be closed")) }
+        return Confirmation(title: tr("Fechar \(items.count) itens?", "Close \(items.count) items?"), detail: parts.joined(separator: tr(" e ", " and ")) + "." + note, button: tr("Fechar \(items.count) itens", "Close \(items.count) items"))
     }
 }

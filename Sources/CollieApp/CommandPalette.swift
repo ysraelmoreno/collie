@@ -1,5 +1,6 @@
 import SwiftUI
 import CollieTheme
+import CollieCore
 
 struct PaletteCommand: Identifiable {
     let id: String
@@ -24,7 +25,7 @@ struct CommandPalette: View {
     var body: some View {
         let matches = Self.filter(commands, query)
         VStack(spacing: 0) {
-            TextField("Comando", text: $query, prompt: Text("Chamar, abrir painel, ir para cercado…"))
+            TextField(tr("Comando", "Command"), text: $query, prompt: Text(tr("Chamar, abrir painel, ir para cercado…", "Summon, open panel, go to paddock…")))
                 .textFieldStyle(.plain).font(.collieUI(16)).foregroundStyle(Color.collieText)
                 .padding(16)
                 .focused($focused)
@@ -37,7 +38,7 @@ struct CommandPalette: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         if matches.isEmpty {
-                            Text("Nenhum comando").font(.collieUI(13)).foregroundStyle(Color.collieMuted).padding(12)
+                            Text(tr("Nenhum comando", "No commands")).font(.collieUI(13)).foregroundStyle(Color.collieMuted).padding(12)
                         }
                         ForEach(Array(matches.enumerated()), id: \.element.id) { i, c in
                             Button { pick(c) } label: {

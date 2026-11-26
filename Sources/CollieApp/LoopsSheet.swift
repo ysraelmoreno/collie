@@ -6,7 +6,7 @@ import CollieTheme
 /// M8.3: the Laços modal's model. Pure: built from the `Work` (`WorkFeed.work`), the terminals and a clock given by the
 /// caller, or from a `WorkArchive`; every text from the work is kept as it came (the view shows it with `Text(verbatim:)`).
 enum LoopsModal {
-    static let idleText = "Nenhum laço rodando"
+    static var idleText: String { tr("Nenhum laço rodando", "No loop running") }
 
     /// The tab asked for; Histórico when no loop of the paddock runs (Em andamento would be empty).
     static func initialTab(_ requested: LoopsTab, running: Running?) -> LoopsTab { running == nil ? .history : requested }
@@ -50,7 +50,7 @@ enum LoopsModal {
         var id: String { row.id }
         var agentText: String {
             guard let agent else { return "—" }
-            return terminal == nil ? "\(agent) · encerrado" : agent
+            return terminal == nil ? tr("\(agent) · encerrado", "\(agent) · ended") : agent
         }
     }
 
@@ -79,7 +79,7 @@ enum LoopsModal {
             return TaskLine(row: r, agent: live?.1 ?? job?.id, terminal: live?.0, elapsed: elapsed)
         }
         return Running(title: card.title, progress: card.progressText, fraction: card.fraction, phase: card.phase,
-                       since: s.header?.since, turnLimit: "turno de até " + HistoryRow.duration(loop.timeout), tasks: lines)
+                       since: s.header?.since, turnLimit: tr("turno de até ", "turn up to ") + HistoryRow.duration(loop.timeout), tasks: lines)
     }
 
     /// A closed work's detail inside the modal: what `HistoryPage` shows, as plain values.
@@ -124,7 +124,7 @@ enum LoopsModal {
         /// The archive's raw state in words; an unknown one as it came.
         static func state(_ raw: String) -> String {
             switch TaskState(rawValue: raw) {
-            case .done?: "feita"; case .deferred?: "adiada"; case .open?: "aberta"; case .inProgress?: "rodando"; case .abandoned?: "abandonada"
+            case .done?: tr("feita", "done"); case .deferred?: tr("adiada", "deferred"); case .open?: tr("aberta", "open"); case .inProgress?: tr("rodando", "running"); case .abandoned?: tr("abandonada", "abandoned")
             case nil: raw
             }
         }
@@ -149,11 +149,11 @@ struct LoopsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Laços").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
+                Text(tr("Laços", "Loops")).font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
                 Spacer()
-                Picker("Aba", selection: $tab) {
-                    Text("Em andamento").tag(LoopsTab.running)
-                    Text("Histórico").tag(LoopsTab.history)
+                Picker(tr("Aba", "Tab"), selection: $tab) {
+                    Text(tr("Em andamento", "In progress")).tag(LoopsTab.running)
+                    Text(tr("Histórico", "History")).tag(LoopsTab.history)
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
             }
@@ -167,7 +167,7 @@ struct LoopsSheet: View {
             if let error = load.error { Text(verbatim: error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
             HStack {
                 Spacer()
-                Button("Fechar") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(tr("Fechar", "Close")) { dismiss() }.keyboardShortcut(.cancelAction)
             }
         }
         .buttonStyle(CollieButtonStyle(.secondary))
@@ -210,12 +210,12 @@ struct LoopsSheet: View {
                     .foregroundStyle(t.terminal == nil ? Color.collieMuted : Color.collieAccent)
             }
             .buttonStyle(.plain).disabled(t.terminal == nil).frame(width: 180, alignment: .leading)
-            .help(t.terminal == nil ? "Terminal encerrado" : "Focar o terminal")
+            .help(t.terminal == nil ? tr("Terminal encerrado", "Terminal ended") : tr("Focar o terminal", "Focus the terminal"))
             Text(verbatim: t.elapsed ?? "").font(.collieMono(11)).monospacedDigit().foregroundStyle(Color.collieMuted).frame(width: 56, alignment: .trailing)
         }
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel([t.row.accessibilityLabel, t.agent.map { _ in "agente \(t.agentText)" }, t.elapsed].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([t.row.accessibilityLabel, t.agent.map { _ in tr("agente \(t.agentText)", "agent \(t.agentText)") }, t.elapsed].compactMap { $0 }.joined(separator: ", "))
     }
 
     // MARK: Histórico
@@ -224,7 +224,7 @@ struct LoopsSheet: View {
         let rows = HistorySection.make(ctx.client.workFeed.history).rows
         return Group {
             if rows.isEmpty {
-                Text("Nenhum laço no histórico").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+                Text(tr("Nenhum laço no histórico", "No loops in history")).font(.collieUI(13)).foregroundStyle(Color.collieMuted)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) { ForEach(rows) { historyRow($0) } }
@@ -268,9 +268,9 @@ struct LoopsSheet: View {
     private func detailView(_ d: LoopsModal.Detail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("‹ Histórico") { load.detail = nil; load.error = nil }.buttonStyle(.plain).foregroundStyle(Color.collieAccent)
+                Button(tr("‹ Histórico", "‹ History")) { load.detail = nil; load.error = nil }.buttonStyle(.plain).foregroundStyle(Color.collieAccent)
                 Spacer()
-                Button("Abrir no canvas") {
+                Button(tr("Abrir no canvas", "Open on canvas")) {
                     load.error = nil
                     Task { if load.canvas(await LoopsModal.openInCanvas(d.id, ctx: ctx)) { dismiss() } }
                 }
@@ -293,13 +293,13 @@ struct LoopsSheet: View {
                     }
                     .font(.collieUI(12))
                     if let tk = d.tokens { Text(verbatim: tk).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
-                    heading("TAREFAS")
+                    heading(tr("TAREFAS", "TASKS"))
                     ForEach(d.tasks) { t in
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 8) {
                                 Text(verbatim: "\(t.id) \(t.title)").foregroundStyle(Color.collieText)
                                 Spacer(minLength: 8)
-                                Text(verbatim: "\(t.state) · \(t.tries) tentativas").foregroundStyle(Color.collieMuted)
+                                Text(verbatim: tr("\(t.state) · \(t.tries) tentativas", "\(t.state) · \(t.tries) attempts")).foregroundStyle(Color.collieMuted)
                             }
                             .font(.collieUI(12))
                             if let tk = t.tokens { Text(verbatim: tk).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
@@ -308,7 +308,7 @@ struct LoopsSheet: View {
                         }
                         .padding(.vertical, 3)
                     }
-                    heading("LINHA DO TEMPO")
+                    heading(tr("LINHA DO TEMPO", "TIMELINE"))
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
                         ForEach(d.timeline) { e in
                             GridRow {
@@ -320,8 +320,8 @@ struct LoopsSheet: View {
                         }
                     }
                     .font(.collieMono(11)).foregroundStyle(Color.collieMuted)
-                    if !d.loopSummary.isEmpty { heading("RESUMO DO LAÇO"); Text(verbatim: d.loopSummary).font(.collieUI(12)) }
-                    if !d.notes.isEmpty { heading("NOTAS"); ForEach(Array(d.notes.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.collieUI(12)) } }
+                    if !d.loopSummary.isEmpty { heading(tr("RESUMO DO LAÇO", "LOOP SUMMARY")); Text(verbatim: d.loopSummary).font(.collieUI(12)) }
+                    if !d.notes.isEmpty { heading(tr("NOTAS", "NOTES")); ForEach(Array(d.notes.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.collieUI(12)) } }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import CollieTheme
+import CollieCore
 
 /// One card of the gallery: a built-in theme, a valid file of the user's, or a broken file.
 struct ThemeCard: Identifiable, Equatable {
@@ -65,9 +66,9 @@ struct ThemeCard: Identifiable, Equatable {
     // MARK: Cards
 
     var cards: [ThemeCard] {
-        var out = [ThemeCard(kind: .builtin(.dark), name: "Escuro", subtitle: "do Collie", palette: .dark),
-                   ThemeCard(kind: .builtin(.light), name: "Claro", subtitle: "do Collie", palette: .light),
-                   ThemeCard(kind: .builtin(.system), name: "Sistema", subtitle: "segue o macOS", palette: nil)]
+        var out = [ThemeCard(kind: .builtin(.dark), name: tr("Escuro", "Dark"), subtitle: tr("do Collie", "from Collie"), palette: .dark),
+                   ThemeCard(kind: .builtin(.light), name: tr("Claro", "Light"), subtitle: tr("do Collie", "from Collie"), palette: .light),
+                   ThemeCard(kind: .builtin(.system), name: tr("Sistema", "System"), subtitle: tr("segue o macOS", "follows macOS"), palette: nil)]
         for e in entries {
             if let t = e.theme {
                 out.append(ThemeCard(kind: .custom(e.id), name: t.name, subtitle: e.file.lastPathComponent, palette: t.palette))
@@ -159,7 +160,7 @@ struct ThemeCard: Identifiable, Equatable {
     func newFrom(_ card: ThemeCard) {
         guard card.canBeBase, let base = baseTheme(of: card) else { return }
         do {
-            let id = try library.create(from: base, name: base.name + " (cópia)")
+            let id = try library.create(from: base, name: base.name + tr(" (cópia)", " (copy)"))
             entries = library.reload()
             defaults.set(ThemeSelection.custom(id).rawValue, forKey: AppearanceKeys.theme)
             sync()
@@ -215,7 +216,7 @@ struct ThemeCard: Identifiable, Equatable {
         switch e {
         case let t as ThemeError: error = t.message
         case let l as ThemeLibrary.LibraryError: error = l.message
-        default: error = "não foi possível concluir (\(e.localizedDescription))"
+        default: error = tr("não foi possível concluir (\(e.localizedDescription))", "couldn't finish (\(e.localizedDescription))")
         }
     }
 }
@@ -232,8 +233,8 @@ struct ThemeGallery: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Spacer()
-                Button("Importar…") { importPanel() }.buttonStyle(CollieButtonStyle(.secondary))
-                Button("Mostrar no Finder") { model.reveal() }.buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Importar…", "Import…")) { importPanel() }.buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Mostrar no Finder", "Show in Finder")) { model.reveal() }.buttonStyle(CollieButtonStyle(.secondary))
             }
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 ForEach(model.cards) { card in cardView(card) }
@@ -243,14 +244,14 @@ struct ThemeGallery: View {
                 ThemeEditorView(id: e.id, theme: e.theme, gallery: model).id(e.id)
             }
         }
-        .alert("Tema", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+        .alert(tr("Tema", "Theme"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button("OK") { model.error = nil }
         } message: { Text(model.error ?? "") }
-        .confirmationDialog("Apagar \"\(toDelete?.name ?? "")\"?", isPresented: Binding(get: { toDelete != nil }, set: { if !$0 { toDelete = nil } }),
+        .confirmationDialog(tr("Apagar \"\(toDelete?.name ?? "")\"?", "Delete \"\(toDelete?.name ?? "")\"?"), isPresented: Binding(get: { toDelete != nil }, set: { if !$0 { toDelete = nil } }),
                             titleVisibility: .visible) {
-            Button("Apagar", role: .destructive) { if let c = toDelete { model.delete(c) }; toDelete = nil }
-            Button("Cancelar", role: .cancel) { toDelete = nil }
-        } message: { Text("O arquivo vai para o Lixo.") }
+            Button(tr("Apagar", "Delete"), role: .destructive) { if let c = toDelete { model.delete(c) }; toDelete = nil }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) { toDelete = nil }
+        } message: { Text(tr("O arquivo vai para o Lixo.", "The file goes to the Trash.")) }
     }
 
     @ViewBuilder private func cardView(_ card: ThemeCard) -> some View {
@@ -262,8 +263,8 @@ struct ThemeGallery: View {
             }
             .contextMenu {
                 if card.isCustom {
-                    Button("Mostrar no Finder") { model.reveal(card) }
-                    Button("Apagar…", role: .destructive) { toDelete = card }
+                    Button(tr("Mostrar no Finder", "Show in Finder")) { model.reveal(card) }
+                    Button(tr("Apagar…", "Delete…"), role: .destructive) { toDelete = card }
                 }
             }
         }
@@ -277,15 +278,15 @@ struct ThemeGallery: View {
             Text(card.name).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
             Text(card.subtitle).font(.collieMono(12)).foregroundStyle(Color.collieDanger).lineLimit(1)
             HStack(spacing: 8) {
-                Button("Mostrar no Finder") { model.reveal(card) }
-                Button("Apagar…", role: .destructive) { toDelete = card }
+                Button(tr("Mostrar no Finder", "Show in Finder")) { model.reveal(card) }
+                Button(tr("Apagar…", "Delete…"), role: .destructive) { toDelete = card }
             }.buttonStyle(.link).font(.collieMono(11))
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(shape.strokeBorder(Color.collieBorder, lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(card.name), com erro: \(card.subtitle)")
+        .accessibilityLabel(tr("\(card.name), com erro: \(card.subtitle)", "\(card.name), error: \(card.subtitle)"))
     }
 
     /// A menu of the valid themes; the copy is made and selected.
@@ -297,15 +298,15 @@ struct ThemeGallery: View {
                 Text("+").font(.collieUI(22)).foregroundStyle(Color.collieMuted)
                     .frame(maxWidth: .infinity).frame(height: 64)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSunken))
-                Text("Novo a partir de…").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
-                Text("copia um tema").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                Text(tr("Novo a partir de…", "New from…")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+                Text(tr("copia um tema", "copies a theme")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.collieBorder, lineWidth: 1))
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden)
-        .accessibilityLabel("Novo a partir de…")
+        .accessibilityLabel(tr("Novo a partir de…", "New from…"))
     }
 
     private func importPanel() {
@@ -313,7 +314,7 @@ struct ThemeGallery: View {
         p.allowedContentTypes = [.json]
         p.allowsMultipleSelection = false
         p.canChooseDirectories = false
-        p.message = "Escolha um arquivo de tema (.json)"
+        p.message = tr("Escolha um arquivo de tema (.json)", "Choose a theme file (.json)")
         if p.runModal() == .OK, let url = p.url { model.importFile(url) }
     }
 }

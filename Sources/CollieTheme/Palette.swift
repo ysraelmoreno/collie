@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import CollieCore
 
 /// sRGB color from a 0xRRGGBB literal.
 public struct RGB: Sendable, Equatable {
@@ -113,6 +114,14 @@ public struct Palette: Sendable, Equatable {
 public struct PaletteRole {
     public enum Group: String {
         case fundos = "Fundos", texto = "Texto", destaques = "Destaques", outros = "Outros"
+        public var title: String {
+            switch self {
+            case .fundos: tr("Fundos", "Backgrounds")
+            case .texto: tr("Texto", "Text")
+            case .destaques: tr("Destaques", "Accents")
+            case .outros: tr("Outros", "Other")
+            }
+        }
     }
 
     public let key: String
@@ -131,24 +140,24 @@ public extension Palette {
             PaletteRole(key: key, keyPath: kp, name: name, group: group, readsAgainst: on)
         }
         return [
-            role("background", \.background, "Fundo", .fundos),
-            role("surface", \.surface, "Superfície", .fundos),
-            role("sidebar", \.sidebar, "Barra lateral", .fundos),
-            role("sunken", \.sunken, "Rebaixado", .fundos),
-            role("raised", \.raised, "Elevado", .fundos),
-            role("border", \.border, "Borda", .outros),
-            role("borderSoft", \.borderSoft, "Borda suave", .outros),
-            role("grid", \.grid, "Grade", .outros),
-            role("scrim", \.scrim, "Véu", .outros),
-            role("text", \.text, "Texto", .texto, on: "surface"),
-            role("textSecondary", \.textSecondary, "Texto secundário", .texto, on: "surface"),
-            role("muted", \.muted, "Texto discreto", .texto, on: "surface"),
-            role("accent", \.accent, "Destaque", .destaques, on: "surface"),
-            role("onAccent", \.onAccent, "Sobre o destaque", .destaques, on: "accent"),
-            role("attention", \.attention, "Atenção", .destaques, on: "surface"),
-            role("attentionTint", \.attentionTint, "Fundo de atenção", .destaques),
-            role("secondary", \.secondary, "Secundária", .destaques, on: "surface"),
-            role("danger", \.danger, "Perigo", .destaques, on: "surface"),
+            role("background", \.background, tr("Fundo", "Background"), .fundos),
+            role("surface", \.surface, tr("Superfície", "Surface"), .fundos),
+            role("sidebar", \.sidebar, tr("Barra lateral", "Sidebar"), .fundos),
+            role("sunken", \.sunken, tr("Rebaixado", "Sunken"), .fundos),
+            role("raised", \.raised, tr("Elevado", "Raised"), .fundos),
+            role("border", \.border, tr("Borda", "Border"), .outros),
+            role("borderSoft", \.borderSoft, tr("Borda suave", "Soft border"), .outros),
+            role("grid", \.grid, tr("Grade", "Grid"), .outros),
+            role("scrim", \.scrim, tr("Véu", "Scrim"), .outros),
+            role("text", \.text, tr("Texto", "Text"), .texto, on: "surface"),
+            role("textSecondary", \.textSecondary, tr("Texto secundário", "Secondary text"), .texto, on: "surface"),
+            role("muted", \.muted, tr("Texto discreto", "Muted text"), .texto, on: "surface"),
+            role("accent", \.accent, tr("Destaque", "Accent"), .destaques, on: "surface"),
+            role("onAccent", \.onAccent, tr("Sobre o destaque", "On accent"), .destaques, on: "accent"),
+            role("attention", \.attention, tr("Atenção", "Attention"), .destaques, on: "surface"),
+            role("attentionTint", \.attentionTint, tr("Fundo de atenção", "Attention background"), .destaques),
+            role("secondary", \.secondary, tr("Secundária", "Secondary"), .destaques, on: "surface"),
+            role("danger", \.danger, tr("Perigo", "Danger"), .destaques, on: "surface"),
         ]
     }
 

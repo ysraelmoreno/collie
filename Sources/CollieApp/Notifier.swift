@@ -38,7 +38,7 @@ struct AccessNotifyGate {
     func notifyAccess(_ d: SandboxDenial, name: String) {
         guard accessGate.shouldPost(terminal: d.terminal) else { return }
         let tail = d.path.split(separator: "/").suffix(2).joined(separator: "/")
-        notify(d.terminal, title: "\(AccessCopy.shown(name)) pediu acesso", body: "Quer \(AccessCopy.verb(d.op)) …/\(AccessCopy.shown(tail))")
+        notify(d.terminal, title: tr("\(AccessCopy.shown(name)) pediu acesso", "\(AccessCopy.shown(name)) asked for access"), body: tr("Quer \(AccessCopy.verb(d.op)) …/\(AccessCopy.shown(tail))", "Wants to \(AccessCopy.verb(d.op)) …/\(AccessCopy.shown(tail))"))
     }
 
     static let confirmKey = "memory.confirmNotification", confirmDefaultOn = true
@@ -47,10 +47,10 @@ struct AccessNotifyGate {
     func notifyConfirm(terminal: UUID, entry: UUID, rule: String, shown: Bool) {
         guard UserDefaults.standard.object(forKey: Self.confirmKey) as? Bool ?? Self.confirmDefaultOn,
               confirmGate.shouldPost(terminal: terminal, shown: shown) else { return }
-        notify(entry, title: "Confirmar correção?", body: rule.count > 80 ? String(rule.prefix(79)) + "…" : rule, kind: "confirm")
+        notify(entry, title: tr("Confirmar correção?", "Confirm correction?"), body: rule.count > 80 ? String(rule.prefix(79)) + "…" : rule, kind: "confirm")
     }
 
-    func notify(_ id: UUID, name: String, reason: String) { notify(id, title: "\(name) precisa de atenção", body: reason) }
+    func notify(_ id: UUID, name: String, reason: String) { notify(id, title: tr("\(name) precisa de atenção", "\(name) needs attention"), body: reason) }
 
     func notify(_ id: UUID, title: String, body: String, kind: String? = nil) {
         guard let center else { return }

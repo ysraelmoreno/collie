@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CollieTheme
+import CollieCore
 
 // MARK: Coordinator (no view, testable)
 
@@ -65,7 +66,7 @@ import CollieTheme
             model.markSaved()
             saveError = nil
         } catch {
-            saveError = "não gravado: " + Self.describe(error)
+            saveError = tr("não gravado: ", "not saved: ") + Self.describe(error)
         }
     }
 
@@ -98,8 +99,9 @@ import CollieTheme
 enum ThemeEditorFormat {
     static func reading(_ ratio: Double?, low: Bool) -> String? {
         guard let ratio else { return nil }
-        let n = String(format: "%.1f", ratio).replacingOccurrences(of: ".", with: ",")
-        return low ? n + " baixo" : n
+        let raw = String(format: "%.1f", ratio)
+        let n = L10n.current == .en ? raw : raw.replacingOccurrences(of: ".", with: ",")
+        return low ? n + tr(" baixo", " low") : n
     }
 
     /// Accepts `#RRGGBB` or `RRGGBB`.
@@ -113,7 +115,10 @@ enum ThemeEditorFormat {
 
 /// The editor under the gallery: header, Lista | JSON, preview on the right (below under 720 pt).
 struct ThemeEditorView: View {
-    private enum Pane: String { case list = "Lista", json = "JSON" }
+    private enum Pane: String {
+        case list, json
+        var title: String { self == .list ? tr("Lista", "List") : "JSON" }
+    }
 
     let id: String
     let gallery: ThemeGalleryModel
@@ -168,24 +173,24 @@ struct ThemeEditorView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            TextField("Nome do tema", text: $nameText)
+            TextField(tr("Nome do tema", "Theme name"), text: $nameText)
                 .textFieldStyle(.plain)
                 .font(.collieUI(13, .semibold))
                 .focused($nameFocused)
                 .frame(maxWidth: 180)
                 .onSubmit(commitName)
                 .onChange(of: nameFocused) { if !nameFocused { commitName() } }
-                .accessibilityLabel("Nome do tema")
-            Text("estende \(session.model.theme.extends == .dark ? "Escuro" : "Claro") · \(id).json")
+                .accessibilityLabel(tr("Nome do tema", "Theme name"))
+            Text(tr("estende \(session.model.theme.extends == .dark ? "Escuro" : "Claro") · \(id).json", "extends \(session.model.theme.extends == .dark ? "Dark" : "Light") · \(id).json"))
                 .font(.collieMono(10.5)).foregroundStyle(Color.collieMuted)
                 .lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 8)
-            Picker("Vista", selection: $pane) {
-                Text(Pane.list.rawValue).tag(Pane.list)
-                Text(Pane.json.rawValue).tag(Pane.json)
+            Picker(tr("Vista", "View"), selection: $pane) {
+                Text(Pane.list.title).tag(Pane.list)
+                Text(Pane.json.title).tag(Pane.json)
             }
             .pickerStyle(.segmented).labelsHidden().frame(width: 120)
-            .accessibilityLabel("Vista")
+            .accessibilityLabel(tr("Vista", "View"))
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background(Color.collieSidebar)
@@ -211,7 +216,7 @@ struct ThemeEditorView: View {
         let rows = session.model.rows
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Self.groups, id: \.self) { group in
-                Text(group.rawValue).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+                Text(group.title).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
                     .padding(.horizontal, 12).padding(.vertical, 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.collieSunken)
@@ -227,7 +232,7 @@ struct ThemeEditorView: View {
         VStack(spacing: 0) {
             ThemeJSONTextView(text: Binding(get: { session.model.jsonText }, set: { session.setJSON($0) }))
                 .frame(height: 388)
-                .accessibilityLabel("Arquivo do tema")
+                .accessibilityLabel(tr("Arquivo do tema", "Theme file"))
             if let e = session.model.jsonError {
                 Text(e).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                     .padding(.horizontal, 12).padding(.vertical, 5)
@@ -240,7 +245,7 @@ struct ThemeEditorView: View {
 
     private var previewColumn: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Prévia").font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+            Text(tr("Prévia", "Preview")).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
             ThemePreview(palette: session.model.palette).frame(minHeight: 300)
         }
         .padding(10)
@@ -275,17 +280,17 @@ private struct ThemeEditorRowView: View {
                 .focused($focused)
                 .onSubmit(commitHex)
                 .onChange(of: focused) { if !focused { commitHex() } }
-                .accessibilityLabel("\(row.name), valor hexadecimal")
+                .accessibilityLabel(tr("\(row.name), valor hexadecimal", "\(row.name), hex value"))
             reading.frame(width: 64, alignment: .leading)
             Spacer(minLength: 4)
             if row.changed {
-                Text("alterado").font(.collieUI(11)).foregroundStyle(Color.collieAccent)
+                Text(tr("alterado", "changed")).font(.collieUI(11)).foregroundStyle(Color.collieAccent)
                 Button { session.reset(row.key) } label: { Image(systemName: "arrow.uturn.backward") }
                     .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
-                    .help("Voltar ao herdado")
-                    .accessibilityLabel("Voltar \(row.name) ao herdado")
+                    .help(tr("Voltar ao herdado", "Revert to inherited"))
+                    .accessibilityLabel(tr("Voltar \(row.name) ao herdado", "Revert \(row.name) to inherited"))
             } else {
-                Text("herdado").font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+                Text(tr("herdado", "inherited")).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 3)
@@ -297,7 +302,7 @@ private struct ThemeEditorRowView: View {
         if let text = ThemeEditorFormat.reading(row.ratio, low: row.low) {
             Text(text).font(.collieMono(11))
                 .foregroundStyle(row.low ? Color.collieAttention : Color.collieTextSecondary)
-                .accessibilityLabel(row.low ? "contraste baixo, \(text)" : "contraste \(text)")
+                .accessibilityLabel(row.low ? tr("contraste baixo, \(text)", "low contrast, \(text)") : tr("contraste \(text)", "contrast \(text)"))
         }
     }
 
@@ -354,7 +359,7 @@ private struct ThemeJSONTextView: NSViewRepresentable {
         tv.string = text
         scroll.drawsBackground = true
         scroll.backgroundColor = CollieColor.sunken
-        scroll.setAccessibilityLabel("Arquivo do tema")
+        scroll.setAccessibilityLabel(tr("Arquivo do tema", "Theme file"))
         return scroll
     }
 

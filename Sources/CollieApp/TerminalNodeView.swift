@@ -150,13 +150,13 @@ import CollieTheme
             return many
         }
         let m = NSMenu()
-        m.addItem(ActionItem("Tela cheia") { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } })
+        m.addItem(ActionItem(tr("Tela cheia", "Fullscreen")) { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } })
         m.addItem(.separator())
-        m.addItem(ActionItem("Editar…") { [weak self] in self?.edit() })
-        m.addItem(ActionItem("Reiniciar") { [weak self] in self?.restart() })
-        m.addItem(ActionItem("Matar") { [weak self] in self?.kill() })
-        if isClaude { m.addItem(ActionItem("Salvar na memória") { [weak self] in self?.captureMemory() }) }
-        let lots = NSMenuItem(title: "Lote", action: nil, keyEquivalent: ""), sub = NSMenu()
+        m.addItem(ActionItem(tr("Editar…", "Edit…")) { [weak self] in self?.edit() })
+        m.addItem(ActionItem(tr("Reiniciar", "Restart")) { [weak self] in self?.restart() })
+        m.addItem(ActionItem(tr("Matar", "Kill")) { [weak self] in self?.kill() })
+        if isClaude { m.addItem(ActionItem(tr("Salvar na memória", "Save to memory")) { [weak self] in self?.captureMemory() }) }
+        let lots = NSMenuItem(title: tr("Lote", "Lot"), action: nil, keyEquivalent: ""), sub = NSMenu()
         let mine = client.lot(of: id)?.id
         for choice in LotChoice.all(client.lots) {
             let item = ActionItem(choice.title) { [weak self] in self?.setLot(choice.lot) }
@@ -166,7 +166,7 @@ import CollieTheme
         lots.submenu = sub
         m.addItem(lots)
         m.addItem(.separator())
-        m.addItem(ActionItem("Fechar nó…") { [weak self] in self?.confirmClose() })
+        m.addItem(ActionItem(tr("Fechar nó…", "Close node…")) { [weak self] in self?.confirmClose() })
         return m
     }
 
@@ -414,10 +414,10 @@ import CollieTheme
     private func confirmClose() {
         guard let name, let window else { return }
         let a = NSAlert()
-        a.messageText = "Fechar \(name)?"
-        a.informativeText = "O terminal será encerrado."
-        a.addButton(withTitle: "Fechar nó")
-        a.addButton(withTitle: "Cancelar")
+        a.messageText = tr("Fechar \(name)?", "Close \(name)?")
+        a.informativeText = tr("O terminal será encerrado.", "The terminal will be ended.")
+        a.addButton(withTitle: tr("Fechar nó", "Close node"))
+        a.addButton(withTitle: tr("Cancelar", "Cancel"))
         a.beginSheetModal(for: window) { [weak self] r in
             if r == .alertFirstButtonReturn { self?.kill() }
         }
@@ -549,38 +549,38 @@ struct NodeTitleBar: View {
             Circle().fill(color(status)).frame(width: 8, height: 8)
             Text(t?.name ?? "").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
             if t?.isShepherd == true {
-                CollieTag("Pastor", tone: .accent)
-                Text("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)").foregroundStyle(Color.collieMuted)
+                CollieTag(tr("Pastor", "Shepherd"), tone: .accent)
+                Text(tr("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)", "shepherding \(client.connections.filter { $0.a == id || $0.b == id }.count)")).foregroundStyle(Color.collieMuted)
             }
             Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
-            if let m = t?.model { Text(m).foregroundStyle(Color.collieMuted).lineLimit(1).help("Modelo (collie model \(t?.name ?? "") <modelo>)") }
-            if t?.sandbox == .free { CollieTag("livre", tone: .danger).help("Terminal livre: sem sandbox, nenhuma guia chega a ele") }
+            if let m = t?.model { Text(m).foregroundStyle(Color.collieMuted).lineLimit(1).help(tr("Modelo (collie model \(t?.name ?? "") <modelo>)", "Model (collie model \(t?.name ?? "") <model>)")) }
+            if t?.sandbox == .free { CollieTag(tr("livre", "free"), tone: .danger).help(tr("Terminal livre: sem sandbox, nenhuma guia chega a ele", "Free terminal: no sandbox, no leash reaches it")) }
             else if t != nil { AccessBadge(id: id, client: client) }
-            if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? "Lote \(l.name)" : "Lote \(l.name): \(l.goal)") }
+            if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? tr("Lote \(l.name)", "Lot \(l.name)") : tr("Lote \(l.name): \(l.goal)", "Lot \(l.name): \(l.goal)")) }
             if let t, CursorMemoryBadge.isCursor(preset: t.preset, command: t.command) { CursorMemoryTag(name: t.name, client: client) }
-            if case .disconnected = client.state { Text("desconectado").foregroundStyle(Color.collieDanger) }
+            if case .disconnected = client.state { Text(tr("desconectado", "disconnected")).foregroundStyle(Color.collieDanger) }
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
-            if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
+            if case .stopped = status { Button(tr("Reiniciar", "Restart"), action: restart).controlSize(.mini) }
             Spacer(minLength: 0)
             FullscreenButton(action: fullscreen)
             Menu {
-                Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)
+                Button(tr("Tela cheia", "Fullscreen"), action: fullscreen).keyboardShortcut(.return, modifiers: .command)
                 Divider()
-                Button("Editar…", action: edit)
-                Button("Reiniciar", action: restart)
-                Button("Matar", action: kill)
-                if t?.preset == .claude { Button("Salvar na memória", action: captureMemory) }
-                Menu("Lote") {
+                Button(tr("Editar…", "Edit…"), action: edit)
+                Button(tr("Reiniciar", "Restart"), action: restart)
+                Button(tr("Matar", "Kill"), action: kill)
+                if t?.preset == .claude { Button(tr("Salvar na memória", "Save to memory"), action: captureMemory) }
+                Menu(tr("Lote", "Lot")) {
                     let mine = client.lot(of: id)?.id
                     ForEach(LotChoice.all(client.lots)) { c in
                         Toggle(c.title, isOn: Binding(get: { c.lot?.id == mine }, set: { _ in setLot(c.lot) }))
                     }
                 }
                 Divider()
-                Button("Fechar nó…", action: closeNode)
+                Button(tr("Fechar nó…", "Close node…"), action: closeNode)
             } label: { Image(systemName: "ellipsis") }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("Ações do terminal").accessibilityLabel("Ações do terminal")
+                .help(tr("Ações do terminal", "Terminal actions")).accessibilityLabel(tr("Ações do terminal", "Terminal actions"))
         }
         .font(.collieMono(11))
         .padding(.horizontal, 10)
@@ -602,6 +602,6 @@ struct NodeTitleBar: View {
 struct LotChoice: Identifiable, Equatable {
     let lot: Lot?
     var id: UUID? { lot?.id }
-    var title: String { lot?.name ?? "Sem lote" }
+    var title: String { lot?.name ?? tr("Sem lote", "No lot") }
     static func all(_ lots: [Lot]) -> [LotChoice] { [LotChoice(lot: nil)] + lots.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { LotChoice(lot: $0) } }
 }

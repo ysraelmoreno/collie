@@ -24,9 +24,9 @@ struct LoopSection: Equatable {
             }
         }
         /// "tentativa 2/3"; "" for an open task never tried.
-        var triesText: String { attempt.map { "tentativa \($0)/\(max)" } ?? "" }
+        var triesText: String { attempt.map { tr("tentativa \($0)/\(max)", "attempt \($0)/\(max)") } ?? "" }
         var stateText: String {
-            switch state { case .done: "feita"; case .running: "rodando"; case .deferred: "adiada"; case .open: "aberta" }
+            switch state { case .done: tr("feita", "done"); case .running: tr("rodando", "running"); case .deferred: tr("adiada", "deferred"); case .open: tr("aberta", "open") }
         }
         /// What VoiceOver reads: the state in words, never only the icon.
         var accessibilityLabel: String { [title, stateText, triesText].filter { !$0.isEmpty }.joined(separator: ", ") }
@@ -44,7 +44,7 @@ struct LoopSection: Equatable {
     var header: Header?
 
     /// M8.2: the bare header; the count lives in the card (`LoopCard.progressText`).
-    var title: String { "LAÇOS" }
+    var title: String { tr("LAÇOS", "LOOPS") }
 
     /// The terminal of the attempt a row stands for: the newest loop job of `work` that ran that task's title and
     /// recorded a terminal still in `alive`; nil when it is gone (the click then does nothing).
@@ -65,8 +65,8 @@ struct LoopSection: Equatable {
         let rows = mine.map { t in
             TaskRow(id: t.id, title: t.title, state: state(of: t, loop: loop), tries: t.tries ?? 0, max: loop.tries)
         }
-        let phase = loop.phase.map(shortPhase) ?? "preparando"
-        let since = loop.phase == nil ? nil : loop.phaseSince.map { "desde " + hourMinute($0, timeZone) }
+        let phase = loop.phase.map(shortPhase) ?? tr("preparando", "preparing")
+        let since = loop.phase == nil ? nil : loop.phaseSince.map { tr("desde ", "since ") + hourMinute($0, timeZone) }
         return LoopSection(visible: true, rows: rows,
                            header: Header(phase: phase, since: since, progress: "\(rows.filter { $0.state == .done }.count)/\(rows.count)"))
     }
@@ -80,7 +80,7 @@ struct LoopSection: Equatable {
         }
     }
     private static func shortPhase(_ p: WorkLoopState.Phase) -> String {
-        switch p { case .agent: "agente"; case .check: "check"; case .gate: "portão"; case .review: "revisão"; case .preCheck: "pré-check" }
+        switch p { case .agent: tr("agente", "agent"); case .check: "check"; case .gate: tr("portão", "gate"); case .review: tr("revisão", "review"); case .preCheck: tr("pré-check", "pre-check") }
     }
     private static func hourMinute(_ d: Date, _ tz: TimeZone) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = tz; f.dateFormat = "HH:mm"
@@ -106,22 +106,22 @@ struct LoopCard: Equatable {
     /// The bar's fill, 0...1; 0 with no task (never divides by zero).
     var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
     /// "tentativa 2 · check rodando".
-    var statusText: String { [attempt.map { "tentativa \($0)" }, phase].compactMap { $0 }.joined(separator: " · ") }
+    var statusText: String { [attempt.map { tr("tentativa \($0)", "attempt \($0)") }, phase].compactMap { $0 }.joined(separator: " · ") }
     /// "laço T, 3 de 5 feitas, tentativa 2, check rodando".
     var accessibilityLabel: String {
-        ["laço \(title)", "\(done) de \(total) feitas", attempt.map { "tentativa \($0)" }, phase].compactMap { $0 }.joined(separator: ", ")
+        [tr("laço \(title)", "loop \(title)"), tr("\(done) de \(total) feitas", "\(done) of \(total) done"), attempt.map { tr("tentativa \($0)", "attempt \($0)") }, phase].compactMap { $0 }.joined(separator: ", ")
     }
 
     static func make(work: Work?, paddock: UUID?) -> LoopCard? {
         let s = LoopSection.make(work: work, paddock: paddock)
         guard s.visible, let w = work, let loop = w.loop else { return nil }
         let phase = switch loop.phase {
-        case .agent?: "agente trabalhando"
-        case .check?: "check rodando"
-        case .gate?: "portão rodando"
-        case .review?: "revisão rodando"
-        case .preCheck?: "verificando checks que já passam"
-        case nil: "preparando"
+        case .agent?: tr("agente trabalhando", "agent working")
+        case .check?: tr("check rodando", "check running")
+        case .gate?: tr("portão rodando", "gate running")
+        case .review?: tr("revisão rodando", "review running")
+        case .preCheck?: tr("verificando checks que já passam", "verifying checks that already pass")
+        case nil: tr("preparando", "preparing")
         }
         return LoopCard(title: w.title, done: s.rows.filter { $0.state == .done }.count, total: s.rows.count,
                         attempt: s.rows.first { $0.state == .running }?.attempt, phase: phase)
@@ -153,44 +153,44 @@ struct HistoryRow: Equatable, Identifiable {
         outcome = stopped ? .stopped : e.deferred > 0 ? .withDeferred : .complete
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = "dd/MM HH:mm"
         whenText = f.string(from: e.closedAt)
-        resultText = "\(e.done)/\(e.total) feitas" + (e.deferred > 0 ? " · \(e.deferred) " + (e.deferred == 1 ? "adiada" : "adiadas") : "")
+        resultText = tr("\(e.done)/\(e.total) feitas", "\(e.done)/\(e.total) done") + (e.deferred > 0 ? " · \(e.deferred) " + (e.deferred == 1 ? tr("adiada", "deferred") : tr("adiadas", "deferred")) : "")
         stopText = Self.stop(e.stopReason)
         durationText = Self.duration(e.durationSeconds)
     }
 
     static func stop(_ raw: String?) -> String {
-        guard let raw, !raw.isEmpty else { return "concluído" }
+        guard let raw, !raw.isEmpty else { return tr("concluído", "done") }
         switch WorkLoopState.Stop.Code(rawValue: raw) {
-        case .requested?: return "parado por você"
-        case .workGone?: return "trabalho fechado"
-        case .starterGone?: return "Pastor sumiu"
-        case .maxReached?: return "limite de tentativas"
-        case .budgetSpent?: return "orçamento esgotado"
-        case .gitFailed?: return "git falhou"
-        case .dirtyTree?: return "árvore modificada"
-        case .othersWorking?: return "outro terminal trabalhando"
-        case .cancelled?: return "daemon parou"
-        case .daemonRestart?: return "daemon reiniciou"
-        case .internal?: return "erro interno"
-        case .adoptionFailed?: return "adoção falhou"
-        case .usageLimit?: return "limite de uso do modelo"
-        case .landed?: return "integrado (auto-land)"
-        case .landGateRed?: return "auto-land: portão vermelho"
-        case .landReviewVeto?: return "auto-land: revisão sem aprovação"
-        case .landAcceptRed?: return "auto-land: aceite em runtime vermelho"
-        case .landCiRed?: return "auto-land: CI vermelho"
-        case .landDirty?: return "auto-land: árvore suja"
-        case .landConflict?: return "auto-land: land falhou"
-        case .landNotFactory?: return "auto-land: cercado não é fábrica"
-        case .queueEmpty?: return "auto-land: fila vazia"
-        case .landDailyCap?: return "auto-land: teto diário"
-        case .landDoctorRegressed?: return "auto-land: doctor regrediu"
-        case .landNothing?: return "auto-land: nada a integrar"
-        case .landBaseMoved?: return "auto-land: base mudou"
-        case .landRegistryFailed?: return "auto-land: registro do land não gravado"
-        case .landTasksNotDone?: return "auto-land: tarefas não feitas"
-        case .checkAlreadyGreen?: return "check já passa"
-        case .unknown?, nil: return "motivo desconhecido"
+        case .requested?: return tr("parado por você", "stopped by you")
+        case .workGone?: return tr("trabalho fechado", "work closed")
+        case .starterGone?: return tr("Pastor sumiu", "Shepherd gone")
+        case .maxReached?: return tr("limite de tentativas", "attempt limit")
+        case .budgetSpent?: return tr("orçamento esgotado", "budget spent")
+        case .gitFailed?: return tr("git falhou", "git failed")
+        case .dirtyTree?: return tr("árvore modificada", "tree modified")
+        case .othersWorking?: return tr("outro terminal trabalhando", "another terminal working")
+        case .cancelled?: return tr("daemon parou", "daemon stopped")
+        case .daemonRestart?: return tr("daemon reiniciou", "daemon restarted")
+        case .internal?: return tr("erro interno", "internal error")
+        case .adoptionFailed?: return tr("adoção falhou", "adoption failed")
+        case .usageLimit?: return tr("limite de uso do modelo", "model usage limit")
+        case .landed?: return tr("integrado (auto-land)", "landed (auto-land)")
+        case .landGateRed?: return tr("auto-land: portão vermelho", "auto-land: gate red")
+        case .landReviewVeto?: return tr("auto-land: revisão sem aprovação", "auto-land: review not approved")
+        case .landAcceptRed?: return tr("auto-land: aceite em runtime vermelho", "auto-land: runtime acceptance red")
+        case .landCiRed?: return tr("auto-land: CI vermelho", "auto-land: CI red")
+        case .landDirty?: return tr("auto-land: árvore suja", "auto-land: dirty tree")
+        case .landConflict?: return tr("auto-land: land falhou", "auto-land: land failed")
+        case .landNotFactory?: return tr("auto-land: cercado não é fábrica", "auto-land: paddock isn't a factory")
+        case .queueEmpty?: return tr("auto-land: fila vazia", "auto-land: queue empty")
+        case .landDailyCap?: return tr("auto-land: teto diário", "auto-land: daily cap")
+        case .landDoctorRegressed?: return tr("auto-land: doctor regrediu", "auto-land: doctor regressed")
+        case .landNothing?: return tr("auto-land: nada a integrar", "auto-land: nothing to land")
+        case .landBaseMoved?: return tr("auto-land: base mudou", "auto-land: base moved")
+        case .landRegistryFailed?: return tr("auto-land: registro do land não gravado", "auto-land: land record not saved")
+        case .landTasksNotDone?: return tr("auto-land: tarefas não feitas", "auto-land: tasks not done")
+        case .checkAlreadyGreen?: return tr("check já passa", "check already passes")
+        case .unknown?, nil: return tr("motivo desconhecido", "unknown reason")
         }
     }
 
@@ -210,7 +210,7 @@ struct HistorySection: Equatable {
     var hasMore: Bool
     var visible: Bool { !rows.isEmpty }
     /// "HISTÓRICO · 20".
-    var title: String { "HISTÓRICO · \(rows.count)" }
+    var title: String { tr("HISTÓRICO · \(rows.count)", "HISTORY · \(rows.count)") }
     static let hidden = HistorySection(rows: [], hasMore: false)
 
     /// At most `WorkFeed.historyLimit` rows, in the order given (the daemon sends the newest first); no entry: hidden.

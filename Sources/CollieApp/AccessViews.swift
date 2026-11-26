@@ -3,19 +3,26 @@ import CollieClient
 import CollieCore
 import CollieTheme
 
+fileprivate func trTxt(_ pt: Text, _ en: Text) -> Text { L10n.current == .en ? en : pt }
+
 /// The access cards' copy (tested without the app). Agent-written text (paths, reasons) is shown verbatim, never as markdown.
 enum AccessCopy {
     /// The "detecção indisponível" tag and its tooltip: why, what is lost, what still works, how to fix it.
     static func detection(reason: String?) -> (tag: String, help: String) {
-        let tag = "detecção indisponível" + (reason.map { ": " + $0 } ?? "")
-        let lost = "Sem isso, não aparecem os cartões de liberação quando o agente esbarra no sandbox. "
-            + "O sandbox continua protegendo, e 'collie access request' continua funcionando (o agente pede, você libera)."
+        let tag = tr("detecção indisponível", "detection unavailable") + (reason.map { ": " + $0 } ?? "")
+        let lost = tr("Sem isso, não aparecem os cartões de liberação quando o agente esbarra no sandbox. ",
+                      "Without it, the access cards don't appear when the agent runs into the sandbox. ")
+            + tr("O sandbox continua protegendo, e 'collie access request' continua funcionando (o agente pede, você libera).",
+                 "The sandbox keeps protecting, and 'collie access request' keeps working (the agent asks, you grant).")
         if reason == SandboxDetection.notAdmin {
-            return (tag, "O Collie não vê os bloqueios do sandbox: o macOS só deixa contas de administrador lerem o log do sistema (log stream). "
-                + lost + " Para resolver: use uma conta de administrador (Ajustes do Sistema › Usuários e Grupos) e entre de novo na sessão. "
-                + "Até lá o Collie não tenta de novo.")
+            return (tag, tr("O Collie não vê os bloqueios do sandbox: o macOS só deixa contas de administrador lerem o log do sistema (log stream). ",
+                            "Collie can't see the sandbox blocks: macOS only lets administrator accounts read the system log (log stream). ")
+                + lost + tr(" Para resolver: use uma conta de administrador (Ajustes do Sistema › Usuários e Grupos) e entre de novo na sessão. ",
+                            " To fix it: use an administrator account (System Settings › Users & Groups) and log in again. ")
+                + tr("Até lá o Collie não tenta de novo.", "Until then Collie won't try again."))
         }
-        return (tag, "O Collie não está vendo os bloqueios do sandbox agora (\(reason ?? "log stream parado"); tentando de novo). " + lost)
+        return (tag, tr("O Collie não está vendo os bloqueios do sandbox agora (\(reason ?? "log stream parado"); tentando de novo). ",
+                        "Collie can't see the sandbox blocks right now (\(reason ?? "log stream stopped"); trying again). ") + lost)
     }
     /// The bar's red tag: only while detection may come back (log stream not started or died). Not admin is a fact of
     /// the account, not a fault: no tag, a one-time toast, the detail in the popover and Preferências.
@@ -24,9 +31,14 @@ enum AccessCopy {
     }
     /// Versioned: a new text can be shown again once by bumping it.
     static let notAdminToastKey = "sandbox.detectionNotice.notAdmin.v1"
-    static let notAdminToastText = "Nesta conta o Collie não vê os bloqueios do sandbox: o macOS só mostra esse log a administradores. "
-        + "Por isso não aparecem os cartões automáticos de liberação. O sandbox continua protegendo, e 'collie access request' continua funcionando. "
-        + "Para ter os cartões, use uma conta de administrador e entre de novo na sessão."
+    static var notAdminToastText: String {
+        tr("Nesta conta o Collie não vê os bloqueios do sandbox: o macOS só mostra esse log a administradores. ",
+           "On this account Collie can't see the sandbox blocks: macOS only shows that log to administrators. ")
+        + tr("Por isso não aparecem os cartões automáticos de liberação. O sandbox continua protegendo, e 'collie access request' continua funcionando. ",
+             "So the automatic access cards don't appear. The sandbox keeps protecting, and 'collie access request' keeps working. ")
+        + tr("Para ter os cartões, use uma conta de administrador e entre de novo na sessão.",
+             "To get the cards, use an administrator account and log in again.")
+    }
     /// The not-admin toast, once (recorded in `defaults`); detection back on clears the record, so losing admin again explains again.
     static func notAdminToast(detection: Bool?, reason: String?, defaults: UserDefaults) -> String? {
         if detection == true { defaults.removeObject(forKey: notAdminToastKey); return nil }
@@ -35,15 +47,26 @@ enum AccessCopy {
         return notAdminToastText
     }
     static func verb(_ op: String) -> String {
-        ["read": "ler", "write": "escrever", "delete": "apagar", "exec": "executar"][op] ?? op
+        switch op {
+        case "read": tr("ler", "read")
+        case "write": tr("escrever", "write")
+        case "delete": tr("apagar", "delete")
+        case "exec": tr("executar", "run")
+        default: op
+        }
     }
     static func resumeNote(_ t: TerminalRecord?) -> String {
         t?.resumesConversation == true
-            ? "Liberar reinicia o terminal e retoma a conversa anterior, se houver (claude --continue)."
-            : "Liberar reinicia o terminal sem retomar a conversa (a retomada do Codex/Cursor não foi confirmada)."
+            ? tr("Liberar reinicia o terminal e retoma a conversa anterior, se houver (claude --continue).",
+                 "Granting restarts the terminal and resumes the previous conversation, if any (claude --continue).")
+            : tr("Liberar reinicia o terminal sem retomar a conversa (a retomada do Codex/Cursor não foi confirmada).",
+                 "Granting restarts the terminal without resuming the conversation (resuming in Codex/Cursor wasn't confirmed).")
     }
     /// R24: only this terminal restarts; the lot's other running members get it at their next start.
-    static let lotNote = "Vale para todos os terminais do lote, também os que entrarem depois (inclusive os que um Pastor puser no lote). Só este terminal reinicia agora; os outros que estão rodando recebem quando reiniciarem."
+    static var lotNote: String {
+        tr("Vale para todos os terminais do lote, também os que entrarem depois (inclusive os que um Pastor puser no lote). Só este terminal reinicia agora; os outros que estão rodando recebem quando reiniciarem.",
+           "Applies to every terminal in the lot, including ones that join later (even ones a Shepherd puts in the lot). Only this terminal restarts now; the others that are running get it when they restart.")
+    }
     /// Agent-written text shown as is, but with control and bidi characters spelled out (`\u{202E}`), so a file name
     /// can't lay out a misleading line (R29).
     static func shown(_ s: String) -> String {
@@ -57,8 +80,8 @@ enum AccessCopy {
         return o
     }
     static func grantLine(_ g: SandboxGrant) -> String {
-        (g.access == .write ? "ler e escrever" : "ler") + " · " + g.createdAt.formatted(date: .abbreviated, time: .shortened)
-            + (g.by.map { " · liberado do \($0.deviceName) (\(RemoteCopy.via($0.via)))" } ?? "")   // from a paired phone
+        (g.access == .write ? tr("ler e escrever", "read and write") : tr("ler", "read")) + " · " + g.createdAt.formatted(date: .abbreviated, time: .shortened)
+            + (g.by.map { tr(" · liberado do \($0.deviceName) (\(RemoteCopy.via($0.via)))", " · granted from \($0.deviceName) (\(RemoteCopy.via($0.via)))") } ?? "")   // from a paired phone
     }
 }
 
@@ -70,7 +93,7 @@ struct DetectionNoticeHost: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .bottomTrailing) {
-                if let text { NoticeCard(text: text) { Button("OK") { self.text = nil }.buttonStyle(CollieButtonStyle(.quiet)) } }
+                if let text { NoticeCard(text: text) { Button(tr("OK", "OK")) { self.text = nil }.buttonStyle(CollieButtonStyle(.quiet)) } }
             }
             .task(id: "\(String(describing: client.detection))|\(client.detectionReason ?? "")") {
                 if let t = AccessCopy.notAdminToast(detection: client.detection, reason: client.detectionReason, defaults: .standard) { text = t }
@@ -109,7 +132,7 @@ struct AccessBadge: View {
                 let open = AccessPopoverState.shared.binding(id)
                 Button { open.wrappedValue = true } label: {
                     HStack(spacing: 3) {
-                        CollieTag(cards.isEmpty ? "liberados \(mine.count)" : "acesso \(cards.count)", tone: cards.isEmpty ? .secondary : .attention)
+                        CollieTag(cards.isEmpty ? tr("liberados \(mine.count)", "granted \(mine.count)") : tr("acesso \(cards.count)", "access \(cards.count)"), tone: cards.isEmpty ? .secondary : .attention)
                         Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.collieMuted)
                     }
                     .padding(.horizontal, 2).padding(.vertical, 1)
@@ -117,7 +140,7 @@ struct AccessBadge: View {
                 }
                 .buttonStyle(.plain).onHover { hover = $0 }
                 .onDisappear { AccessPopoverState.shared.close(id) }
-                .help(cards.isEmpty ? "Caminhos liberados para este terminal" : "O agente tentou acessar fora do sandbox")
+                .help(cards.isEmpty ? tr("Caminhos liberados para este terminal", "Paths granted to this terminal") : tr("O agente tentou acessar fora do sandbox", "The agent tried to access something outside the sandbox"))
                 .popover(isPresented: open, arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
             }
         }
@@ -136,10 +159,10 @@ struct AccessStrip: View {
         var text: String {
             switch kind {
             case .none: ""
-            case .pending(1): "O agente pediu acesso — ver"
-            case .pending(let n): "\(n) pedidos de acesso — ver"
-            case .refusedOnly(1): "1 acesso bloqueado de propósito"
-            case .refusedOnly(let n): "\(n) acessos bloqueados de propósito"
+            case .pending(1): tr("O agente pediu acesso — ver", "The agent asked for access — view")
+            case .pending(let n): tr("\(n) pedidos de acesso — ver", "\(n) access requests — view")
+            case .refusedOnly(1): tr("1 acesso bloqueado de propósito", "1 access blocked on purpose")
+            case .refusedOnly(let n): tr("\(n) acessos bloqueados de propósito", "\(n) accesses blocked on purpose")
             }
         }
     }
@@ -159,16 +182,16 @@ struct AccessStrip: View {
             Spacer(minLength: 0)
             switch m.kind {
             case .none: EmptyView()
-            case .pending: Button("Ver") { AccessPopoverState.shared.open.insert(id) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small)
+            case .pending: Button(tr("Ver", "View")) { AccessPopoverState.shared.open.insert(id) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small)
             case .refusedOnly:
-                Button("Dispensar") { Task { do { try await client.denyAll(cards) } catch { Log.canvas.error("dispensar: \(error)") } } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                Button(tr("Dispensar", "Dismiss")) { Task { do { try await client.denyAll(cards) } catch { Log.canvas.error("dispensar: \(error)") } } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
             }
         }
         .foregroundStyle(m.kind == .none || isPending(m.kind) ? Color.collieText : Color.collieTextSecondary)
         .padding(.leading, 10).padding(.trailing, 26)   // clear of the node's resize corner (14 pt at 4 pt from the edge)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(isPending(m.kind) ? Color.collieAttention.opacity(0.9) : Color.collieSidebar)
-        .help(isPending(m.kind) ? "" : "Pastas do próprio Collie e segredos nunca são liberadas")
+        .help(isPending(m.kind) ? "" : tr("Pastas do próprio Collie e segredos nunca são liberadas", "Collie's own folders and secrets are never granted"))
     }
     private func isPending(_ k: Model.Kind) -> Bool { if case .pending = k { true } else { false } }
 }
@@ -182,12 +205,13 @@ struct LeashRequestRow: View {
     var body: some View {
         let to = client.terminals.first { $0.id == req.to }?.name ?? "?"
         HStack(spacing: 8) {
-            Text("Quer conectar a \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))")
+            trTxt(Text("Quer conectar a \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))"),
+                  Text("Wants to connect to \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))"))
                 .font(.collieUI(12, .medium)).lineLimit(1).truncationMode(.tail)
                 .help(req.reason.map(AccessCopy.shown) ?? "")
             Spacer(minLength: 0)
-            Button("Recusar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-            Button("Conectar") { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
+            Button(tr("Recusar", "Decline")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+            Button(tr("Conectar", "Connect")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
         }
         .foregroundStyle(Color.collieText)
         .padding(.leading, 10).padding(.trailing, 26)
@@ -218,7 +242,7 @@ struct AccessPopover: View {
                 }
                 ForEach(cards, id: \.cardId) { AccessCard(card: $0, client: client).id($0.cardId) }
                 if !mine.isEmpty {
-                    Text("LIBERADOS PARA ESTE TERMINAL").font(.collieMono(10)).kerning(1.2).foregroundStyle(Color.collieMuted)
+                    Text(tr("LIBERADOS PARA ESTE TERMINAL", "GRANTED TO THIS TERMINAL")).font(.collieMono(10)).kerning(1.2).foregroundStyle(Color.collieMuted)
                     ForEach(mine) { GrantRow(grant: $0, client: client) }
                 }
             }
@@ -242,26 +266,28 @@ struct AccessCard: View {
         let t = client.terminals.first { $0.id == card.terminal }
         let lot = client.lot(of: card.terminal)
         VStack(alignment: .leading, spacing: 6) {
-            Text("Agente \(Text(verbatim: t?.name ?? "?").italic()) tentou \(Text(AccessCopy.verb(card.op)).bold()) \(Text(verbatim: AccessCopy.shown(card.path)).font(.collieMono(11)))")
+            trTxt(Text("Agente \(Text(verbatim: t?.name ?? "?").italic()) tentou \(Text(AccessCopy.verb(card.op)).bold()) \(Text(verbatim: AccessCopy.shown(card.path)).font(.collieMono(11)))"),
+                  Text("Agent \(Text(verbatim: t?.name ?? "?").italic()) tried to \(Text(AccessCopy.verb(card.op)).bold()) \(Text(verbatim: AccessCopy.shown(card.path)).font(.collieMono(11)))"))
                 .font(.collieUI(12)).foregroundStyle(Color.collieText).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            if card.count > 1 { Text("\(card.count) vezes nesta pasta").font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
-            if let r = card.reason { Text("Motivo do agente: \(Text(verbatim: AccessCopy.shown(r)))").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+            if card.count > 1 { Text(tr("\(card.count) vezes nesta pasta", "\(card.count) times in this folder")).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
+            if let r = card.reason { trTxt(Text("Motivo do agente: \(Text(verbatim: AccessCopy.shown(r)))"), Text("Agent's reason: \(Text(verbatim: AccessCopy.shown(r)))")).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
             if let why = card.refusal {
                 Text(why).font(.collieUI(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true)
-                Button("Negar") { deny() }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                Button(tr("Negar", "Deny")) { deny() }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
             } else {
                 HStack(spacing: 6) {
-                    Button("Liberar este caminho") { grant(folder: false) }.buttonStyle(CollieButtonStyle(.primary))
-                    Button("Liberar a pasta") { grant(folder: true) }.buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Liberar este caminho", "Grant this path")) { grant(folder: false) }.buttonStyle(CollieButtonStyle(.primary))
+                    Button(tr("Liberar a pasta", "Grant the folder")) { grant(folder: true) }.buttonStyle(CollieButtonStyle(.secondary))
                         .disabled(card.folderRefusal != nil).help(card.folderRefusal ?? card.folder)
-                    Button("Negar") { deny() }.buttonStyle(CollieButtonStyle(.quiet))
+                    Button(tr("Negar", "Deny")) { deny() }.buttonStyle(CollieButtonStyle(.quiet))
                 }
                 .controlSize(.small).disabled(busy)
                 // R27: the folder a click opens is on the card, not only in a tooltip
-                Text("A pasta: \(Text(verbatim: AccessCopy.shown(card.folder)).font(.collieMono(11)))\(card.folderRefusal.map { " — \($0)" } ?? "")")
+                trTxt(Text("A pasta: \(Text(verbatim: AccessCopy.shown(card.folder)).font(.collieMono(11)))\(card.folderRefusal.map { " — \($0)" } ?? "")"),
+                      Text("The folder: \(Text(verbatim: AccessCopy.shown(card.folder)).font(.collieMono(11)))\(card.folderRefusal.map { " — \($0)" } ?? "")"))
                     .font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
-                Toggle("para o lote", isOn: $forLot).toggleStyle(.checkbox).controlSize(.small).disabled(lot == nil)
-                    .help(lot == nil ? "Este terminal não está em um lote" : AccessCopy.lotNote)
+                Toggle(tr("para o lote", "for the lot"), isOn: $forLot).toggleStyle(.checkbox).controlSize(.small).disabled(lot == nil)
+                    .help(lot == nil ? tr("Este terminal não está em um lote", "This terminal isn't in a lot") : AccessCopy.lotNote)
                 if forLot { Text(AccessCopy.lotNote).font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true) }
                 Text(AccessCopy.resumeNote(t)).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
             }
@@ -292,7 +318,7 @@ struct GrantRow: View {
             HStack {
                 Text(verbatim: AccessCopy.shown(grant.path)).font(.collieMono(11)).foregroundStyle(Color.collieText).lineLimit(2).truncationMode(.middle)
                 Spacer(minLength: 4)
-                Button("Revogar") { Task { do { try await client.revoke(grant) } catch { self.error = "\(error)" } } }
+                Button(tr("Revogar", "Revoke")) { Task { do { try await client.revoke(grant) } catch { self.error = "\(error)" } } }
                     .buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
             }
             Text(AccessCopy.grantLine(grant)).font(.collieUI(10)).foregroundStyle(Color.collieMuted)
@@ -312,7 +338,7 @@ struct LotGrantsList: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(AccessCopy.lotNote).font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
                 if gs.isEmpty {
-                    Text("Nada liberado para o lote. Um cartão de acesso com \"para o lote\" marcado aparece aqui.")
+                    Text(tr("Nada liberado para o lote. Um cartão de acesso com \"para o lote\" marcado aparece aqui.", "Nothing granted to the lot. An access card with \"for the lot\" checked shows up here."))
                         .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                 }
                 ForEach(gs) { GrantRow(grant: $0, client: client) }
@@ -353,58 +379,61 @@ struct AppCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             if card.kind == .confirm, card.app == "network" {   // a terminal's map rule (NetworkCommands.cardText: request \n response)
                 let parts = (card.call ?? "").split(separator: "\n", maxSplits: 1).map(String.init)
-                Text("Responder no lugar do servidor?").font(.collieUI(13, .semibold))
+                Text(tr("Responder no lugar do servidor?", "Answer in place of the server?")).font(.collieUI(13, .semibold))
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-                    ForEach(Array(zip(["Terminal", "Requisição", "Resposta", "Alcance"],
-                                      [by ?? "?", parts.first ?? "", parts.count > 1 ? parts[1] : "", "todo emulador capturado"]).enumerated()), id: \.offset) { _, row in
+                    ForEach(Array(zip(["Terminal", tr("Requisição", "Request"), tr("Resposta", "Response"), tr("Alcance", "Scope")],
+                                      [by ?? "?", parts.first ?? "", parts.count > 1 ? parts[1] : "", tr("todo emulador capturado", "every captured emulator")]).enumerated()), id: \.offset) { _, row in
                         GridRow {
                             Text(row.0).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
                             Text(verbatim: AccessCopy.shown(row.1)).font(.collieMono(12))
                         }
                     }
                 }
-                Text("Sem resposta no prazo vale Negar, e a regra nunca liga.").font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+                Text(tr("Sem resposta no prazo vale Negar, e a regra nunca liga.", "No answer in time counts as Deny, and the rule never turns on.")).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
             } else if card.kind == .confirm {
-                Text("\(Text(verbatim: card.name).bold()) quer: \(Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(12)))")
+                trTxt(Text("\(Text(verbatim: card.name).bold()) quer: \(Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(12)))"),
+                      Text("\(Text(verbatim: card.name).bold()) wants: \(Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(12)))"))
                     .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
-                if let by { Text("Pedido por \(Text(verbatim: by).italic())").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+                if let by { trTxt(Text("Pedido por \(Text(verbatim: by).italic())"), Text("Requested by \(Text(verbatim: by).italic())")).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
             } else {
-                Text("App \(Text(verbatim: card.name).bold()) no cercado \(Text(verbatim: card.paddockName).bold())")
+                trTxt(Text("App \(Text(verbatim: card.name).bold()) no cercado \(Text(verbatim: card.paddockName).bold())"),
+                      Text("App \(Text(verbatim: card.name).bold()) in paddock \(Text(verbatim: card.paddockName).bold())"))
                     .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
-                if let by { Text("Pedido por \(Text(verbatim: by).italic()); um agente nunca aprova").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
-                if let base = card.base { Text("Serviço: \(Text(verbatim: base).font(.collieMono(11)))").font(.collieUI(12)) }
+                if let by { trTxt(Text("Pedido por \(Text(verbatim: by).italic()); um agente nunca aprova"), Text("Requested by \(Text(verbatim: by).italic()); an agent never approves")).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+                if let base = card.base { trTxt(Text("Serviço: \(Text(verbatim: base).font(.collieMono(11)))"), Text("Service: \(Text(verbatim: base).font(.collieMono(11)))")).font(.collieUI(12)) }
                 if let start = card.start {   // slice 5: the daemon runs it in the app's folder, under the paddock's sandbox
-                    Text("Vai rodar: \(Text(verbatim: AccessCopy.shown(start)).font(.collieMono(11)))").font(.collieUI(12))
+                    trTxt(Text("Vai rodar: \(Text(verbatim: AccessCopy.shown(start)).font(.collieMono(11)))"), Text("Will run: \(Text(verbatim: AccessCopy.shown(start)).font(.collieMono(11)))")).font(.collieUI(12))
                 }
                 if let cwd = card.cwd {   // service.cwd: the folder it runs in, relative to the paddock
-                    Text("Pasta: \(Text(verbatim: AccessCopy.shown(cwd)).font(.collieMono(11)))").font(.collieUI(12))
+                    trTxt(Text("Pasta: \(Text(verbatim: AccessCopy.shown(cwd)).font(.collieMono(11)))"), Text("Folder: \(Text(verbatim: AccessCopy.shown(cwd)).font(.collieMono(11)))")).font(.collieUI(12))
                 }
                 if !card.commands.isEmpty {
-                    Text("Comandos para os agentes: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))")
+                    trTxt(Text("Comandos para os agentes: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))"),
+                          Text("Commands for the agents: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))"))
                         .font(.collieUI(12)).fixedSize(horizontal: false, vertical: true)
                 }
                 if !card.events.isEmpty {
-                    Text("Eventos: \(Text(verbatim: card.events.joined(separator: ", ")).font(.collieMono(11)))").font(.collieUI(12))
+                    trTxt(Text("Eventos: \(Text(verbatim: card.events.joined(separator: ", ")).font(.collieMono(11)))"), Text("Events: \(Text(verbatim: card.events.joined(separator: ", ")).font(.collieMono(11)))")).font(.collieUI(12))
                     if let notify = card.notify {   // consult mode: recorded only, the agent reads them when it wants
-                        Text(notify ? "Cada evento avisa o agente" : "Eventos só ficam registrados; o agente não é avisado")
+                        Text(notify ? tr("Cada evento avisa o agente", "Each event notifies the agent") : tr("Eventos só ficam registrados; o agente não é avisado", "Events are only recorded; the agent isn't notified"))
                             .font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
                     }
                 }
-                Text("Aprovar fixa este manifesto (SHA-256); se ele mudar, o Collie pergunta de novo.")
+                Text(tr("Aprovar fixa este manifesto (SHA-256); se ele mudar, o Collie pergunta de novo.", "Approving pins this manifest (SHA-256); if it changes, Collie asks again."))
                     .font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             }
             if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger) }
             HStack {
                 Spacer(minLength: 0)
-                Button("Negar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                Button(tr("Negar", "Deny")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                 if card.app == "work-loop" {   // a loop has no per-session permit: its lasting answer is the paddock's trust
-                    Button("Sempre neste cercado") { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                        .help("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar em Preferências, Laços.")
+                    Button(tr("Sempre neste cercado", "Always in this paddock")) { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                        .help(tr("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar em Preferências, Laços.", "The next loops in this paddock start without a card; you get a notice and can stop with collie work stop. You can turn this off in Preferences, Loops."))
                 } else if card.kind == .confirm, card.app != "network" {
-                    Button("Permitir nesta sessão") { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                        .help("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar")
+                    Button(tr("Permitir nesta sessão", "Allow this session")) { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                        .help(tr("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar", "This \(card.name) command runs without a card until the terminal session ends or the app changes"))
                 }
-                Button(card.kind == .confirm ? "Permitir" : "Aprovar") { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
+                Button(card.kind == .confirm ? tr("Permitir", "Allow") : tr("Aprovar", "Approve")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
             }
         }
         .foregroundStyle(Color.collieText)

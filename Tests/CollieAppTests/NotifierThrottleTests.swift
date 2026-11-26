@@ -4,18 +4,18 @@ import CollieCore
 @testable import CollieApp
 @testable import CollieClient
 
-@Test func firstCardPosts() { var g = AccessNotifyGate(); let r = g.shouldPost(terminal: UUID()); #expect(r) }
-@Test func secondWithin30sSkipped() {
+@Test(.appPT) func firstCardPosts() { var g = AccessNotifyGate(); let r = g.shouldPost(terminal: UUID()); #expect(r) }
+@Test(.appPT) func secondWithin30sSkipped() {
     var g = AccessNotifyGate(); let t = UUID(), n = Date()
     let a = g.shouldPost(terminal: t, at: n), b = g.shouldPost(terminal: t, at: n + 29)
     #expect(a); #expect(!b)
 }
-@Test func after30sPosts() {
+@Test(.appPT) func after30sPosts() {
     var g = AccessNotifyGate(); let t = UUID(), n = Date()
     let a = g.shouldPost(terminal: t, at: n), b = g.shouldPost(terminal: t, at: n + 30)
     #expect(a); #expect(b)
 }
-@Test func otherTerminalIndependent() {
+@Test(.appPT) func otherTerminalIndependent() {
     var g = AccessNotifyGate(); let n = Date()
     let a = g.shouldPost(terminal: UUID(), at: n), b = g.shouldPost(terminal: UUID(), at: n)
     #expect(a); #expect(b)
@@ -38,7 +38,7 @@ private final class Box: @unchecked Sendable { var v = 0 }
 }
 
 /// "Confirmar correção?": skipped while the app is frontmost and the Memory panel shows (no slot used), ≤ 1 per 30 s.
-@Test func confirmNotifyGate() {
+@Test(.appPT) func confirmNotifyGate() {
     var g = AccessNotifyGate(); let t = UUID(), n = Date()
     let shown = g.shouldPost(terminal: t, at: n, shown: true)
     let a = g.shouldPost(terminal: t, at: n, shown: false), b = g.shouldPost(terminal: t, at: n + 10, shown: false)

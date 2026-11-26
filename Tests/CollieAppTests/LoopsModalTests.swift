@@ -42,7 +42,7 @@ private struct FakeArchiveDaemon {
 
 @MainActor private final class Box { var ids: [String] = [] }
 
-@MainActor struct LoopsModalTests {
+@MainActor @Suite(.appPT) struct LoopsModalTests {
     @Test func initialTabFollowsTheRunningLoop() {
         let w = work(alive: UUID(), gone: UUID())
         let r = LoopsModal.running(work: w, paddock: pad, terminals: [], now: t0)

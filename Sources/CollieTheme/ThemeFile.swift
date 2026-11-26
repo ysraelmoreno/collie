@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// Why a theme file is broken. `message` is one line in Portuguese, shown to the owner.
 public enum ThemeError: Error, Equatable {
@@ -13,14 +14,14 @@ public enum ThemeError: Error, Equatable {
 
     public var message: String {
         switch self {
-        case .tooLarge: "arquivo grande demais"
-        case .invalidJSON: "JSON inválido"
-        case .missing(let k): "falta \"\(k)\""
-        case .badName: "\"name\": use de 1 a 48 caracteres, sem controle"
-        case .badExtends: "\"extends\": use \"dark\" ou \"light\""
-        case .badColors: "\"colors\": use um objeto"
-        case .unknownRole(let k): "papel desconhecido: \"\(k)\""
-        case .badColor(let k): "\"\(k)\": use #RRGGBB"
+        case .tooLarge: tr("arquivo grande demais", "file too large")
+        case .invalidJSON: tr("JSON inválido", "invalid JSON")
+        case .missing(let k): tr("falta \"\(k)\"", "missing \"\(k)\"")
+        case .badName: tr("\"name\": use de 1 a 48 caracteres, sem controle", "\"name\": use 1 to 48 characters, no control characters")
+        case .badExtends: tr("\"extends\": use \"dark\" ou \"light\"", "\"extends\": use \"dark\" or \"light\"")
+        case .badColors: tr("\"colors\": use um objeto", "\"colors\": use an object")
+        case .unknownRole(let k): tr("papel desconhecido: \"\(k)\"", "unknown role: \"\(k)\"")
+        case .badColor(let k): tr("\"\(k)\": use #RRGGBB", "\"\(k)\": use #RRGGBB")
         }
     }
 }

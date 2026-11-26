@@ -284,7 +284,7 @@ struct CanvasView: NSViewRepresentable {
         if let fs, let v = views[fs], let t = v.term {
             v.layoutSubtreeIfNeeded()   // the grid for the new frame, before reading it
             let d = t.terminalDimensions
-            fsInfo.dims = "\(d.cols)×\(d.rows)" + (fsBefore.map { " · era \($0.0)×\($0.1)" } ?? "")
+            fsInfo.dims = "\(d.cols)×\(d.rows)" + (fsBefore.map { tr(" · era \($0.0)×\($0.1)", " · was \($0.0)×\($0.1)") } ?? "")
             if fs != lastFullscreen { window?.makeFirstResponder(t) }   // type straight away
         } else { fsInfo.dims = nil }
         lastFullscreen = fs
@@ -537,15 +537,15 @@ struct CanvasView: NSViewRepresentable {
         guard let sv = superview, hitTest(sv.convert(e.locationInWindow, from: nil)) === self else { return nil }   // hitTest takes superview coords
         let at = canvas.toCanvas(point(e))
         let m = NSMenu()
-        m.addItem(ActionItem("Novo terminal aqui…") { [weak self] in self?.onNewTerminal(at) })
-        m.addItem(ActionItem("Abrir painel aqui…") { [weak self] in self?.onOpenPanel(at) })
-        m.addItem(ActionItem("Aplicar rebanho aqui…") { [weak self] in self?.onApplyHerd(at) })
-        m.addItem(ActionItem(canvas.selection.isEmpty ? "Salvar canvas como rebanho…" : "Salvar seleção como rebanho…") { [weak self] in
+        m.addItem(ActionItem(tr("Novo terminal aqui…", "New terminal here…")) { [weak self] in self?.onNewTerminal(at) })
+        m.addItem(ActionItem(tr("Abrir painel aqui…", "Open panel here…")) { [weak self] in self?.onOpenPanel(at) })
+        m.addItem(ActionItem(tr("Aplicar rebanho aqui…", "Apply herd here…")) { [weak self] in self?.onApplyHerd(at) })
+        m.addItem(ActionItem(canvas.selection.isEmpty ? tr("Salvar canvas como rebanho…", "Save canvas as herd…") : tr("Salvar seleção como rebanho…", "Save selection as herd…")) { [weak self] in
             self?.onSaveHerd()
         })
-        m.addItem(ActionItem("Reiniciar todos os terminais…") { [weak self] in self?.confirmRestartAll() })
+        m.addItem(ActionItem(tr("Reiniciar todos os terminais…", "Restart all terminals…")) { [weak self] in self?.confirmRestartAll() })
         m.addItem(.separator())
-        m.addItem(ActionItem("Ajustar à tela") { [weak self] in
+        m.addItem(ActionItem(tr("Ajustar à tela", "Fit to screen")) { [weak self] in
             guard let self else { return }
             canvas.fitAll(viewport: bounds.size)
         })
@@ -562,11 +562,11 @@ struct CanvasView: NSViewRepresentable {
         let shown = visibleTerminals(client.terminals, paddock: paddock)
         let shepherds = shown.filter(\.isShepherd).map(\.name)
         let a = NSAlert()
-        a.messageText = "Reiniciar \(shown.count - shepherds.count) terminais deste canvas?"
-        a.informativeText = "Os processos em andamento serão encerrados e iniciados de novo."
-            + (shepherds.isEmpty ? "" : "\nO Pastor não é reiniciado: \(shepherds.joined(separator: ", ")).")
-        a.addButton(withTitle: "Reiniciar todos")
-        a.addButton(withTitle: "Cancelar")
+        a.messageText = tr("Reiniciar \(shown.count - shepherds.count) terminais deste canvas?", "Restart \(shown.count - shepherds.count) terminals on this canvas?")
+        a.informativeText = tr("Os processos em andamento serão encerrados e iniciados de novo.", "Running processes will be stopped and started again.")
+            + (shepherds.isEmpty ? "" : tr("\nO Pastor não é reiniciado: \(shepherds.joined(separator: ", ")).", "\nThe Shepherd isn't restarted: \(shepherds.joined(separator: ", ")).")) 
+        a.addButton(withTitle: tr("Reiniciar todos", "Restart all"))
+        a.addButton(withTitle: tr("Cancelar", "Cancel"))
         a.beginSheetModal(for: window) { [weak self] r in
             guard r == .alertFirstButtonReturn, let self else { return }
             Task { @MainActor in await self.restartAll(paddock: paddock, in: window) }
@@ -582,10 +582,10 @@ struct CanvasView: NSViewRepresentable {
         }
         for f in r.failed { Log.canvas.error("restart all \(f.name): \(f.error)") }
         let a = NSAlert()
-        a.messageText = r.failed.isEmpty ? "\(r.restarted.count) terminais reiniciados"
-                                         : "\(r.restarted.count) reiniciados, \(r.failed.count) com falha"
+        a.messageText = r.failed.isEmpty ? tr("\(r.restarted.count) terminais reiniciados", "\(r.restarted.count) terminals restarted")
+                                         : tr("\(r.restarted.count) reiniciados, \(r.failed.count) com falha", "\(r.restarted.count) restarted, \(r.failed.count) failed")
         a.informativeText = (r.failed.map { "\($0.name): \($0.error)" }
-                             + (r.skipped.isEmpty ? [] : ["Pastor mantido: \(r.skipped.joined(separator: ", "))"]))
+                             + (r.skipped.isEmpty ? [] : [tr("Pastor mantido: \(r.skipped.joined(separator: ", "))", "Shepherd kept: \(r.skipped.joined(separator: ", "))")]))
             .joined(separator: "\n")
         a.beginSheetModal(for: window) { _ in }
     }
@@ -678,7 +678,7 @@ struct FullscreenBar: View {
                     Text("esc").font(.collieMono(10)).foregroundStyle(Color.collieMuted)
                 }
             }
-            .buttonStyle(CollieButtonStyle(.secondary)).controlSize(.small).help("Voltar ao canvas (Esc)")
+            .buttonStyle(CollieButtonStyle(.secondary)).controlSize(.small).help(tr("Voltar ao canvas (Esc)", "Back to canvas (Esc)"))
             if let f = canvas.fullscreen {
                 Menu {
                     ForEach(canvas.fullscreenOrder, id: \.self) { id in
@@ -690,16 +690,16 @@ struct FullscreenBar: View {
                         Text(kind(f)).foregroundStyle(Color.collieMuted)
                     }
                 }
-                .menuStyle(.borderlessButton).fixedSize().help("Outra janela do cercado").accessibilityLabel("Janela em tela cheia")
+                .menuStyle(.borderlessButton).fixedSize().help(tr("Outra janela do cercado", "Another window in the paddock")).accessibilityLabel(tr("Janela em tela cheia", "Fullscreen window"))
             }
             Button { canvas.stepFullscreen(-1) } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.plain).help("Anterior ⌘⌥←").accessibilityLabel("Janela anterior")
+                .buttonStyle(.plain).help(tr("Anterior ⌘⌥←", "Previous ⌘⌥←")).accessibilityLabel(tr("Janela anterior", "Previous window"))
             Button { canvas.stepFullscreen(1) } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(.plain).help("Próxima ⌘⌥→").accessibilityLabel("Próxima janela")
+                .buttonStyle(.plain).help(tr("Próxima ⌘⌥→", "Next ⌘⌥→")).accessibilityLabel(tr("Próxima janela", "Next window"))
             Spacer(minLength: 0)
-            if let d = info.dims { Text(d).foregroundStyle(Color.collieMuted).accessibilityLabel("Tamanho do terminal") }
+            if let d = info.dims { Text(d).foregroundStyle(Color.collieMuted).accessibilityLabel(tr("Tamanho do terminal", "Terminal size")) }
             Button { canvas.fullscreen = nil } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
-                .buttonStyle(.plain).help("Sair da tela cheia ⌘⏎").accessibilityLabel("Sair da tela cheia")
+                .buttonStyle(.plain).help(tr("Sair da tela cheia ⌘⏎", "Exit fullscreen ⌘⏎")).accessibilityLabel(tr("Sair da tela cheia", "Exit fullscreen"))
         }
         .font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary)
         .padding(.horizontal, 10)

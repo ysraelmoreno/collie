@@ -1,5 +1,6 @@
 import SwiftUI
 import CollieTheme
+import CollieCore
 
 /// The info icon: the rail's foot (above the usage summary) and Compacta's bar (left of the usage button). A dot in the
 /// accent color sits on its corner while a card is unseen.
@@ -25,8 +26,8 @@ struct TourButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help("O que o Collie faz").accessibilityLabel("O que o Collie faz")
-        .accessibilityValue(unseen ? "com novidades" : "")
+        .help(tr("O que o Collie faz", "What Collie does")).accessibilityLabel(tr("O que o Collie faz", "What Collie does"))
+        .accessibilityValue(unseen ? tr("com novidades", "has news") : "")
     }
 }
 
@@ -60,7 +61,7 @@ struct TourButton: View {
         .onAppear { focused = true; store.mark(model.current.id) }
         .onChange(of: model.index) {
             store.mark(model.current.id)
-            AccessibilityNotification.Announcement("\(model.current.title). \(model.index + 1) de \(model.cards.count)").post()
+            AccessibilityNotification.Announcement(tr("\(model.current.title). \(model.index + 1) de \(model.cards.count)", "\(model.current.title). \(model.index + 1) of \(model.cards.count)")).post()
         }
     }
 
@@ -68,7 +69,7 @@ struct TourButton: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("O que o Collie faz").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("O que o Collie faz", "What Collie does")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
                 .accessibilityAddTraits(.isHeader)
             HStack(spacing: 2) { ForEach(FeatureTour.Group.allCases, id: \.self) { tab($0) } }.padding(.leading, 8)
             Spacer(minLength: 0)
@@ -76,7 +77,7 @@ struct TourButton: View {
                 Image(systemName: "xmark").font(.system(size: 11, weight: .medium)).foregroundStyle(Color.collieMuted)
                     .frame(width: 26, height: 26).contentShape(.rect)
             }
-            .buttonStyle(.plain).keyboardShortcut(.cancelAction).help("Fechar (Esc)").accessibilityLabel("Fechar")
+            .buttonStyle(.plain).keyboardShortcut(.cancelAction).help(tr("Fechar (Esc)", "Close (Esc)")).accessibilityLabel(tr("Fechar", "Close"))
         }
         .padding(.leading, 16).padding(.trailing, 12).frame(height: 46)
     }
@@ -84,7 +85,7 @@ struct TourButton: View {
     private func tab(_ g: FeatureTour.Group) -> some View {
         let on = model.group == g
         return Button { model.jump(to: g) } label: {
-            Text(g.rawValue).font(.collieUI(12)).foregroundStyle(on ? Color.collieText : .collieMuted)
+            Text(g.title).font(.collieUI(12)).foregroundStyle(on ? Color.collieText : .collieMuted)
                 .padding(.horizontal, 9).padding(.vertical, 4)
                 .background(on ? Color.collieRaised : .clear, in: .rect(cornerRadius: 6))
                 .contentShape(.rect)
@@ -102,11 +103,11 @@ struct TourButton: View {
                 .frame(width: 250).accessibilityHidden(true)
             Rectangle().fill(Color.collieBorder).frame(width: 1)
             VStack(alignment: .leading, spacing: 10) {
-                Text(c.group.rawValue.uppercased()).font(.collieMono(11)).kerning(0.7).foregroundStyle(Color.collieAccent)
+                Text(c.group.title.uppercased()).font(.collieMono(11)).kerning(0.7).foregroundStyle(Color.collieAccent)
                 Text(c.title).font(.collieUI(21, .semibold)).foregroundStyle(Color.collieText).accessibilityAddTraits(.isHeader)
                 Text(c.text).font(.collieUI(13.5)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Como chamar").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                    Text(tr("Como chamar", "How to call it")).font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                     Text(c.how).font(.collieMono(11.5)).foregroundStyle(Color.collieText)
                         .padding(.horizontal, 6).padding(.vertical, 1)
                         .background(Color.collieSunken, in: .rect(cornerRadius: 5))
@@ -129,11 +130,11 @@ struct TourButton: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            nav("chevron.left", "Anterior", enabled: model.canGoBack) { model.previous() }
+            nav("chevron.left", tr("Anterior", "Previous"), enabled: model.canGoBack) { model.previous() }
             HStack(spacing: 0) { dots }.frame(maxWidth: .infinity)
-            Text("\(model.index + 1) de \(model.cards.count)").font(.collieMono(11)).monospacedDigit()
+            Text(tr("\(model.index + 1) de \(model.cards.count)", "\(model.index + 1) of \(model.cards.count)")).font(.collieMono(11)).monospacedDigit()
                 .foregroundStyle(Color.collieMuted).frame(minWidth: 52, alignment: .trailing)
-            nav("chevron.right", "Próxima", enabled: model.canGoForward) { model.next() }
+            nav("chevron.right", tr("Próxima", "Next"), enabled: model.canGoForward) { model.next() }
         }
         .padding(.horizontal, 14).frame(height: 46)
     }
@@ -272,7 +273,7 @@ struct FeatureArt: View {
     private var palette: some View {
         ZStack(alignment: .topLeading) {
             box(18, 34, 154, 34)
-            ArtText("@dev revise isto", 32, 56, 13, .collieText)
+            ArtText(tr("@dev revise isto", "@dev review this"), 32, 56, 13, .collieText)
             box(18, 76, 154, 52); bar(30, 88, 90, acc); bar(30, 100, 120); bar(30, 112, 70)
         }
     }

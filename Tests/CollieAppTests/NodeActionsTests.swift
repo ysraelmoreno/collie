@@ -3,7 +3,7 @@ import Testing
 import CollieProtocol
 @testable import CollieApp
 
-@Suite struct NodeActionsTests {
+@Suite(.appPT) struct NodeActionsTests {
     func term(_ name: String, claude: Bool = false) -> NodeInfo { NodeInfo(id: UUID(), name: name, kind: .terminal(isClaude: claude)) }
     func panel(_ name: String, at p: PanelPlacement = .canvas, allowed: [PanelPlacement] = [.dockLeft, .dockRight, .dockBottom, .canvas],
                isolated: Bool = false) -> NodeInfo {

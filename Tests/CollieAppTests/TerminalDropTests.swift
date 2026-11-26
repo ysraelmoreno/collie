@@ -2,7 +2,7 @@ import AppKit
 import Testing
 @testable import CollieApp
 
-@MainActor @Suite struct TerminalDropTests {
+@MainActor @Suite(.appPT) struct TerminalDropTests {
     @Test func escapesLikeTerminalApp() {
         #expect(TerminalDrop.escape("/Users/a/Captura de Tela.png") == #"/Users/a/Captura\ de\ Tela.png"#)
         #expect(TerminalDrop.escape("/tmp/a(1)'s.png") == #"/tmp/a\(1\)\'s.png"#)

@@ -48,7 +48,7 @@ enum UpdateInstaller {
             let label = Config.label
             _ = await Task.detached { try? DaemonLauncher.restart(label: label) }.value
         }
-        guard AppUpdateSwap.spawnRelauncher(app: app) else { throw .swapFailed("não foi possível reabrir o Collie; abra-o de novo") }
+        guard AppUpdateSwap.spawnRelauncher(app: app) else { throw .swapFailed(tr("não foi possível reabrir o Collie; abra-o de novo", "couldn't reopen Collie; open it again")) }
         NSApp.terminate(nil)
     }
 
@@ -70,7 +70,7 @@ enum UpdateInstaller {
         try swapper().rollback()
         UserDefaults.standard.set(previous, forKey: UpdateModel.justUpdatedKey)
         UserDefaults.standard.set(false, forKey: UpdateModel.restartedKey)
-        guard AppUpdateSwap.spawnRelauncher(app: app) else { throw .swapFailed("não foi possível reabrir o Collie; abra-o de novo") }
+        guard AppUpdateSwap.spawnRelauncher(app: app) else { throw .swapFailed(tr("não foi possível reabrir o Collie; abra-o de novo", "couldn't reopen Collie; open it again")) }
         NSApp.terminate(nil)
     }
 
@@ -113,7 +113,7 @@ struct UpdateInstallSheet: View {
             if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             HStack {
                 Spacer()
-                Button("Cancelar") { waiting = false; done() }.buttonStyle(CollieButtonStyle(.quiet))
+                Button(tr("Cancelar", "Cancel")) { waiting = false; done() }.buttonStyle(CollieButtonStyle(.quiet))
                 Button(t.onQuit) { onQuit() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(working)
                 Button(t.primary) { install() }.buttonStyle(CollieButtonStyle(.primary)).disabled(working)
             }
@@ -122,7 +122,7 @@ struct UpdateInstallSheet: View {
     }
 
     private func prepared() async -> URL? {
-        guard let dmg = status.staged, let a = status.available else { error = "o download ainda não terminou"; return nil }
+        guard let dmg = status.staged, let a = status.available else { error = tr("o download ainda não terminou", "the download hasn't finished yet"); return nil }
         do { return try await UpdateInstaller.prepare(dmg: dmg, available: a) }
         catch { self.error = UpdateModel.text(error); return nil }
     }
@@ -193,7 +193,7 @@ struct UpdateLaunchHost: ViewModifier {
     private func noticeView(_ text: String) -> some View {
         NoticeCard(text: text) {
             if engineBlocked {
-                Button("Baixar motor agora") {
+                Button(tr("Baixar motor agora", "Download engine now")) {
                     Task { _ = try? await client.adminCall("design.engine.install", [:]) }
                     UserDefaults.standard.set(PreferencePage.desenho.rawValue, forKey: PreferencePage.requestKey)
                     NotificationCenter.default.post(name: Notification.Name("collieOpenPreferences"), object: PreferencePage.desenho.rawValue)
@@ -225,7 +225,7 @@ struct UpdateLaunchHost: ViewModifier {
         while client.state == .connected, !Task.isCancelled {
             if let s = (try? await client.adminCall("app.update.status", [:])).flatMap(UpdateStatus.from),
                let v = UpdateModel.shouldNotify(s, lastNotified: d.string(forKey: UpdateModel.notifiedKey)) {
-                Notifier.shared.notify(UUID(), title: "Collie \(v) pronto para instalar", body: "Preferências › Atualizações")
+                Notifier.shared.notify(UUID(), title: tr("Collie \(v) pronto para instalar", "Collie \(v) ready to install"), body: tr("Preferências › Atualizações", "Preferences › Updates"))
                 d.set(v, forKey: UpdateModel.notifiedKey)
             }
             try? await Task.sleep(for: .seconds(600))

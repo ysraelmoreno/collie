@@ -3,7 +3,7 @@ import Testing
 @testable import CollieApp
 
 /// A3: "Cercado fábrica" in the Novo cercado sheet: off by default, only over a git folder.
-struct NewPaddockFormTests {
+@Suite(.appPT) struct NewPaddockFormTests {
     private func dirs() throws -> (home: URL, plain: URL, repo: URL) {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("collie-form-\(UUID())").resolvingSymlinksInPath()

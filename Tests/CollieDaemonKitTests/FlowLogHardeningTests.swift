@@ -114,7 +114,7 @@ extension DeviceCommandTests {
             var l = try on(); l.maxBytes = 300
             let junk = Data(repeating: UInt8(ascii: "z"), count: l.readCap + 1)   // no valid line: a read would drop it all
             try junk.write(to: l.dir.appendingPathComponent("actions.1.jsonl"))
-            for i in 0..<3 { try l.append(FlowAction(origin: "panel", action: "tap", target: "n\(i)"), now: t0) }
+            try l.append(tap, now: t0)
             try l.rotate(now: t0)
             #expect(try Data(contentsOf: l.dir.appendingPathComponent("actions.2.jsonl")) == junk)
             #expect(fm.fileExists(atPath: l.dir.appendingPathComponent("actions.1.jsonl").path))

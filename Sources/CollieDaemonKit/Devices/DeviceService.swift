@@ -659,13 +659,21 @@ actor DeviceService {
         if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
     }
 
-    /// c1: whether plan step `s` acts on a destructive node of `panel` (`FlowClassifier.classify`), the screen read
-    /// again (the `device.ui` path, refs updated) for a point or when an action came after the last read.
-    func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> Bool {
-        try await FlowClassifier.classify(s, fresh: flowFresh(panel.id), nodes: refs[panel.id] ?? []) { () async throws(ProtocolError) -> [UINode] in
+    /// c1/wd1: whether plan step `s` acts on a destructive node of `panel`, and the step to run (`FlowClassifier.resolve`:
+    /// a tap pinned to the ref classified, in these refs), the screen read again (the `device.ui` path, refs updated) for a
+    /// point or when an action came after the last read; a text the tree misses read by the OCR as `device.tap` does.
+    func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
+        let serial = { if case .string(let v)? = panel.state["serial"] { v } else { "" } }()
+        return try await FlowClassifier.resolve(s, fresh: flowFresh(panel.id), nodes: refs[panel.id] ?? [], dump: { () async throws(ProtocolError) -> [UINode] in
             _ = try await tracked("device.ui", panel: panel, args: [:], cwd: cwd)
             return refs[panel.id] ?? []
-        }
+        }, ocr: { nodes in
+            guard !nodes.contains(where: \.ocr) else { return nil }   // as ocrFallback: the tree already holds the OCR's items
+            let read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: OCRTrigger.find.rawValue, region: nil)
+            guard let found = read.nodes, !found.isEmpty else { return nil }
+            if !closed.contains(panel.id) { refs[panel.id] = nodes + found }   // the pinned OCR ref: its box centre
+            return found
+        })
     }
 
     /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.

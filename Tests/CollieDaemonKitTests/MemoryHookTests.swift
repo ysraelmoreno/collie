@@ -67,6 +67,25 @@ private func additional(_ json: String?, _ event: String) -> String? {
         }
     }
 
+    /// A Cursor Shepherd's sessionStart also carries the delegation brief (the plugin rule alone was not followed); a plain Cursor and Claude do not.
+    @Test func cursorShepherdSessionStartCarriesTheDelegateBrief() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            var env = t.env(p)
+            func text(_ e: [String: String], cursor: Bool = true) async throws -> String {
+                let out = try #require(await MemoryHookClient.output(event: .sessionStart, prompt: nil, cursor: cursor, env: e))
+                let o = try #require(try JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any])
+                return try #require((o["additional_context"] ?? (o["hookSpecificOutput"] as? [String: Any])?["additionalContext"]) as? String)
+            }
+            #expect(!(try await text(env)).contains("Do not do that work yourself"))
+            env["COLLIE_SHEPHERD"] = "1"
+            let shepherd = try await text(env)
+            #expect(shepherd.hasPrefix("You are running inside Collie") && shepherd.hasSuffix(AgentLaunch.delegateBrief) && shepherd.count < 10_000)
+            #expect(!(try await text(env, cursor: false)).contains("Do not do that work yourself"))
+        }
+    }
+
     @Test func promptHookInjectsOnlyRelevantOnce() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

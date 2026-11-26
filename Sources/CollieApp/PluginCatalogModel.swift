@@ -37,6 +37,11 @@ enum PluginCatalogModel {
         return .update(needsConfirm: !PluginInstallPrompt(catalog: item, latest: latest, replacing: installed).newPermissions.isEmpty)
     }
 
+    /// The card's author line: Collie's own, or someone else's that Collie reviewed.
+    static func byline(_ item: PluginCatalogView.Item) -> String {
+        item.publisher == "collie" ? "\(item.publisherName) · revisado" : "\(item.publisherName) · revisado pelo Collie"
+    }
+
     /// The catalog version a recalled or outdated row can go to; nil: none newer.
     static func target(_ item: PluginCatalogView.Item) -> PluginCatalogView.Latest? { item.update ? item.latest : nil }
 

@@ -12,7 +12,7 @@ struct ScreenAccessibilityTests {
     let mdpi = ScreenAccessibility.Platform.android(density: 1)
 
     @Test func clickableWithoutLabelCountsAndLabelledDoesNot() {
-        #expect(ScreenAccessibility.summary([node()], platform: mdpi) == "ACESSIBILIDADE: 1 sem nome, 0 alvos pequenos")
+        #expect(ScreenAccessibility.summary([node()], platform: mdpi) == "1 sem nome, 0 alvos pequenos")
         #expect(ScreenAccessibility.summary([node(text: "Comprar")], platform: mdpi) == nil)
         #expect(ScreenAccessibility.summary([node(desc: "Fechar")], platform: mdpi) == nil)
         #expect(ScreenAccessibility.summary([node(text: "  ")], platform: mdpi) != nil)   // blank is no name
@@ -24,13 +24,13 @@ struct ScreenAccessibilityTests {
 
     @Test func androidTargetsUnder48dpAreSmall() {
         let xhdpi = ScreenAccessibility.Platform.android(density: 2)
-        #expect(ScreenAccessibility.summary([node(text: "a", side: 80)], platform: xhdpi) == "ACESSIBILIDADE: 0 sem nome, 1 alvos pequenos")   // 40 dp
+        #expect(ScreenAccessibility.summary([node(text: "a", side: 80)], platform: xhdpi) == "0 sem nome, 1 alvos pequenos")   // 40 dp
         #expect(ScreenAccessibility.summary([node(text: "a", side: 96)], platform: xhdpi) == nil)   // 48 dp
         #expect(ScreenAccessibility.summary([node(text: "a", side: 80)], platform: .android(density: nil)) == nil)   // unknown density
     }
 
     @Test func iosTargetsUnder44ptAreSmall() {
-        #expect(ScreenAccessibility.summary([node(text: "a", side: 40)], platform: .ios) == "ACESSIBILIDADE: 0 sem nome, 1 alvos pequenos")
+        #expect(ScreenAccessibility.summary([node(text: "a", side: 40)], platform: .ios) == "0 sem nome, 1 alvos pequenos")
         #expect(ScreenAccessibility.summary([node(text: "a", side: 44)], platform: .ios) == nil)
     }
 
@@ -45,7 +45,7 @@ struct ScreenAccessibilityTests {
 
     @Test func bothFindingsAreCounted() {
         let s = ScreenAccessibility.summary([node(side: 30), node(desc: "x", side: 20), node(text: "ok")], platform: .ios)
-        #expect(s == "ACESSIBILIDADE: 1 sem nome, 2 alvos pequenos")
+        #expect(s == "1 sem nome, 2 alvos pequenos")
     }
 
     @Test func wmDensityOverrideWins() {

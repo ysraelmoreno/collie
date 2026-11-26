@@ -205,8 +205,9 @@ actor DeviceService {
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
             }
             let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: await density(serial))
-            if let a11y = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
-                o["accessibility"] = .string(a11y)
+            if let found = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
+                let a11y = "ACESSIBILIDADE: " + found
+                o["accessibility"] = .string(found)
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + a11y) }
             }
             if !closed.contains(panel.id), let lines = screenErrors.read(serial) {   // d2: ERROS DESDE A ÚLTIMA LEITURA, only when any

@@ -14,11 +14,11 @@ enum ScreenAccessibility {
         case ios
     }
 
-    /// nil: nothing found.
+    /// "N sem nome, M alvos pequenos" (`device screen` prints it after `ACESSIBILIDADE: `); nil: nothing found.
     static func summary(_ nodes: [Node], platform: Platform) -> String? {
         let (unnamed, small) = findings(nodes, platform: platform)
         guard unnamed + small > 0 else { return nil }
-        return "ACESSIBILIDADE: \(unnamed) sem nome, \(small) alvos pequenos"
+        return "\(unnamed) sem nome, \(small) alvos pequenos"
     }
 
     static func findings(_ nodes: [Node], platform: Platform) -> (unnamed: Int, small: Int) {

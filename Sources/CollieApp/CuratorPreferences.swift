@@ -1,4 +1,5 @@
 import SwiftUI
+import CollieCore
 import CollieTheme
 import CollieClient
 import CollieProtocol

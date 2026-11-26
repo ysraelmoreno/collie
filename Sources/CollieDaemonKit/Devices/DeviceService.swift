@@ -184,6 +184,9 @@ actor DeviceService {
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
             if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
             var o = ScreenModel.json(screen)
+            let sig = ScreenSignature.compute(screen)
+            o["sig"] = .string(sig)
+            if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nsig=\(sig)") }
             if let read, read.nodes == nil {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
@@ -192,6 +195,7 @@ actor DeviceService {
             if all { o["tree"] = u["tree"] }
             if timing, case .object(var t)? = u["timingMs"] {
                 t["group"] = Self.ms(ContinuousClock.now - start - (read?.took ?? .zero))
+                t["sig"] = .string(sig)
                 if let read {
                     t["ocrMs"] = Self.ms(read.took); t["ocrLevel"] = .string(OCRLevel.accurate.rawValue); t["trigger"] = .string(read.trigger)
                 }

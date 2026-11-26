@@ -352,7 +352,7 @@ private struct LiteFx {
             let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "device.screen", ["timing": "true"])
             guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
-            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil, "\(t)")
+            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil && t["sig"] == field(r, "sig"), "\(t)")
             #expect(field(try await call(p, m, "device.screen"), "timingMs") == nil)
         }
     }
@@ -365,6 +365,9 @@ private struct LiteFx {
             let r = try await call(p, m, "device.screen")
             guard case .string(let text)? = field(r, "text") else { Issue.record("\(r)"); return }
             #expect(text.hasPrefix("Tela: Offers   [voltar]\nAbas: [Points*] [Combos]") && !text.contains("Mudou"), "\(text)")
+            // d1: the screen's signature, on the text and as a field
+            guard case .string(let sig)? = field(r, "sig") else { Issue.record("\(r)"); return }
+            #expect(sig.count == 12 && text.hasSuffix("\nsig=\(sig)"), "\(text)")
             #expect(field(r, "changed") == .array([]) && field(r, "tree") == nil)
             guard case .array(let fab)? = field(r, "floating"), case .object(let f)? = fab.first, case .string(let ref)? = f["ref"] else { Issue.record("\(r)"); return }
             #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs

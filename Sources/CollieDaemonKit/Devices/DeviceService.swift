@@ -32,6 +32,9 @@ actor DeviceService {
     /// b1: panels whose `refs` come from a read made after their last action (agent or viewer); the typed text of a
     /// `device.text` is written in clear only for these (`flowSecure`).
     var flowFresh: Set<UUID> = []
+    /// b4: panels whose screen changed (an action, a viewer tap) after their last `device.screen`: their `flowSig` is ""
+    /// ("tela gasta"), not the old read's signature again.
+    var flowSpent: Set<UUID> = []
     /// The last queued flow log write (d5): the next one waits for it.
     private var flowWrite: Task<Void, Never>?
     /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
@@ -191,7 +194,7 @@ actor DeviceService {
     /// stale) unless it returns its own screen (`--then screen` reads after it); a read makes it fresh.
     private func tracked(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
         guard let id = panel?.id else { return try await perform(command, panel: panel, args: args, cwd: cwd) }
-        if Self.flowActions[command] != nil { flowFresh.remove(id) }
+        if Self.flowActions[command] != nil { flowFresh.remove(id); flowSpent.insert(id) }
         let r = try await perform(command, panel: panel, args: args, cwd: cwd)
         if !closed.contains(id), Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty { flowFresh.insert(id) }
         return r
@@ -225,7 +228,7 @@ actor DeviceService {
             }
             var screen = ScreenModel.build(nodes)
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
-            if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
+            if !closed.contains(panel.id) { lastScreen[panel.id] = screen; flowSpent.remove(panel.id) }
             var o = ScreenModel.json(screen)
             let sig = ScreenSignature.compute(screen)
             o["sig"] = .string(sig)
@@ -605,8 +608,8 @@ actor DeviceService {
     /// The nodes of the panel's last tree read (`device.ui`/`screen`/`find`), for `FlowClassifier` (b3); [] before any.
     func flowNodes(_ panel: UUID) -> [UINode] { refs[panel] ?? [] }
 
-    /// The signature of the panel's last `device.screen`; "" before any.
-    func flowSig(_ panel: UUID) -> String { lastScreen[panel].map(ScreenSignature.compute) ?? "" }
+    /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.
+    func flowSig(_ panel: UUID) -> String { flowSpent.contains(panel) ? "" : lastScreen[panel].map(ScreenSignature.compute) ?? "" }
 
     /// What the action acted on, from its args (`nodes`: the refs before it, for `--ref`).
     static func flowTarget(_ command: String, _ a: [String: JSONValue], _ nodes: [UINode]) -> String {
@@ -701,7 +704,7 @@ actor DeviceService {
         }
     }
 
-    func flowStale(_ panel: UUID) { flowFresh.remove(panel) }
+    func flowStale(_ panel: UUID) { flowFresh.remove(panel); flowSpent.insert(panel) }
 
     /// The last viewer gone: the session ends after `grace` unless one comes back.
     private func left(_ s: any ViewerSession, _ c: StreamConn) {
@@ -730,7 +733,7 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
-        flowFresh.remove(id)
+        flowFresh.remove(id); flowSpent.remove(id)
         lastScreen[id] = nil
         simPoints[id] = nil
         idle.removeValue(forKey: id)?.cancel()
@@ -907,7 +910,7 @@ actor DeviceService {
     /// Daemon stop: ends every session and watcher and waits (≤ 1.5 s) for their groups, so the delayed KILL is not lost
     /// with the process; and for the sessions' `forward --remove` (≤ its 5 s adb timeout).
     func stop() async {
-        refs = [:]; flowFresh = []
+        refs = [:]; flowFresh = []; flowSpent = []
         watched = [:]; online = [:]; watchedIOS = [:]; booted = [:]
         poller?.cancel(); poller = nil
         let live = Array(sessions.values); sessions = [:]

@@ -3,7 +3,7 @@ import Foundation
 import CollieProtocol
 @testable import CollieDaemonKit
 
-/// A fake device: records each command and answers `device.screen` with the next signature of `sigs`.
+/// A fake device: records each command and answers a `then: screen` action with the next signature of `sigs`.
 private actor FakeDevice {
     var calls: [(String, [String: JSONValue])] = []
     var sigs: [String]
@@ -12,8 +12,8 @@ private actor FakeDevice {
     func act(_ c: String, _ a: [String: JSONValue]) throws(ProtocolError) -> JSONValue {
         calls.append((c, a))
         if c == fail { throw ProtocolError(code: .notFound, message: "no such element") }
-        guard c == "device.screen" else { return .object([:]) }
-        return .object(["sig": .string(sigs.isEmpty ? "" : sigs.removeFirst()), "text": .string("screen")])
+        guard a["then"] == .string("screen") else { return .object([:]) }
+        return .object(["screen": .object(["sig": .string(sigs.isEmpty ? "" : sigs.removeFirst()), "text": .string("screen")])])
     }
     var commands: [String] { calls.map(\.0) }
 }
@@ -39,13 +39,13 @@ struct FlowRunnerTests {
         let d = FakeDevice(sigs: ["s1", "s2", "s3", "s4"])
         let r = try await runner(d).run(try plan(Self.five))
         #expect(r == .object(["ok": .bool(true), "steps": .number(5)]))
-        #expect(await d.commands == ["device.launch", "device.screen", "device.tap", "device.screen", "device.text",
-                                     "device.key", "device.screen", "device.swipe", "device.screen"])
+        #expect(await d.commands == ["device.launch", "device.tap", "device.text", "device.key", "device.swipe"])
         let calls = await d.calls
-        #expect(calls[0].1 == ["package": .string("com.shop"), "activity": .string(".Main")])
-        #expect(calls[2].1 == ["text": .string("Entrar")])
-        #expect(calls[4].1 == ["text": .string("ana@x.dev")])
-        #expect(calls[7].1 == ["x1": .string("10"), "y1": .string("800"), "x2": .string("10"), "y2": .string("200")])
+        let settled: [String: JSONValue] = ["then": .string("screen"), "settle": .string("stable")]
+        #expect(calls[0].1 == settled.merging(["package": .string("com.shop"), "activity": .string(".Main")]) { a, _ in a })
+        #expect(calls[1].1 == settled.merging(["text": .string("Entrar")]) { a, _ in a })
+        #expect(calls[2].1 == ["text": .string("ana@x.dev")])   // no expectSig: no screen asked
+        #expect(calls[4].1 == settled.merging(["x1": .string("10"), "y1": .string("800"), "x2": .string("10"), "y2": .string("200")]) { a, _ in a })
     }
 
     @Test func stopsAtTheFirstDivergenceAndRunsNothingAfter() async throws {
@@ -55,7 +55,7 @@ struct FlowRunnerTests {
         #expect(o["ok"] == .bool(false) && o["stoppedAt"] == .number(2))
         #expect(o["expected"] == .string("s2") && o["got"] == .string("other"))
         #expect(o["screen"] == .object(["sig": .string("other"), "text": .string("screen")]))
-        #expect(await d.commands == ["device.launch", "device.screen", "device.tap", "device.screen"])   // text, key, swipe never ran
+        #expect(await d.commands == ["device.launch", "device.tap"])   // text, key, swipe never ran
     }
 
     @Test func stepWithoutExpectSigRunsUnchecked() async throws {

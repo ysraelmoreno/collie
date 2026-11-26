@@ -127,9 +127,12 @@ enum FlowClassifier {
 }
 
 /// Runs a `FlowPlan` in order through `act`: the same device commands (`device.tap`/`text`/`swipe`/`key`/`launch`)
-/// an agent calls, so the flow log records them too. After a step with `expectSig` it reads `device.screen` and
-/// stops at the first signature that differs: `{ok:false, stoppedAt (1-based), expected, got, screen}`; else
-/// `{ok:true, steps:N}`. A failing command stops the plan with its error, naming the step.
+/// an agent calls, so the flow log records them too. A step with `expectSig` (b4) is sent with `then: screen` and
+/// `settle: stable`, so its own reply carries the settled screen (no `device.screen` apart), and the plan stops at the
+/// first signature that differs: `{ok:false, stoppedAt (1-based), expected, got, screen}`; else `{ok:true, steps:N}`.
+/// b4: the `errors` (crashes since the last read) of every read are joined in the result's `errors`, success,
+/// divergence or refusal, when any. A failing command stops the plan with its error, naming the step. A cancelled
+/// plan (the request gone) stops before the next step: a `timeout` error naming how many steps were done.
 /// d7: a `destructive` step runs only when `confirmed` (the user's `--confirm-destructive`; the router never sets it for
 /// an agent); else the plan stops before it: `{ok:false, refused:"destructive", at (1-based), done}`, the earlier
 /// steps staying run. b3: a step `FlowClassifier` finds destructive (against `nodes`, the panel's last tree read) is
@@ -151,26 +154,38 @@ struct FlowRunner: Sendable {
     }
 
     func run(_ plan: FlowPlan) async throws(ProtocolError) -> JSONValue {
+        var errors: [JSONValue] = []
+        func result(_ o: [String: JSONValue]) -> JSONValue {
+            var o = o
+            if !errors.isEmpty { o["errors"] = .array(errors) }
+            return .object(o)
+        }
         for (i, step) in plan.steps.enumerated() {
-            if !confirmed, await destructive(step) {
-                return .object(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
-                                "done": .number(Double(i))])
+            // ponytail: Task.checkCancellation() throws an untyped error; the flag is the same check, typed
+            if Task.isCancelled {
+                throw ProtocolError(code: .timeout, message: "plan cancelled before step \(i + 1) (done: \(i))")
             }
-            let (command, args) = try Self.command(step)
-            do { _ = try await act(command, args) } catch {
+            if !confirmed, await destructive(step) {
+                return result(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
+                               "done": .number(Double(i))])
+            }
+            var (command, args) = try Self.command(step)
+            if step.expectSig != nil { args["then"] = .string("screen"); args["settle"] = .string("stable") }
+            let r: JSONValue
+            do { r = try await act(command, args) } catch {
                 throw ProtocolError(code: error.code, message: "step \(i + 1) (\(step.action) \(step.target)): \(error.message)")
             }
             guard let want = step.expectSig else { continue }   // no expectSig: the step runs unchecked
-            let screen = try await act("device.screen", [:])
-            guard case .object(let o) = screen, case .string(let got)? = o["sig"] else {
-                throw ProtocolError(code: .internal, message: "step \(i + 1): device.screen returned no sig")
+            guard case .object(let o) = r, case .object(let screen)? = o["screen"], case .string(let got)? = screen["sig"] else {
+                throw ProtocolError(code: .internal, message: "step \(i + 1): \(command) returned no screen sig")
             }
+            if case .array(let e)? = screen["errors"] { errors += e }
             if got != want {
-                return .object(["ok": .bool(false), "stoppedAt": .number(Double(i + 1)), "expected": .string(want),
-                                "got": .string(got), "screen": screen])
+                return result(["ok": .bool(false), "stoppedAt": .number(Double(i + 1)), "expected": .string(want),
+                               "got": .string(got), "screen": .object(screen)])
             }
         }
-        return .object(["ok": .bool(true), "steps": .number(Double(plan.steps.count))])
+        return result(["ok": .bool(true), "steps": .number(Double(plan.steps.count))])
     }
 
     /// The device command and args for `s` (the inverse of `DeviceService.flowTarget`).

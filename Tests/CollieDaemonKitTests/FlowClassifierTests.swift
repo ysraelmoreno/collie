@@ -8,7 +8,7 @@ import CollieProtocol
 /// A fake device recording each command name.
 private actor Recorder {
     var commands: [String] = []
-    func act(_ c: String) -> JSONValue { commands.append(c); return c == "device.screen" ? .object(["sig": .string("s")]) : .object([:]) }
+    func act(_ c: String) -> JSONValue { commands.append(c); return .object(["screen": .object(["sig": .string("s")])]) }
 }
 private func node(_ ref: String, text: String = "", id: String = "", _ r: CGRect, clickable: Bool = true) -> UINode {
     UINode(ref: ref, cls: "android.widget.Button", text: text, desc: "", id: id, bounds: r, clickable: clickable, depth: 1)

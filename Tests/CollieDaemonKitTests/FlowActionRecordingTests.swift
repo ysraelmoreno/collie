@@ -301,3 +301,32 @@ extension DeviceCommandTests {
         }
     }
 }
+
+/// b4 (d5's `sigBefore`): an action that changes the screen without a read leaves the next `sigBefore` empty ("tela
+/// gasta") instead of repeating the last read's. Here for this file's daemon fixture.
+extension DeviceCommandTests.FlowRunnerWaveBTests {
+    @Test func secondActionWithoutAReadRecordsAnEmptySigBefore() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withPaddockDevice(fx) { d, p, a async throws in
+            guard case .string(let read)? = field(try await call(p, a, "device.screen"), "sig") else { Issue.record("no sig"); return }
+            #expect(try await call(p, a, "device.tap", ["x": "3", "y": "4"]).ok)
+            #expect(try await call(p, a, "device.key", ["key": "back"]).ok)
+            #expect(try await call(p, a, "device.screen").ok)
+            #expect(try await call(p, a, "device.key", ["key": "back"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(!read.isEmpty)
+            #expect(fx.lines.map { $0["sigBefore"] } == [read, "", read], "\(fx.lines)")
+        }
+    }
+
+    @Test func actionWithThenScreenKeepsTheNextSigBefore() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withPaddockDevice(fx) { d, p, a async throws in
+            let r = try await call(p, a, "device.tap", ["x": "3", "y": "4", "then": "screen", "settle": "0"])
+            guard case .object(let s)? = field(r, "screen"), case .string(let after)? = s["sig"] else { Issue.record("\(r)"); return }
+            #expect(try await call(p, a, "device.key", ["key": "back"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(fx.lines.map { $0["sigBefore"] } == ["", after], "\(fx.lines)")
+        }
+    }
+}

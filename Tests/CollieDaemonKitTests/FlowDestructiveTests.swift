@@ -7,10 +7,10 @@ import CollieProtocol
 private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Fixtures")
 
-/// A fake device recording each command; `device.screen` answers `sig` "s".
+/// A fake device recording each command; each answers a screen with `sig` "s".
 private actor Recorder {
     var commands: [String] = []
-    func act(_ c: String) -> JSONValue { commands.append(c); return c == "device.screen" ? .object(["sig": .string("s")]) : .object([:]) }
+    func act(_ c: String) -> JSONValue { commands.append(c); return .object(["screen": .object(["sig": .string("s")])]) }
 }
 private func run(_ json: String, confirmed: Bool = false, _ d: Recorder) async throws -> JSONValue {
     try await FlowRunner(confirmed: confirmed) { c, _ async throws(ProtocolError) in await d.act(c) }.run(try FlowPlan.parse(Data(json.utf8)))
@@ -29,7 +29,7 @@ extension DeviceCommandTests {
             let d = Recorder()
             let r = try await run(checkout, d)
             #expect(r == .object(["ok": .bool(false), "refused": .string("destructive"), "at": .number(3), "done": .number(2)]))
-            #expect(await d.commands == ["device.tap", "device.screen", "device.tap"])   // Finalizar and Back never ran
+            #expect(await d.commands == ["device.tap", "device.tap"])   // Finalizar and Back never ran
         }
 
         @Test func aDestructiveFirstStepRunsNothing() async throws {
@@ -43,7 +43,7 @@ extension DeviceCommandTests {
             let d = Recorder()
             let r = try await run(checkout, confirmed: true, d)
             #expect(r == .object(["ok": .bool(true), "steps": .number(4)]))
-            #expect(await d.commands == ["device.tap", "device.screen", "device.tap", "device.tap", "device.key"])
+            #expect(await d.commands == ["device.tap", "device.tap", "device.tap", "device.key"])
         }
 
         @Test func planWithoutDestructiveStepIsUnaffected() async throws {

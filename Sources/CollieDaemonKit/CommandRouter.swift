@@ -524,7 +524,7 @@ actor CommandRouter {
                 }
                 else { r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout) }
                 if let c = r.check, c.status == .failed {
-                    throw ProtocolError(code: .conflict, message: "\(c.failure). Fim da saída:\n\(c.tail)")
+                    throw ProtocolError(code: .conflict, message: tr("\(c.failure). Fim da saída:\n\(c.tail)", "\(c.failure). End of output:\n\(c.tail)"))
                 }
                 var o: [String: JSONValue] = ["output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated),
                                               "targetBusy": .bool(busy)]
@@ -973,7 +973,7 @@ actor CommandRouter {
             if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
             // R8: never widened to the pasture; the saved project stays
             guard let fl = ws.paddocks.first(where: { $0.id == fid }), FileManager.default.fileExists(atPath: fl.path) else {
-                throw ProtocolError(code: .invalidArgs, message: "o cercado de \(t.name) não existe mais; crie o terminal de novo")
+                throw ProtocolError(code: .invalidArgs, message: tr("o cercado de \(t.name) não existe mais; crie o terminal de novo", "the paddock of \(t.name) no longer exists; create the terminal again"))
             }
         }
         await discard(t.id)
@@ -1137,21 +1137,21 @@ actor CommandRouter {
     /// Every leash (terminal or panel, `link` and the panel paths' own) refuses a free end.
     func refuseFreeLeash(_ ids: UUID...) throws(ProtocolError) {
         if let f = ws.terminals.first(where: { ids.contains($0.id) && $0.sandbox == .free }) {
-            throw ProtocolError(code: .notConnected, message: "'\(f.name)' is a free terminal (sem sandbox): no leash reaches it")
+            throw ProtocolError(code: .notConnected, message: tr("'\(f.name)' é um terminal livre (sem sandbox): nenhuma coleira chega nele", "'\(f.name)' is a free terminal (no sandbox): no leash reaches it"))
         }
     }
 
     /// A free terminal summons nothing (R7): refused before anything launches.
     func refuseFreeSummoner(_ me: TerminalRecord) throws(ProtocolError) {
         guard me.sandbox == .sandboxed else {
-            throw ProtocolError(code: .notConnected, message: "'\(me.name)' is a free terminal (sem sandbox): it can't summon")
+            throw ProtocolError(code: .notConnected, message: tr("'\(me.name)' é um terminal livre (sem sandbox): não pode convocar", "'\(me.name)' is a free terminal (no sandbox): it can't summon"))
         }
     }
 
     /// Only the app's `admin.spawn` makes a free terminal: any other creation path asking for one is refused.
     func refuseFree(_ r: Request) throws(ProtocolError) {
         if flag(r, "free") || (r.args["sandbox"] != nil && str(r, "sandbox") != TerminalSandbox.sandboxed.rawValue) {
-            throw ProtocolError(code: .unauthorized, message: "a free terminal (sem sandbox) is created only by the user in the app")
+            throw ProtocolError(code: .unauthorized, message: tr("um terminal livre (sem sandbox) só é criado pelo usuário, no app", "a free terminal (no sandbox) is created only by the user in the app"))
         }
     }
 

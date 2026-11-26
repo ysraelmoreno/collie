@@ -181,7 +181,7 @@ struct FlowRunner: Sendable {
     let classify: Classify
     let act: Act
 
-    init(confirmed: Bool = false, classify: @escaping Classify = { _ in false }, act: @escaping Act) {
+    init(confirmed: Bool = false, classify: @escaping Classify = { FlowClassifier.destructive($0, nodes: []) }, act: @escaping Act) {
         self.confirmed = confirmed; self.classify = classify; self.act = act
     }
 

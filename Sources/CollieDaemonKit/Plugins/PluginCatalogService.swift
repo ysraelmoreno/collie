@@ -21,7 +21,7 @@ actor PluginCatalogService {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: dir) }
             func get(_ name: String, _ limit: Int64) async throws -> Data {
-                guard let u = URL(string: base + name) else { throw ProtocolError(code: .internal, message: "url do catálogo") }
+                guard let u = URL(string: base + name) else { throw ProtocolError(code: .internal, message: tr("url do catálogo", "catalog URL")) }
                 let to = dir.appendingPathComponent(name)
                 try await AndroidDownload.fetch(u, to: to, limit: limit, headers: [:]) { _, _ in }
                 return try Data(contentsOf: to)
@@ -70,7 +70,7 @@ actor PluginCatalogService {
             case .refused(let why): return (stored, .unavailable, why)
             }
         }
-        guard let c = stored else { return (nil, .unavailable, reason ?? "catálogo não carregado") }
+        guard let c = stored else { return (nil, .unavailable, reason ?? tr("catálogo não carregado", "catalog not loaded")) }
         return (c, c.isStale(now: now()) ? .stale : .ok, reason)
     }
 
@@ -83,12 +83,12 @@ actor PluginCatalogService {
     private func download() async -> Outcome {
         let data: Data, sig: Data
         do { (data, sig) = try await fetch.catalog() } catch {
-            return .offline("não consegui baixar o catálogo: \((error as? ProtocolError)?.message ?? error.localizedDescription)")
+            return .offline(tr("não consegui baixar o catálogo: \((error as? ProtocolError)?.message ?? error.localizedDescription)", "could not download the catalog: \((error as? ProtocolError)?.message ?? error.localizedDescription)"))
         }
         let c: PluginCatalog
         do throws(ProtocolError) { c = try PluginCatalog.accept(data, signature: sig, keys: keys, lastSequence: stored?.sequence) }
         catch { return .refused(error.message) }
-        guard save(data, sig) else { return .refused("não foi possível guardar o catálogo") }
+        guard save(data, sig) else { return .refused(tr("não foi possível guardar o catálogo", "could not store the catalog")) }
         stored = c
         await applyRecalls()
         return .accepted
@@ -114,11 +114,11 @@ actor PluginCatalogService {
 
     /// Downloads, checks and installs `id` `version` from the stored catalog (`plugin.catalog` loads it first).
     func install(id: String, version: String) async throws(ProtocolError) -> InstalledPlugin {
-        guard installing.insert(id).inserted else { throw ProtocolError(code: .conflict, message: "já instalando \(id)") }
+        guard installing.insert(id).inserted else { throw ProtocolError(code: .conflict, message: tr("já instalando \(id)", "already installing \(id)")) }
         defer { installing.remove(id) }
-        guard let c = stored else { throw ProtocolError(code: .unavailable, message: "catálogo não carregado; abra Descobrir de novo") }
+        guard let c = stored else { throw ProtocolError(code: .unavailable, message: tr("catálogo não carregado; abra Descobrir de novo", "catalog not loaded; open Discover again")) }
         guard let item = c.plugins.first(where: { $0.id == id }), let v = item.versions.first(where: { $0.version == version }) else {
-            throw ProtocolError(code: .notFound, message: "\(id) \(version) não está no catálogo")
+            throw ProtocolError(code: .notFound, message: tr("\(id) \(version) não está no catálogo", "\(id) \(version) is not in the catalog"))
         }
         if let r = v.recalled { throw InstalledPlugin.recalledRefusal(r) }
         guard PluginCatalog.compare(v.minCollie ?? item.minCollie, collie) != .orderedDescending else {
@@ -126,34 +126,34 @@ actor PluginCatalogService {
         }
         let fm = FileManager.default
         do { try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
-        catch { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+        catch { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
         let staging = dir.appendingPathComponent(".staging-\(UUID().uuidString)")
-        guard mkdir(staging.path, 0o700) == 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+        guard mkdir(staging.path, 0o700) == 0 else { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
         defer { PluginStore.removeTree(staging) }
 
         let pkg = staging.appendingPathComponent("package.tar.gz"), out = staging.appendingPathComponent("x")
         do { try await fetch.package(v.url, pkg, v.size) } catch {
-            throw ProtocolError(code: .unavailable, message: "o download do pacote falhou: \((error as? ProtocolError)?.message ?? error.localizedDescription)")
+            throw ProtocolError(code: .unavailable, message: tr("o download do pacote falhou: \((error as? ProtocolError)?.message ?? error.localizedDescription)", "the package download failed: \((error as? ProtocolError)?.message ?? error.localizedDescription)"))
         }
         do { try AndroidDownload.verify(pkg, sha256: v.sha256) }
-        catch { throw ProtocolError(code: .unavailable, message: "o pacote baixado não confere com o catálogo (sha256)") }
+        catch { throw ProtocolError(code: .unavailable, message: tr("o pacote baixado não confere com o catálogo (sha256)", "the downloaded package does not match the catalog (sha256)")) }
         let folder = try await Self.extract(pkg, into: out)
         let files = try PluginStore.scan(folder)
         guard try PluginStore.treeHash(folder, files) == v.treeSha256 else {
-            throw ProtocolError(code: .unavailable, message: "o conteúdo do pacote não confere com o catálogo (treeSha256)")
+            throw ProtocolError(code: .unavailable, message: tr("o conteúdo do pacote não confere com o catálogo (treeSha256)", "the package contents do not match the catalog (treeSha256)"))
         }
         let m = try PluginManifest.load(folder: folder)
         if let helper = m.helper {
             guard let team = v.helperTeamId,
                   signature(folder.appendingPathComponent(helper), "dev.collie.plugin.\(id)", team) else {
-                throw ProtocolError(code: .unavailable, message: "o helper de \(id) não tem a assinatura do time do catálogo")
+                throw ProtocolError(code: .unavailable, message: tr("o helper de \(id) não tem a assinatura do time do catálogo", "the helper of \(id) lacks the catalog team's signature"))
             }
             chmod(folder.appendingPathComponent(helper).path, 0o755)   // the install sets the bit, not the tar
         }
         let e = try await store.install(from: folder, expect: (id, version), replace: true, source: .catalog)
         guard e.sha256 == v.treeSha256 else {   // the store's own copy, hashed again
             try? await store.setEnabled(id, false)
-            throw ProtocolError(code: .unavailable, message: "o conteúdo do pacote mudou durante a instalação")
+            throw ProtocolError(code: .unavailable, message: tr("o conteúdo do pacote mudou durante a instalação", "the package contents changed during installation"))
         }
         await applyRecalls()
         return e
@@ -164,24 +164,24 @@ actor PluginCatalogService {
     // ponytail: uncompressed bytes are capped after extraction (PluginStore.scan), not during: a gzip bomb can fill the
     // disk for a moment; stream through `tar -tv` sizes if that matters.
     static func extract(_ pkg: URL, into out: URL) async throws(ProtocolError) -> URL {
-        let bad = ProtocolError(code: .invalidArgs, message: "pacote recusado: caminho fora da pasta do plug-in")
+        let bad = ProtocolError(code: .invalidArgs, message: tr("pacote recusado: caminho fora da pasta do plug-in", "package refused: path outside the plugin folder"))
         let tar = URL(fileURLWithPath: "/usr/bin/tar"), dir = pkg.deletingLastPathComponent(), env = ["PATH": "/usr/bin:/bin"]
         let list = try await BoundedProcess.run(executable: tar, args: ["-tzf", pkg.path], in: dir, env: env,
                                                 timeout: .seconds(120), cap: 4 << 20)
-        guard list.status == 0, !list.truncated else { throw ProtocolError(code: .invalidArgs, message: "pacote ilegível") }
+        guard list.status == 0, !list.truncated else { throw ProtocolError(code: .invalidArgs, message: tr("pacote ilegível", "unreadable package")) }
         let names = list.stdout.split(separator: "\n", omittingEmptySubsequences: true)
         guard names.count <= PluginStore.maxFiles + 1 else {
             throw ProtocolError(code: .invalidArgs, message: "o plug-in tem mais de \(PluginStore.maxFiles) arquivos")
         }
         for n in names where n.hasPrefix("/") || n.split(separator: "/").contains("..") { throw bad }
-        guard mkdir(out.path, 0o700) == 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+        guard mkdir(out.path, 0o700) == 0 else { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
         let x = try await BoundedProcess.run(executable: tar, args: ["-xzf", pkg.path, "-C", out.path], in: dir, env: env,
                                              timeout: .seconds(300), cap: 64 << 10)
         guard x.status == 0 else { throw ProtocolError(code: .invalidArgs, message: "pacote recusado: \(x.stderr.prefix(200))") }
         let top = (try? FileManager.default.contentsOfDirectory(atPath: out.path)) ?? []
         guard top.count == 1, let name = top.first,
               (try? FileManager.default.attributesOfItem(atPath: out.appendingPathComponent(name).path)[.type] as? FileAttributeType) == .typeDirectory else {
-            throw ProtocolError(code: .invalidArgs, message: "o pacote precisa ter uma só pasta, a do plug-in")
+            throw ProtocolError(code: .invalidArgs, message: tr("o pacote precisa ter uma só pasta, a do plug-in", "the package must have a single folder, the plugin's"))
         }
         return out.appendingPathComponent(name)
     }

@@ -62,7 +62,7 @@ enum SandboxWatcher {
         while !Task.isCancelled {
             let started = ContinuousClock.now
             await state(true, nil)
-            var why = "log stream parou"
+            var why = tr("log stream parou", "log stream stopped")
             for await l in source() {
                 if l.hasPrefix(failMark) { why = String(l.dropFirst(failMark.count)) } else if let d = parse(l) { await line(d) }
             }
@@ -80,7 +80,7 @@ enum SandboxWatcher {
     static func failed(_ stderr: String?, started: Bool = true) -> String {
         let last = stderr?.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
         if last.contains("Must be admin") { return failMark + SandboxDetection.notAdmin }
-        let head = started ? "log stream parou" : "log stream não iniciou"
+        let head = started ? tr("log stream parou", "log stream stopped") : tr("log stream não iniciou", "log stream did not start")
         return failMark + String((last.isEmpty ? head : head + ": " + last).prefix(120))
     }
 

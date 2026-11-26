@@ -120,7 +120,7 @@ extension CommandRouter {
     /// writes these files from the bytes the page hands it; the page never picks a path. No `path`: unchanged.
     nonisolated func vetPluginOutput(_ result: JSONValue, plugin id: String) throws(ProtocolError) -> JSONValue {
         guard case .object(var o) = result, let v = o["path"] else { return result }
-        let bad = ProtocolError(code: .invalidArgs, message: "o plug-in '\(id)' devolveu um arquivo fora de plugins-out/\(id)")
+        let bad = ProtocolError(code: .invalidArgs, message: tr("o plug-in '\(id)' devolveu um arquivo fora de plugins-out/\(id)", "plugin '\(id)' returned a file outside plugins-out/\(id)"))
         guard case .string(let p) = v, p.hasPrefix("/"), !p.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { throw bad }
         let root = config.paths.root.standardizedFileURL.path, real = SignedAppCheck.realPath(config.paths.root)
         guard let base = [root, real].first(where: { p.hasPrefix($0 + "/") }) else { throw bad }

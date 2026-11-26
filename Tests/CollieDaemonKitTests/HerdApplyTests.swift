@@ -62,7 +62,7 @@ private func pairs(_ s: State) -> Set<Set<String>> {
 private let bug = Herd.factory.first { $0.id == "investigar-bug" }!
 private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
 
-@Suite(.serialized) struct HerdApplyTests {
+@Suite(.serialized, .daemonPt) struct HerdApplyTests {
     @Test func appliesFactoryBugScore() async throws {
         let fx = try FakeAgents(); defer { fx.cleanup() }
         try await withDaemon(configure: fx.configure) { d, p in

@@ -11,7 +11,7 @@ import CollieProtocol
 // under the Collie root, which the terminals' sandbox never opens for writing.
 actor PluginStore {
     static let maxBytes = 64 * 1024 * 1024, maxFiles = 5000
-    static let changed = "conteúdo alterado desde a instalação; instale de novo"
+    static var changed: String { tr("conteúdo alterado desde a instalação; instale de novo", "contents changed since installation; install again") }
     let dir: URL
     private var entries: [InstalledPlugin]
     private var manifests: [String: PluginManifest] = [:]   // the verified ones, by id
@@ -75,12 +75,12 @@ actor PluginStore {
         let files = try Self.scan(staging)   // the copy is what counts: the source may have changed meanwhile
         let m = try PluginManifest.load(folder: staging)
         // ponytail: apiVersion 2 (a loopback service, http commands) is an app do cercado's for now: approved per paddock
-        guard m.apiVersion == 1 else { throw ProtocolError(code: .invalidArgs, message: "apiVersion 2 é de app do cercado: ponha a pasta em <cercado>/.collie/apps/\(m.id)/") }
+        guard m.apiVersion == 1 else { throw ProtocolError(code: .invalidArgs, message: tr("apiVersion 2 é de app do cercado: ponha a pasta em <cercado>/.collie/apps/\(m.id)/", "apiVersion 2 is a paddock app: put the folder in <paddock>/.collie/apps/\(m.id)/")) }
         if let expect, expect != (m.id, m.version) {
-            throw ProtocolError(code: .conflict, message: "a pasta do plug-in mudou depois da confirmação (esperado \(expect.id) \(expect.version), encontrado \(m.id) \(m.version)); escolha de novo")
+            throw ProtocolError(code: .conflict, message: tr("a pasta do plug-in mudou depois da confirmação (esperado \(expect.id) \(expect.version), encontrado \(m.id) \(m.version)); escolha de novo", "the plugin folder changed after confirmation (expected \(expect.id) \(expect.version), found \(m.id) \(m.version)); choose again"))
         }
         if !replace, let e = entries.first(where: { $0.id == m.id }) {
-            throw ProtocolError(code: .conflict, message: "o plug-in '\(m.id)' \(e.version) já está instalado: use --replace para substituí-lo")
+            throw ProtocolError(code: .conflict, message: tr("o plug-in '\(m.id)' \(e.version) já está instalado: use --replace para substituí-lo", "plugin '\(m.id)' \(e.version) is already installed: use --replace to replace it"))
         }
         let hash = try Self.treeHash(staging, files)
         if let e = entries.first(where: { $0.id == m.id }), e.sha256 == hash, let r = e.recalled { throw InstalledPlugin.recalledRefusal(r) }
@@ -97,7 +97,7 @@ actor PluginStore {
             chmod(dest.path, 0o755)
             do { try fm.moveItem(at: dest, to: aside) } catch {
                 chmod(dest.path, 0o555)
-                throw ProtocolError(code: .internal, message: "não foi possível instalar o plug-in")
+                throw ProtocolError(code: .internal, message: tr("não foi possível instalar o plug-in", "could not install the plugin"))
             }
         }
         do {
@@ -105,7 +105,7 @@ actor PluginStore {
             chmod(dest.path, 0o555)
         } catch {
             restore()
-            throw ProtocolError(code: .internal, message: "não foi possível instalar o plug-in")
+            throw ProtocolError(code: .internal, message: tr("não foi possível instalar o plug-in", "could not install the plugin"))
         }
         let entry = InstalledPlugin(id: m.id, version: m.version, sha256: hash, enabled: true, installedAt: Date(), error: nil, source: origin)
         let before = entries
@@ -166,7 +166,7 @@ actor PluginStore {
     // MARK: - files
 
     private func versionDir(_ id: String, _ version: String) -> URL { dir.appendingPathComponent(id).appendingPathComponent(version) }
-    private func notInstalled(_ id: String) -> ProtocolError { ProtocolError(code: .notFound, message: "plug-in '\(id)' não está instalado") }
+    private func notInstalled(_ id: String) -> ProtocolError { ProtocolError(code: .notFound, message: tr("plug-in '\(id)' não está instalado", "plugin '\(id)' is not installed")) }
 
     private func save() throws(ProtocolError) {
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -180,12 +180,12 @@ actor PluginStore {
             guard rename(tmp.path, file.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
         } catch {
             try? FileManager.default.removeItem(at: tmp)
-            throw ProtocolError(code: .internal, message: "não foi possível gravar a lista de plug-ins")
+            throw ProtocolError(code: .internal, message: tr("não foi possível gravar a lista de plug-ins", "could not write the plugin list"))
         }
     }
 
     private func io(_ body: () throws -> Void) throws(ProtocolError) {
-        do { try body() } catch { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+        do { try body() } catch { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
     }
 
     /// The tree's regular files, relative and sorted. Refuses links and special files, > 5 000 entries, > 64 MiB.
@@ -194,7 +194,7 @@ actor PluginStore {
         let fm = FileManager.default
         guard (try? fm.attributesOfItem(atPath: root.path)[.type] as? FileAttributeType) == .typeDirectory,
               let walk = fm.enumerator(atPath: root.path) else {
-            throw ProtocolError(code: .invalidArgs, message: "o plug-in precisa ser uma pasta")
+            throw ProtocolError(code: .invalidArgs, message: tr("o plug-in precisa ser uma pasta", "the plugin must be a folder"))
         }
         var files: [String] = [], count = 0, bytes = 0
         while let rel = walk.nextObject() as? String {
@@ -202,7 +202,7 @@ actor PluginStore {
             guard count <= maxFiles else { throw ProtocolError(code: .invalidArgs, message: "o plug-in tem mais de \(maxFiles) arquivos") }
             guard let a = try? fm.attributesOfItem(atPath: root.appendingPathComponent(rel).path),   // lstat
                   let type = a[.type] as? FileAttributeType else {
-                throw ProtocolError(code: .invalidArgs, message: "'\(rel)' ilegível")
+                throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' ilegível", "'\(rel)' is unreadable"))
             }
             switch type {
             case .typeDirectory: continue
@@ -210,8 +210,8 @@ actor PluginStore {
                 bytes += (a[.size] as? Int) ?? 0
                 guard bytes <= maxBytes else { throw ProtocolError(code: .invalidArgs, message: "o plug-in passa de 64 MiB") }
                 files.append(rel)
-            case .typeSymbolicLink: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' é um link simbólico: não aceito em plug-ins")
-            default: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum")
+            case .typeSymbolicLink: throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' é um link simbólico: não aceito em plug-ins", "'\(rel)' is a symbolic link: not accepted in plugins"))
+            default: throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' não é um arquivo comum", "'\(rel)' is not a regular file"))
             }
         }
         return files.sorted()
@@ -223,7 +223,7 @@ actor PluginStore {
         let fm = FileManager.default
         guard (try? fm.attributesOfItem(atPath: src.path)[.type] as? FileAttributeType) == .typeDirectory,
               let walk = fm.enumerator(atPath: src.path), mkdir(dst.path, 0o700) == 0 else {
-            throw ProtocolError(code: .invalidArgs, message: "o plug-in precisa ser uma pasta")
+            throw ProtocolError(code: .invalidArgs, message: tr("o plug-in precisa ser uma pasta", "the plugin must be a folder"))
         }
         var count = 0, budget = maxBytes
         let inside = SignedAppCheck.realPath(src)
@@ -233,11 +233,11 @@ actor PluginStore {
             let from = src.appendingPathComponent(rel).path, to = dst.appendingPathComponent(rel).path
             switch try? fm.attributesOfItem(atPath: from)[.type] as? FileAttributeType {   // lstat
             case .typeDirectory?:
-                guard mkdir(to, 0o700) == 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+                guard mkdir(to, 0o700) == 0 else { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
             case .typeRegular?:
                 try copyFile(from, to, rel, inside: inside, budget: &budget)
-            case .typeSymbolicLink?: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' é um link simbólico: não aceito em plug-ins")
-            default: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum")
+            case .typeSymbolicLink?: throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' é um link simbólico: não aceito em plug-ins", "'\(rel)' is a symbolic link: not accepted in plugins"))
+            default: throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' não é um arquivo comum", "'\(rel)' is not a regular file"))
             }
         }
     }
@@ -248,28 +248,28 @@ actor PluginStore {
     static func copyFile(_ from: String, _ to: String, _ rel: String, inside: String, budget: inout Int) throws(ProtocolError) {
         let tooBig = ProtocolError(code: .invalidArgs, message: "o plug-in passa de 64 MiB")
         let i = open(from, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-        guard i >= 0 else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' ilegível ou um link") }
+        guard i >= 0 else { throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' ilegível ou um link", "'\(rel)' is unreadable or a link")) }
         defer { close(i) }
         var st = stat()
-        guard fstat(i, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum") }
-        guard st.st_nlink == 1 else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' é um link físico (hard link): não aceito em plug-ins") }
+        guard fstat(i, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' não é um arquivo comum", "'\(rel)' is not a regular file")) }
+        guard st.st_nlink == 1 else { throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' é um link físico (hard link): não aceito em plug-ins", "'\(rel)' is a hard link: not accepted in plugins")) }
         var buf0 = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         guard fcntl(i, F_GETPATH, &buf0) == 0, String(cString: buf0) == inside + "/" + rel else {
-            throw ProtocolError(code: .invalidArgs, message: "'\(rel)' saiu da pasta do plug-in (link no caminho)")
+            throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' saiu da pasta do plug-in (link no caminho)", "'\(rel)' left the plugin folder (link in the path)"))
         }
         guard st.st_size <= budget else { throw tooBig }
         let o = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard o >= 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+        guard o >= 0 else { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
         defer { close(o) }
         if st.st_mode & 0o100 != 0 { fchmod(o, 0o700) }   // a helper stays executable (`lock` makes it 0555)
         var buf = [UInt8](repeating: 0, count: max(4096, min(1 << 20, Int(st.st_size) + 1)))   // +1: sees growth
         while true {
             let n = read(i, &buf, buf.count)
-            guard n >= 0 else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' ilegível") }
+            guard n >= 0 else { throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' ilegível", "'\(rel)' is unreadable")) }
             if n == 0 { return }
             budget -= n
             guard budget >= 0 else { throw tooBig }   // grew since fstat
-            guard write(o, buf, n) == n else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
+            guard write(o, buf, n) == n else { throw ProtocolError(code: .internal, message: tr("erro de arquivo ao instalar o plug-in", "file error while installing the plugin")) }
         }
     }
 
@@ -278,7 +278,7 @@ actor PluginStore {
         var h = SHA256()
         for rel in files {
             guard let data = try? Data(contentsOf: root.appendingPathComponent(rel), options: .mappedIfSafe) else {
-                throw ProtocolError(code: .invalidArgs, message: "'\(rel)' ilegível")
+                throw ProtocolError(code: .invalidArgs, message: tr("'\(rel)' ilegível", "'\(rel)' is unreadable"))
             }
             h.update(data: Data(rel.utf8)); h.update(data: Data([0])); h.update(data: Data(SHA256.hash(data: data)))
         }
@@ -292,7 +292,7 @@ actor PluginStore {
             var st = stat()
             let exec = stat(path, &st) == 0 && st.st_mode & 0o100 != 0
             if chmod(path, exec ? 0o555 : 0o444) == 0 { continue }
-            throw ProtocolError(code: .internal, message: "não foi possível proteger '\(f)'")
+            throw ProtocolError(code: .internal, message: tr("não foi possível proteger '\(f)'", "could not protect '\(f)'"))
         }
         let dirs = (FileManager.default.enumerator(atPath: root.path)?.allObjects as? [String] ?? [])
             .filter { (try? FileManager.default.attributesOfItem(atPath: root.appendingPathComponent($0).path)[.type] as? FileAttributeType) == .typeDirectory }
@@ -315,7 +315,7 @@ actor PluginStore {
     static func verify(_ e: InstalledPlugin, in dir: URL) -> Result<PluginManifest, ProtocolError> {
         let folder = dir.appendingPathComponent(e.id).appendingPathComponent(e.version)
         guard FileManager.default.fileExists(atPath: folder.path) else {
-            return .failure(ProtocolError(code: .invalidArgs, message: "a pasta do plug-in sumiu; instale de novo"))
+            return .failure(ProtocolError(code: .invalidArgs, message: tr("a pasta do plug-in sumiu; instale de novo", "the plugin folder is gone; install again")))
         }
         do throws(ProtocolError) {
             let files = try scan(folder)

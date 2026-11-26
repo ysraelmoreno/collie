@@ -30,7 +30,7 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
     do { try await body(); return nil } catch let e as ProtocolError { return e.code } catch { return .internal }
 }
 
-@Suite struct PluginStoreTests {
+@Suite(.daemonPt) struct PluginStoreTests {
     @Test func installCopiesReadOnlyAndHashes() async throws {
         try await withTemp { d in
             let root = d.appendingPathComponent("root"), store = PluginStore(root: root)

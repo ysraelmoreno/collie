@@ -1,3 +1,4 @@
+import CollieCore
 import Foundation
 import CollieProtocol
 
@@ -26,7 +27,7 @@ final class RemotePairing: @unchecked Sendable {
     /// `wait` callers, resumed by every change (begin, decide) and by their deadline.
     private var waiters: [UUID: CheckedContinuation<Outcome?, Never>] = [:]
     /// One message for every refused secret: wrong, expired, used, none begun.
-    private static let refused = ProtocolError(code: .unauthorized, message: "Código de pareamento inválido ou expirado. Gere um novo QR no Mac.")
+    private static var refused: ProtocolError { ProtocolError(code: .unauthorized, message: tr("Código de pareamento inválido ou expirado. Gere um novo QR no Mac.", "Invalid or expired pairing code. Generate a new QR on the Mac.")) }
 
     init(now: @escaping @Sendable () -> Date = Date.init) { self.now = now }
 
@@ -77,13 +78,13 @@ final class RemotePairing: @unchecked Sendable {
         let t = now()
         lock.lock(); defer { lock.unlock() }
         expire(t)
-        guard pairingId == id else { throw ProtocolError(code: .notFound, message: "Pareamento não encontrado.") }
+        guard pairingId == id else { throw ProtocolError(code: .notFound, message: tr("Pareamento não encontrado.", "Pairing not found.")) }
         switch state {
         case .awaiting(let d, _, _):
             state = .done(accept ? .accepted(d) : .refused)
             return accept ? d : nil
         case .done(.timedOut): throw ProtocolError(code: .timeout, message: "O iPhone esperou demais: pareie de novo.")
-        default: throw ProtocolError(code: .notFound, message: "Pareamento não está esperando confirmação.")
+        default: throw ProtocolError(code: .notFound, message: tr("Pareamento não está esperando confirmação.", "Pairing is not waiting for confirmation."))
         }
     }
 

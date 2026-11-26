@@ -111,7 +111,7 @@ extension CommandRouter {
                                 "access": .string(g.access.rawValue), "scope": .string(g.scope.rawValue)]) })])
         case "chat.history":
             let before = try str(r, "before").map { s throws(ProtocolError) in
-                guard let id = UUID(uuidString: s) else { throw ProtocolError(code: .notFound, message: "Mensagem não encontrada.") }
+                guard let id = UUID(uuidString: s) else { throw ProtocolError(code: .notFound, message: tr("Mensagem não encontrada.", "Message not found.")) }
                 return id
             }
             var page = try await chat.page(before: before, limit: Int(try num(r, "limit", max: 200) ?? 50))
@@ -122,12 +122,12 @@ extension CommandRouter {
             return .array(try await artifacts.list().sorted { $0.at > $1.at }.map { remoteArtifact($0, dir: adir) })
         case "artifact.get":
             guard let id = str(r, "id").flatMap(UUID.init(uuidString:)), let a = try await artifacts.list().first(where: { $0.id == id }) else {
-                throw ProtocolError(code: .notFound, message: "Artifact não encontrado.")
+                throw ProtocolError(code: .notFound, message: tr("Artifact não encontrado.", "Artifact not found."))
             }
             return remoteArtifact(a, dir: await artifacts.dir)
         case "artifact.file": return try await remoteFile(r, device: device)
         case "approval.answer", "approval.dismiss":
-            guard let id = str(r, "id").flatMap(UUID.init(uuidString:)) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
+            guard let id = str(r, "id").flatMap(UUID.init(uuidString:)) else { throw ProtocolError(code: .invalidArgs, message: tr("Aprovação inválida.", "Invalid approval.")) }
             target = id.uuidString.lowercased()
             if r.command == "approval.dismiss" { return .object(["dismissed": .bool(await asks.dismissApproval(id))]) }
             guard case .bool(let allow)? = r.args["allow"] else { throw ProtocolError(code: .invalidArgs, message: "approval.answer needs allow (true or false)") }
@@ -137,7 +137,7 @@ extension CommandRouter {
             let card = str(r, "card") ?? ""
             target = card
             guard let d = accessCards.all.first(where: { RemoteSurface.cardId($0) == card }), let t = ws.terminals.first(where: { $0.id == d.terminal }) else {
-                throw ProtocolError(code: .notFound, message: "Cartão não encontrado: já respondido no Mac ou somado a outro.")
+                throw ProtocolError(code: .notFound, message: tr("Cartão não encontrado: já respondido no Mac ou somado a outro.", "Card not found: already answered on the Mac or merged into another."))
             }
             target = d.path
             let before = cardIds
@@ -146,7 +146,7 @@ extension CommandRouter {
                 accessCards.deny(SandboxCards.Key(terminal: d.terminal, op: d.op, folder: d.folder))
                 return .object([:])
             }
-            guard !flag(r, "lot") else { throw ProtocolError(code: .invalidArgs, message: "Pelo iPhone só se libera para este terminal, não para o lote: use o Mac.") }
+            guard !flag(r, "lot") else { throw ProtocolError(code: .invalidArgs, message: tr("Pelo iPhone só se libera para este terminal, não para o lote: use o Mac.", "From the iPhone you can only allow this terminal, not the lot: use the Mac.")) }
             return try await grantAccess(t, access: d.op == "read" ? .read : .write, path: d.path, folder: flag(r, "folder"), scope: .terminal,
                                          by: .init(device: device.id.uuidString.lowercased(), deviceName: device.name, via: via.rawValue))
         case "work.status":   // the chat's status questions, as a read: nothing posted, nothing typed (§3.6b)
@@ -158,9 +158,9 @@ extension CommandRouter {
             if str(r, "terminal") != nil {
                 let t = try remoteTerminalRecord(r)
                 w = try await work.active(terminal: t.id)
-                if w == nil, q != .summary { return .object(["text": .string("\(t.name) não tem trabalho aberto.")]) }
+                if w == nil, q != .summary { return .object(["text": .string(tr("\(t.name) não tem trabalho aberto.", "\(t.name) has no open work."))]) }
             }
-            guard q != .summary || w != nil else { throw ProtocolError(code: .invalidArgs, message: "O resumo é de um trabalho: escolha um terminal com trabalho aberto.") }
+            guard q != .summary || w != nil else { throw ProtocolError(code: .invalidArgs, message: tr("O resumo é de um trabalho: escolha um terminal com trabalho aberto.", "The summary is about a work item: pick a terminal with open work.")) }
             return .object(["text": .string(try await statusAnswer(q, w))])
         case "agent.ask":   // the work chat's path (askAsUser): the prompt is the user's (§3.6)
             let t = try remoteTerminalRecord(r)
@@ -169,16 +169,16 @@ extension CommandRouter {
             guard !text.isEmpty, text.count <= ChatMessage.maxText else { throw ProtocolError(code: .invalidArgs, message: "Mensagem vazia ou com mais de 8 000 caracteres.") }
             // D1: a phone never types commands into a shell, nor into a terminal outside the sandbox
             guard t.preset != .shell, t.sandbox == .sandboxed else {
-                throw ProtocolError(code: .invalidArgs, message: "Pelo iPhone só se fala com agentes: \(t.name) é um shell ou um terminal livre.")
+                throw ProtocolError(code: .invalidArgs, message: tr("Pelo iPhone só se fala com agentes: \(t.name) é um shell ou um terminal livre.", "From the iPhone you can only talk to agents: \(t.name) is a shell or a free terminal."))
             }
-            guard await registry.process(t.id)?.isRunning == true else { throw ProtocolError(code: .notRunning, message: "\(t.name) não está rodando.") }
+            guard await registry.process(t.id)?.isRunning == true else { throw ProtocolError(code: .notRunning, message: tr("\(t.name) não está rodando.", "\(t.name) is not running.")) }
             // a pasted text ends with Enter: at an approval prompt that Enter would answer it blindly
             guard await hub.currentBadges[t.id] != .attention else {
-                throw ProtocolError(code: .unavailable, message: "\(t.name) está esperando uma aprovação; responda o pedido primeiro.")
+                throw ProtocolError(code: .unavailable, message: tr("\(t.name) está esperando uma aprovação; responda o pedido primeiro.", "\(t.name) is waiting for an approval; answer the request first."))
             }
             var w: Work?
             if let s = str(r, "work") {
-                guard let id = UUID(uuidString: s), let found = try await work.get(id) else { throw ProtocolError(code: .notFound, message: "Trabalho não encontrado.") }
+                guard let id = UUID(uuidString: s), let found = try await work.get(id) else { throw ProtocolError(code: .notFound, message: tr("Trabalho não encontrado.", "Work not found.")) }
                 w = found
             } else { w = try await work.active(terminal: t.id) }
             let sent = ChatMessage(role: .user, workId: w?.id, terminal: t.name, text: text, via: device.name)
@@ -200,7 +200,7 @@ extension CommandRouter {
             } else if let s = str(r, "artifact") {
                 target = s
                 guard let id = UUID(uuidString: s), try await artifacts.list().contains(where: { $0.id == id }) else {
-                    throw ProtocolError(code: .notFound, message: "Artifact não encontrado.")
+                    throw ProtocolError(code: .notFound, message: tr("Artifact não encontrado.", "Artifact not found."))
                 }
                 await hub.emit(.remoteReveal(terminal: nil, artifact: id, device: device.id.uuidString.lowercased()))
             } else {
@@ -208,7 +208,7 @@ extension CommandRouter {
             }
             return .object([:])
         default:   // allowlisted, mutating, past the scope gate: none left without a handler
-            throw ProtocolError(code: .unavailable, message: "'\(r.command)' ainda não está disponível pelo iPhone.")
+            throw ProtocolError(code: .unavailable, message: tr("'\(r.command)' ainda não está disponível pelo iPhone.", "'\(r.command)' is not available from the iPhone yet."))
         }
     }
 
@@ -224,14 +224,14 @@ extension CommandRouter {
 
     private func remoteTerminalRecord(_ r: Request) throws -> TerminalRecord {
         guard let id = str(r, "terminal").flatMap(UUID.init(uuidString:)), let t = ws.terminals.first(where: { $0.id == id }) else {
-            throw ProtocolError(code: .notFound, message: "Terminal não encontrado.")
+            throw ProtocolError(code: .notFound, message: tr("Terminal não encontrado.", "Terminal not found."))
         }
         return t
     }
 
     private func remoteWork(_ r: Request) async throws -> Work {
         guard let id = str(r, "id").flatMap(UUID.init(uuidString:)), let w = try await work.get(id) else {
-            throw ProtocolError(code: .notFound, message: "Trabalho não encontrado.")
+            throw ProtocolError(code: .notFound, message: tr("Trabalho não encontrado.", "Work not found."))
         }
         return w
     }

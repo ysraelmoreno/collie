@@ -91,7 +91,7 @@ private final class Rig {
     }
 }
 
-@Suite struct SandboxWatcherTests {
+@Suite(.daemonPt) struct SandboxWatcherTests {
     @Test func parsesTaggedDenial() {
         let id = UUID()
         #expect(SandboxWatcher.parse(denialLine(id, "file-read-data", "/Users/u/Doc é/a b.txt"))
@@ -282,7 +282,7 @@ private final class Rig {
     }
 }
 
-@Suite(.serialized) struct SandboxGrantTests {
+@Suite(.serialized, .daemonPt) struct SandboxGrantTests {
     /// Review Focus 4: a denial storm → at most one card per (terminal, op, folder), bounded; the daemon keeps answering.
     @Test func denialRaisesOneCardPerFolder() async throws {
         try await Rig().run { rig in
@@ -526,7 +526,7 @@ private final class Rig {
     }
 }
 
-@Suite(.serialized) struct SandboxGrantFixTests {
+@Suite(.serialized, .daemonPt) struct SandboxGrantFixTests {
     /// R26: a grant is rendered literally; a symlink swapped in at its path afterwards opens nothing.
     @Test func symlinkSwapAfterGrantOpensNothing() throws {
         let f = try FakeHome()
@@ -580,7 +580,7 @@ private final class Rig {
 }
 
 /// The final review's fix wave (I1-I3, M2-M5, the parked Task 4 minors).
-@Suite(.serialized) struct SandboxFinalFixTests {
+@Suite(.serialized, .daemonPt) struct SandboxFinalFixTests {
     /// I2/R32: a project that is the home itself reopens none of the never-writable files (rc files, global agent
     /// config, Preferences, LaunchAgents, ~/Applications, Collie data); the rest of the home and agent state stay writable.
     @Test func homeProjectKeepsConfigClosed() throws {

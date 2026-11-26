@@ -1,3 +1,4 @@
+import CollieCore
 import Foundation
 import Darwin
 import SystemConfiguration
@@ -40,7 +41,7 @@ extension CommandRouter {
         case "admin.remote.devices.revoke":
             let id = try remoteDeviceId(r)
             let gone = remoteDevices.all.first { $0.id == id }
-            guard try remoteDevices.revoke(id) else { throw ProtocolError(code: .notFound, message: "Aparelho não encontrado.") }
+            guard try remoteDevices.revoke(id) else { throw ProtocolError(code: .notFound, message: tr("Aparelho não encontrado.", "Device not found.")) }
             remoteAudit.log(.init(device: id, deviceName: gone?.name, address: nil, via: nil), "device.revoke", result: "ok")   // on the Mac
             remote.sessions.close(device: id, .revoked)
             return .object([:])
@@ -49,7 +50,7 @@ extension CommandRouter {
             guard let scope = RemoteDevice.Scope(rawValue: try need(r, "scope")) else {
                 throw ProtocolError(code: .invalidArgs, message: "scope must be full or read")
             }
-            guard try remoteDevices.setScope(id, scope) else { throw ProtocolError(code: .notFound, message: "Aparelho não encontrado.") }
+            guard try remoteDevices.setScope(id, scope) else { throw ProtocolError(code: .notFound, message: tr("Aparelho não encontrado.", "Device not found.")) }
             return .object([:])   // ponytail: a live session keeps its scope until its next hello (enforced from slice 4)
         case "admin.remote.identity.rotate":
             remoteIdentity = try RemoteIdentity.rotate(dir: remoteDir, devices: remoteDevices)

@@ -42,7 +42,7 @@ private func lines(_ url: URL) -> [String] {
     ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
 }
 
-@Suite(.serialized) struct LotBoardTests {
+@Suite(.serialized, .daemonPt) struct LotBoardTests {
     @Test func postAndReadBoard() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

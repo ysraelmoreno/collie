@@ -73,14 +73,14 @@ extension CommandRouter {
     static func cardText(_ r: MapRule) -> String {
         let m = r.match
         let query = m.query.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
-        let target = m.isEmpty ? "qualquer requisição"
+        let target = m.isEmpty ? tr("qualquer requisição", "any request")
             : (m.method.map { $0 + " " } ?? "") + (m.host ?? "*") + (m.path ?? "") + (query.isEmpty ? "" : "?" + query)
-        let delay = r.delayMs > 0 ? " · atraso \(r.delayMs) ms" : ""
+        let delay = r.delayMs > 0 ? tr(" · atraso \(r.delayMs) ms", " · delay \(r.delayMs) ms") : ""
         switch r.action {
-        case .drop: return target + "\nqueda (corta a conexão)" + delay
+        case .drop: return target + tr("\nqueda (corta a conexão)", "\ndrop (cuts the connection)") + delay
         case .local(let status, _, _):
             let n = r.body?.count ?? 0
-            return target + "\n\(status) · " + (n == 0 ? "sem corpo" : "\(max(1, Int((Double(n) / 1024).rounded()))) KB") + delay
+            return target + "\n\(status) · " + (n == 0 ? tr("sem corpo", "no body") : "\(max(1, Int((Double(n) / 1024).rounded()))) KB") + delay
         }
     }
 

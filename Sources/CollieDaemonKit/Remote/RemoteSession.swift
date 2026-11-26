@@ -132,7 +132,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             return reply(req.id, ProtocolError(code: .invalidArgs, message: "Unknown command '\(req.command)'"))
         }
         guard kind == .read || dev.scope == .full else {
-            return reply(req.id, ProtocolError(code: .unauthorized, message: "Este aparelho é só de leitura: mude no Mac (Preferências → Celular)."))
+            return reply(req.id, ProtocolError(code: .unauthorized, message: tr("Este aparelho é só de leitura: mude no Mac (Preferências → Celular).", "This device is read-only: change it on the Mac (Preferences → Phone).")))
         }
         if let wait = ctx.limits.take(dev.id, mutating: kind == .mutating) {
             let e = ProtocolError(code: .tooMany, message: "Muitos pedidos: tente de novo em instantes.", retryAfter: (wait * 10).rounded(.up) / 10)
@@ -196,7 +196,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             want = min(Int(n), Self.replayMax)
         }
         guard attaches.count < Self.maxAttaches else {
-            return reply(r.id, ProtocolError(code: .tooMany, message: "\(Self.maxAttaches) terminais já abertos nesta conexão: feche um."))
+            return reply(r.id, ProtocolError(code: .tooMany, message: tr("\(Self.maxAttaches) terminais já abertos nesta conexão: feche um.", "\(Self.maxAttaches) terminals already open on this connection: close one.")))
         }
         attachSeq += 1
         let a = Attach(sub: "t-\(attachSeq)", terminal: tid), q = queue, hub = ctx.hub, key = ObjectIdentifier(a)
@@ -210,8 +210,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                 switch res {
                 case .notFound, .notRunning:
                     attaches[a.sub] = nil; a.done = true
-                    if case .notFound = res { reply(r.id, ProtocolError(code: .notFound, message: "Terminal não encontrado.")) }
-                    else { reply(r.id, ProtocolError(code: .notRunning, message: "Terminal parado: sem saída ao vivo.")) }
+                    if case .notFound = res { reply(r.id, ProtocolError(code: .notFound, message: tr("Terminal não encontrado.", "Terminal not found."))) }
+                    else { reply(r.id, ProtocolError(code: .notRunning, message: tr("Terminal parado: sem saída ao vivo.", "Terminal stopped: no live output."))) }
                 case .attached(let replay, let truncated):
                     guard !a.done, !lock.withLock({ closing }) else { Task { await hub.detachRemote(tid, key: key) }; return }
                     reply(r.id, .object(["sub": .string(a.sub)]))
@@ -225,7 +225,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
 
     private func detach(_ r: Request) {   // on `queue`
         guard case .string(let sub)? = r.args["sub"], let a = attaches[sub] else {
-            return reply(r.id, ProtocolError(code: .notFound, message: "Assinatura não encontrada."))
+            return reply(r.id, ProtocolError(code: .notFound, message: tr("Assinatura não encontrada.", "Subscription not found.")))
         }
         drop(a)
         reply(r.id, .object([:]))
@@ -317,7 +317,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
 
     private func pairWait(_ r: Request) {
         guard case .string(let s)? = r.args["pairingId"], let id = UUID(uuidString: s), lock.withLock({ claimed == id }) else {
-            return reply(r.id, ProtocolError(code: .notFound, message: "Pareamento não encontrado nesta conexão."))
+            return reply(r.id, ProtocolError(code: .notFound, message: tr("Pareamento não encontrado nesta conexão.", "Pairing not found on this connection.")))
         }
         Task { [self] in
             let o = await ctx.pairing.wait(id)
@@ -333,8 +333,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                                          "mac": macJSON(["keyFingerprint": .string(ctx.fingerprint)])]))
                 } catch { reply(r.id, ProtocolError(code: .internal, message: "\(error)")) }
             case .refused: reply(r.id, ProtocolError(code: .conflict, message: "Recusado no Mac."))
-            case .timedOut: reply(r.id, ProtocolError(code: .timeout, message: "O Mac não confirmou a tempo: pareie de novo."))
-            case .pending, .delivered: reply(r.id, ProtocolError(code: .notFound, message: "Pareamento não encontrado."))
+            case .timedOut: reply(r.id, ProtocolError(code: .timeout, message: tr("O Mac não confirmou a tempo: pareie de novo.", "The Mac did not confirm in time: pair again.")))
+            case .pending, .delivered: reply(r.id, ProtocolError(code: .notFound, message: tr("Pareamento não encontrado.", "Pairing not found.")))
             }
         }
     }
@@ -345,7 +345,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             ctx.limits.failed(address)
             let claimed = (r.args["deviceId"]).flatMap { if case .string(let s) = $0 { UUID(uuidString: s) } else { nil } }
             ctx.audit.log(.init(device: claimed, deviceName: nil, address: address, via: via), "session.hello", result: "unauthorized")
-            reply(r.id, ProtocolError(code: .unauthorized, message: "Aparelho não reconhecido: pareie de novo."))
+            reply(r.id, ProtocolError(code: .unauthorized, message: tr("Aparelho não reconhecido: pareie de novo.", "Device not recognized: pair again.")))
             return close(.protocolError)
         }
         ctx.audit.log(who(dev), "session.hello", result: "ok")

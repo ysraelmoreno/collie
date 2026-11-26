@@ -38,7 +38,7 @@ private func sample(_ id: String = "mine", name: String = "Minha") -> Herd {
               panels: [HerdPanel(key: "web", pluginId: "browser", state: ["url": .string("https://x.dev")])], leashes: [["a", "b"], ["a", "web"]])
 }
 
-@Suite(.serialized) struct HerdStoreTests {
+@Suite(.serialized, .daemonPt) struct HerdStoreTests {
     @Test func factoryListedAndReadOnly() async throws {
         let dir = tmpDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = HerdStore(dir: dir)

@@ -40,8 +40,8 @@ actor UpdateChecker {
     }
 
     static let changed = "a release mudou durante o download"
-    static let badSignature = "o dmg baixado não é um Collie assinado e notarizado; nada foi instalado"
-    static let refusedVersion = "esta versão já foi recusada na verificação"
+    static var badSignature: String { tr("o dmg baixado não é um Collie assinado e notarizado; nada foi instalado", "the downloaded dmg is not a signed, notarized Collie; nothing was installed") }
+    static var refusedVersion: String { tr("esta versão já foi recusada na verificação", "this version was already refused at verification") }
     static let margin: Int64 = 100_000_000
 
     let root: URL, manifestURL: URL
@@ -118,15 +118,15 @@ actor UpdateChecker {
     /// Starts the download of the offered version and replies at once; while one runs, its status.
     func download() async throws(ProtocolError) -> Status {
         if work != nil { return status() }
-        guard let m = available else { throw ProtocolError(code: .notFound, message: "nenhuma versão nova disponível") }
+        guard let m = available else { throw ProtocolError(code: .notFound, message: tr("nenhuma versão nova disponível", "no new version available")) }
         if stagedDMG != nil { return status() }
         guard !refused().contains(m.sha256) else { throw ProtocolError(code: .unavailable, message: Self.refusedVersion) }
         do { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
-        catch { throw ProtocolError(code: .internal, message: "atualização: \(error.localizedDescription)") }
+        catch { throw ProtocolError(code: .internal, message: tr("atualização: \(error.localizedDescription)", "update: \(error.localizedDescription)")) }
         if let free = freeSpace(root.path), free < m.size * 3 + Self.margin {
-            throw ProtocolError(code: .unavailable, message: "Espaço insuficiente")
+            throw ProtocolError(code: .unavailable, message: tr("Espaço insuficiente", "Not enough disk space"))
         }
-        try await maintenance.enter("atualização")
+        try await maintenance.enter(tr("atualização", "update"))
         job = Job(phase: "downloading", total: m.size)
         work = Task { await self.run(m) }
         return status()
@@ -187,7 +187,7 @@ actor UpdateChecker {
             if Task.isCancelled { job?.phase = "cancelled"; job?.error = nil }
             else { job?.phase = "failed"; job?.error = (error as? ProtocolError)?.message ?? error.localizedDescription }
         }
-        await maintenance.leave("atualização")
+        await maintenance.leave(tr("atualização", "update"))
     }
 
     private func progress(_ b: Int64, _ t: Int64) {

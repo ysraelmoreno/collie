@@ -21,7 +21,7 @@ extension CommandRouter {
         let id = try need(r, "id"), applyName = try need(r, "name")
         try refuseFree(r)   // a herd's terminals are always sandboxed
         if let me = caller { try refuseFreeSummoner(me) }
-        guard let pt = await herds.get(id)?.following(ws.designFirst) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
+        guard let pt = await herds.get(id)?.following(ws.designFirst) else { throw ProtocolError(code: .notFound, message: tr("rebanho '\(id)' não existe", "herd '\(id)' does not exist")) }
         // one application at a time per workspace: the next waits
         // ponytail: 100 ms polling; a continuation queue if many ever wait at once
         while applyingHerd { try await Task.sleep(for: .milliseconds(100)) }
@@ -29,7 +29,7 @@ extension CommandRouter {
 
         // MARK: preflight: nothing is created when any of it fails
         if let expect = str(r, "expect"), expect != HerdFormat.digest(pt) {
-            throw invalid("o rebanho mudou desde a prévia; confira de novo")
+            throw invalid(tr("o rebanho mudou desde a prévia; confira de novo", "the herd changed since the preview; check again"))
         }
         try HerdFormat.validate(pt)
         let wantsPaddock: Bool
@@ -43,19 +43,19 @@ extension CommandRouter {
         // the paddock it is applied on: the app's (the one on screen), a Shepherd's own
         var onPaddock: Paddock?
         if let n = str(r, "onPaddock"), !n.isEmpty {
-            do { onPaddock = try findPaddock(n) } catch { throw invalid("cercado \(n) não existe ou está ocupado") }
-            if let me = caller, onPaddock?.id != me.paddockId { throw invalid("um Pastor aplica rebanhos só no seu próprio cercado") }
+            do { onPaddock = try findPaddock(n) } catch { throw invalid(tr("cercado \(n) não existe ou está ocupado", "paddock \(n) does not exist or is busy")) }
+            if let me = caller, onPaddock?.id != me.paddockId { throw invalid(tr("um Pastor aplica rebanhos só no seu próprio cercado", "a Shepherd applies herds only in its own paddock")) }
         }
         let cwd: String
         if let me = caller {
             if let c = str(r, "cwd"), URL(fileURLWithPath: c).standardizedFileURL != URL(fileURLWithPath: me.cwd).standardizedFileURL {
-                throw invalid("um Pastor aplica rebanhos só no seu próprio cwd")
+                throw invalid(tr("um Pastor aplica rebanhos só no seu próprio cwd", "a Shepherd applies herds only in its own cwd"))
             }
             cwd = me.cwd
         } else if let c = str(r, "cwd") { cwd = c } else if let f = onPaddock { cwd = f.path } else { cwd = try need(r, "cwd") }
         let allowed: URL? = if let me = caller { try await projectRoot(of: me) } else { nil }   // the applier's project bounds the herd's
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else { throw invalid("pasta \(cwd) não existe") }
+        guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else { throw invalid(tr("pasta \(cwd) não existe", "folder \(cwd) does not exist")) }
 
         // the applying Shepherd plays the herd's Shepherd: that terminal is not created
         let played = caller == nil ? nil : pt.terminals.first(where: \.isShepherd)?.key
@@ -71,51 +71,51 @@ extension CommandRouter {
             if let claimed { paddockBusy.remove(claimed.lowercased()) }
         }
         for n in made.map({ member($0.key) }) + pt.panels.map({ member($0.key) }) {
-            if taken(n) { throw invalid("o nome \(n) já está em uso") }
-            do { try reserve(n) } catch { throw invalid("o nome \(n) está sendo criado agora") }
+            if taken(n) { throw invalid(tr("o nome \(n) já está em uso", "the name \(n) is already in use")) }
+            do { try reserve(n) } catch { throw invalid(tr("o nome \(n) está sendo criado agora", "the name \(n) is being created right now")) }
             reserved.append(n)
         }
         var repo: URL?, folder: URL?, notes: [String] = []
         if wantsPaddock {
             let slug = HerdFormat.slug(applyName), name = slug.isEmpty ? "rebanho" : slug
-            do { try PaddockManager.validate(name: name) } catch { throw invalid("nome de cercado inválido: \(name)") }
-            if taken(name) { throw invalid("o cercado \(name) já existe") }
-            do { try claim(name) } catch { throw invalid("o cercado \(name) está ocupado") }
+            do { try PaddockManager.validate(name: name) } catch { throw invalid(tr("nome de cercado inválido: \(name)", "invalid paddock name: \(name)")) }
+            if taken(name) { throw invalid(tr("o cercado \(name) já existe", "paddock \(name) already exists")) }
+            do { try claim(name) } catch { throw invalid(tr("o cercado \(name) está ocupado", "paddock \(name) is busy")) }
             claimed = name
             if let f = pt.folder, !f.isEmpty {   // the herd's folder: a folder paddock there, git or not
                 let u = URL(fileURLWithPath: f, relativeTo: URL(fileURLWithPath: cwd, isDirectory: true)).standardizedFileURL
-                guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir), isDir.boolValue else { throw invalid("pasta \(u.path) não existe") }
+                guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir), isDir.boolValue else { throw invalid(tr("pasta \(u.path) não existe", "folder \(u.path) does not exist")) }
                 if !(caller.map(startedOpen) ?? false), !ProjectRoot.contains(u.path, root: allowed ?? URL(fileURLWithPath: cwd)) {
-                    throw invalid("a pasta \(u.path) fica fora do projeto: o cercado seria mais largo que ele")
+                    throw invalid(tr("a pasta \(u.path) fica fora do projeto: o cercado seria mais largo que ele", "folder \(u.path) is outside the project: the paddock would be wider than it"))
                 }
                 folder = u
             } else if (try? await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd))) == nil {
                 folder = URL(fileURLWithPath: cwd)   // no git: the pasture folder itself, unisolated
-                notes.append("sem git: o cercado usa a pasta do pasto, sem branch")
+                notes.append(tr("sem git: o cercado usa a pasta do pasto, sem branch", "no git: the paddock uses the pasture folder, no branch"))
             }
         }
         if wantsPaddock, folder == nil, let name = claimed {
             let root = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd))
             if let me = caller, !(try await paddockRepoAllowed(root, for: me)) {
-                throw invalid("o repositório \(root.path) fica fora do seu projeto: o cercado seria mais largo que ele")
+                throw invalid(tr("o repositório \(root.path) fica fora do seu projeto: o cercado seria mais largo que ele", "repository \(root.path) is outside your project: the paddock would be wider than it"))
             }
             // what PaddockManager.create would refuse, refused here in Portuguese
             if FileManager.default.fileExists(atPath: root.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: root))/paddocks/\(name)").path) {
-                throw invalid("o cercado \(name) já existe")
+                throw invalid(tr("o cercado \(name) já existe", "paddock \(name) already exists"))
             }
             for b in ["collie/\(name)", LegacyOrq.branchPrefix + name] {   // an Orq paddock's branch too
                 if try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/\(b)"], in: root).status == 0 {
-                    throw invalid("a branch \(b) já existe")
+                    throw invalid(tr("a branch \(b) já existe", "branch \(b) already exists"))
                 }
             }
             repo = root
         }
         for p in pt.panels {
             guard let spec = PluginRegistry.spec(p.pluginId), spec.placements.contains(p.placement) else {
-                throw invalid("plug-in \(p.pluginId) não está disponível")
+                throw invalid(tr("plug-in \(p.pluginId) não está disponível", "plugin \(p.pluginId) is not available"))
             }
             // headless panels belong to the terminal that opens them, never to a herd
-            guard p.placement != .headless else { throw invalid("painel \(p.key): headless não vale em rebanho") }
+            guard p.placement != .headless else { throw invalid(tr("painel \(p.key): headless não vale em rebanho", "panel \(p.key): headless is not allowed in a herd")) }
         }
         // the PATH the agents get (the user's, else the daemon's)
         let path = UserEnvironment.merge(user: await userEnv.current(), collie: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"],
@@ -124,7 +124,7 @@ extension CommandRouter {
         where made.contains(where: { $0.preset == preset && $0.command == nil }) {
             // ponytail: a few stat calls on the actor
             guard path.split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/\(bin)") }) else {
-                throw invalid("\(bin) não encontrado")
+                throw invalid(tr("\(bin) não encontrado", "\(bin) not found"))
             }
         }
 
@@ -134,7 +134,7 @@ extension CommandRouter {
             try await runApply(pt, made: made, played: played, member: member, cwd: cwd, paddock: claimed.map { ($0, repo ?? folder!, folder != nil) },
                                onPaddock: caller == nil ? onPaddock?.name : nil, caller: caller, allowed: allowed, journal: &j, warnings: &warnings)
         } catch {
-            let e = error as? ProtocolError ?? ProtocolError(code: .internal, message: error is CancellationError ? "aplicação cancelada" : "\(error)")
+            let e = error as? ProtocolError ?? ProtocolError(code: .internal, message: error is CancellationError ? tr("aplicação cancelada", "apply cancelled") : "\(error)")
             // detached: runs to the end even when the request was cancelled
             let undo = await Task { await self.undoApply(j) }.value
             let all = warnings + undo
@@ -153,7 +153,7 @@ extension CommandRouter {
         if let me = caller, ws.lot(of: me.id) == nil { members.insert(me.id, at: 0) }
         let lotsBefore = ws.lots
         ws.lots.append(lot)
-        do { try await place(members, in: lot.id) } catch { ws.lots = lotsBefore; warnings.append("lote \(lot.name) não foi salvo") }   // the herd stands either way
+        do { try await place(members, in: lot.id) } catch { ws.lots = lotsBefore; warnings.append(tr("lote \(lot.name) não foi salvo", "lot \(lot.name) was not saved")) }   // the herd stands either way
 
         // the app places the nodes; frames are relative to the herd's corner (the applier stands at its Shepherd's)
         var frames: [String: HerdFrame] = [:]
@@ -186,7 +186,7 @@ extension CommandRouter {
                 j.paddock = paddock.folder ? try await createFolderPaddock(paddock.name, folder: paddock.repo, createdBy: caller?.id)
                     : try await createPaddock(paddock.name, repo: paddock.repo, createdBy: caller?.id)
             }
-            catch let e as ProtocolError { throw ProtocolError(code: e.code, message: "cercado \(paddock.name): \(e.message)") }
+            catch let e as ProtocolError { throw ProtocolError(code: e.code, message: tr("cercado \(paddock.name): \(e.message)", "paddock \(paddock.name): \(e.message)")) }
         }
 
         let fl = j.paddock ?? ws.paddocks.first { $0.id == base }
@@ -213,12 +213,12 @@ extension CommandRouter {
         }
         for (_, rec) in j.terminals where late.contains(rec.name) {
             if await registry.process(rec.id)?.isRunning != true { throw ProtocolError(code: .notRunning, message: "terminal \(rec.name) saiu") }
-            throw ProtocolError(code: .timeout, message: "terminal \(rec.name) não ficou pronto em \(wait.components.seconds) s")
+            throw ProtocolError(code: .timeout, message: tr("terminal \(rec.name) não ficou pronto em \(wait.components.seconds) s", "terminal \(rec.name) was not ready after \(wait.components.seconds) s"))
         }
         // readyMax latches a terminal sitting at a prompt (trust folder, login): typing a role there would answer it
         // ponytail: early and redundant (fails before leashes and panels are made); the guarded inject decides at the write
         func atApproval(_ rec: TerminalRecord) -> ProtocolError {
-            ProtocolError(code: .unavailable, message: "terminal \(rec.name) está pedindo aprovação; papel não entregue")
+            ProtocolError(code: .unavailable, message: tr("terminal \(rec.name) está pedindo aprovação; papel não entregue", "terminal \(rec.name) is asking for approval; role not delivered"))
         }
         func approvalPending(_ rec: TerminalRecord) async throws {
             if await asks.hasPendingApproval(rec.id) { throw atApproval(rec) }
@@ -259,7 +259,7 @@ extension CommandRouter {
             try await approvalPending(rec)
             do { try await asks.inject(to: rec.id, prompt: role) }   // R10: guarded, refused at an approval prompt
             catch where error == AskCoordinator.awaitingApproval(rec.name) { throw atApproval(rec) }
-            catch { throw ProtocolError(code: error.code, message: "terminal \(rec.name): papel não entregue: \(error.message)") }
+            catch { throw ProtocolError(code: error.code, message: tr("terminal \(rec.name): papel não entregue: \(error.message)", "terminal \(rec.name): role not delivered: \(error.message)")) }
         }
     }
 
@@ -268,19 +268,19 @@ extension CommandRouter {
     private func undoApply(_ j: ApplyJournal) async -> [String] {
         var warnings: [String] = []
         for (_, p) in j.panels.reversed() where ws.panels.contains(where: { $0.id == p.id }) {
-            do { try await remove(p) } catch { warnings.append("painel \(p.name) não foi removido") }
+            do { try await remove(p) } catch { warnings.append(tr("painel \(p.name) não foi removido", "panel \(p.name) was not removed")) }
         }
         // through the normal remove: the work registry closes their works as "removed"; one never launched has nothing to remove
         var stillRunning = false
         for (_, t) in j.terminals.reversed() where ws.terminals.contains(where: { $0.id == t.id }) {
-            do { try await remove(t) } catch { stillRunning = true; warnings.append("terminal \(t.name) não foi removido") }
+            do { try await remove(t) } catch { stillRunning = true; warnings.append(tr("terminal \(t.name) não foi removido", "terminal \(t.name) was not removed")) }
         }
         // ponytail: a design file is never deleted (panel.close keeps them too); the user is told it stays
-        for name in j.designFiles { warnings.append("arquivo de design \(name) mantido") }
+        for name in j.designFiles { warnings.append(tr("arquivo de design \(name) mantido", "design file \(name) kept")) }
         guard let f = j.paddock else { return warnings }
         // a terminal that may still run in the worktree keeps it (ours that failed to go, or one opened there meanwhile)
         guard !stillRunning, !ws.terminals.contains(where: { $0.paddockId == f.id }) else {
-            warnings.append("cercado \(f.name) mantido: há terminal nele"); return warnings
+            warnings.append(tr("cercado \(f.name) mantido: há terminal nele", "paddock \(f.name) kept: it has a terminal")); return warnings
         }
         do {
             if f.isFolder {   // only Collie's record goes: the folder is the user's (R2)
@@ -290,23 +290,23 @@ extension CommandRouter {
                 return warnings
             }
             let n = try await GitRunner.run(["rev-list", "--count", "\(f.baseBranch)..\(f.branch)"], in: URL(fileURLWithPath: f.repoRoot))
-            guard n.status == 0 else { warnings.append("cercado \(f.name) mantido: o git não respondeu"); return warnings }
+            guard n.status == 0 else { warnings.append(tr("cercado \(f.name) mantido: o git não respondeu", "paddock \(f.name) kept: git did not respond")); return warnings }
             guard n.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "0" else {
-                warnings.append("cercado \(f.name) mantido: tem commits"); return warnings
+                warnings.append(tr("cercado \(f.name) mantido: tem commits", "paddock \(f.name) kept: it has commits")); return warnings
             }
             // only an empty paddock goes: anything uncommitted, ignored files included (build output, .env), keeps it; but
             // Collie's own memory files
             let st = try await GitRunner.run(["status", "--porcelain", "--ignored=matching", "--", "."] + LegacyOrq.memoryExcludes,
                                              in: URL(fileURLWithPath: f.path))
             guard st.status == 0, st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                warnings.append("cercado \(f.name) mantido: tem alterações"); return warnings
+                warnings.append(tr("cercado \(f.name) mantido: tem alterações", "paddock \(f.name) kept: it has changes")); return warnings
             }
             try await PaddockManager.delete(f, force: true)
             await memory.evict(under: f.path)
             ws.paddocks.removeAll { $0.id == f.id }
             try await persist()
             await hub.emit(.paddockRemoved(f.id))
-        } catch { warnings.append("cercado \(f.name) mantido: não foi possível removê-lo") }
+        } catch { warnings.append(tr("cercado \(f.name) mantido: não foi possível removê-lo", "paddock \(f.name) kept: could not remove it")) }
         return warnings
     }
 }

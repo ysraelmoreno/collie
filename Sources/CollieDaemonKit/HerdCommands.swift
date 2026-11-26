@@ -26,13 +26,13 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         if let caller {
             if ["herd.remove", "herd.import", "herd.export"].contains(r.command) {
-                throw ProtocolError(code: .unauthorized, message: "'\(r.command)' é só do app")
+                throw ProtocolError(code: .unauthorized, message: tr("'\(r.command)' é só do app", "'\(r.command)' is app-only"))
             }
-            guard caller.isShepherd else { throw ProtocolError(code: .notShepherd, message: "'\(r.command)' é só para Pastores") }
+            guard caller.isShepherd else { throw ProtocolError(code: .notShepherd, message: tr("'\(r.command)' é só para Pastores", "'\(r.command)' is for Shepherds only")) }
         }
         func herd() async throws -> Herd {
             let id = try need(r, "id")
-            guard let p = await herds.get(id) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
+            guard let p = await herds.get(id) else { throw ProtocolError(code: .notFound, message: tr("rebanho '\(id)' não existe", "herd '\(id)' does not exist")) }
             return p.following(ws.designFirst)
         }
         switch r.command {
@@ -43,7 +43,7 @@ extension CommandRouter {
             })
         case "herd.get":
             let p = try await herd()
-            guard case .object(var o) = try isoJSON(p) else { throw invalid("rebanho: não foi possível codificar") }
+            guard case .object(var o) = try isoJSON(p) else { throw invalid(tr("rebanho: não foi possível codificar", "herd: could not encode")) }
             o["builtIn"] = .bool(p.builtIn)
             return .object(o)
         case "herd.save": return try await saveHerd(r, caller: caller)
@@ -54,7 +54,7 @@ extension CommandRouter {
         case "herd.import":
             let raw = Data(try need(r, "json").utf8)
             let p = try HerdFormat.decode(raw)   // size, format, keys, state, leashes: nothing is written when it fails
-            if !flag(r, "replace"), let old = await herds.get(p.id) { throw invalid("já existe um rebanho \(old.name)") }
+            if !flag(r, "replace"), let old = await herds.get(p.id) { throw invalid(tr("já existe um rebanho \(old.name)", "a herd named \(old.name) already exists")) }
             try await herds.put(p)
             return .object(["id": .string(p.id), "preview": p.preview])
         case "herd.export":
@@ -62,7 +62,7 @@ extension CommandRouter {
             let data = try HerdFormat.encode(p)
             _ = try HerdFormat.decode(data)   // what leaves passes what comes in
             return .object(["json": .string(String(decoding: data, as: UTF8.self))])
-        default: throw ProtocolError(code: .internal, message: "'\(r.command)' ainda não existe")
+        default: throw ProtocolError(code: .internal, message: tr("'\(r.command)' ainda não existe", "'\(r.command)' does not exist yet"))
         }
     }
 
@@ -91,7 +91,7 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let name = try need(r, "name").trimmingCharacters(in: .whitespaces)
         let id = HerdFormat.slug(name)
-        guard !id.isEmpty else { throw invalid("rebanho: nome inválido") }
+        guard !id.isEmpty else { throw invalid(tr("rebanho: nome inválido", "herd: invalid name")) }
         let termNames = names(r, "terminals"), panelNames = names(r, "panels")
         guard !termNames.isEmpty else { throw invalid("faltou o argumento 'terminals'") }
         // a Shepherd: what it reaches by leash plus itself; the app: anything
@@ -99,11 +99,11 @@ extension CommandRouter {
         let reachP: [Panel] = caller.map { ConnectionGraph.reachablePanels(from: $0.id, in: ws) } ?? ws.panels
         func pick<T>(_ n: String, all: [T], reach: [T], name: (T) -> String, kind: String) throws(ProtocolError) -> T {
             let same = { (x: T) in name(x).caseInsensitiveCompare(n) == .orderedSame }
-            guard all.contains(where: same) else { throw ProtocolError(code: .notFound, message: "\(kind) '\(n)' não encontrado") }
+            guard all.contains(where: same) else { throw ProtocolError(code: .notFound, message: tr("\(kind) '\(n)' não encontrado", "\(kind) '\(n)' not found")) }
             let hits = reach.filter(same)
             guard hits.count == 1 else {
                 throw ProtocolError(code: hits.isEmpty ? .notConnected : .ambiguous,
-                                    message: hits.isEmpty ? "sem guia até '\(n)'; ligue antes" : "mais de um \(kind) chamado '\(n)'")
+                                    message: hits.isEmpty ? tr("sem guia até '\(n)'; ligue antes", "no tab for '\(n)'; connect first") : tr("mais de um \(kind) chamado '\(n)'", "more than one \(kind) named '\(n)'"))
             }
             return hits[0]
         }
@@ -116,30 +116,30 @@ extension CommandRouter {
         var designFiles: [DesignService.File]?
         for p in panels {
             guard let allowed = HerdFormat.allowedKeys(p.pluginId) else {
-                warnings.append("painel \(p.name) (\(p.pluginId)) não entra em rebanhos"); continue
+                warnings.append(tr("painel \(p.name) (\(p.pluginId)) não entra em rebanhos", "panel \(p.name) (\(p.pluginId)) cannot be part of herds")); continue
             }
             var state: [String: JSONValue] = [:]
             for (k, v) in p.state where allowed.contains(k) {
                 if p.pluginId == "design", k == "file" {   // the registry's id becomes the file's name; never the id
                     if designFiles == nil { designFiles = try await design.list() }
                     guard case .string(let fid) = v, let f = designFiles?.first(where: { $0.id == fid }) else {
-                        warnings.append("painel \(p.name): arquivo de design não existe mais; salvo sem arquivo"); continue
+                        warnings.append(tr("painel \(p.name): arquivo de design não existe mais; salvo sem arquivo", "panel \(p.name): design file no longer exists; saved without a file")); continue
                     }
                     guard HerdFormat.isPlainFileName(f.name) else {
-                        warnings.append("painel \(p.name): o nome do arquivo de design não cabe num rebanho; salvo sem arquivo"); continue
+                        warnings.append(tr("painel \(p.name): o nome do arquivo de design não cabe num rebanho; salvo sem arquivo", "panel \(p.name): the design file name does not fit in a herd; saved without a file")); continue
                     }
                     state[k] = .string(f.name)
                 } else if p.pluginId == "browser", k == "url" {   // only what a herd may carry: http(s) with a host
                     guard case .string(let s) = v, var u = URLComponents(string: s), ["http", "https"].contains(u.scheme?.lowercased() ?? ""),
                           !(u.host ?? "").isEmpty else {
-                        warnings.append("painel \(p.name): endereço não é http(s); salvo sem endereço"); continue
+                        warnings.append(tr("painel \(p.name): endereço não é http(s); salvo sem endereço", "panel \(p.name): address is not http(s); saved without an address")); continue
                     }
                     if u.user != nil || u.password != nil {   // never user:pass@ in a file
                         u.user = nil; u.password = nil
-                        warnings.append("painel \(p.name): usuário e senha tirados do endereço")
+                        warnings.append(tr("painel \(p.name): usuário e senha tirados do endereço", "panel \(p.name): username and password removed from the address"))
                     }
-                    guard let plain = u.string else { warnings.append("painel \(p.name): endereço inválido; salvo sem endereço"); continue }
-                    if u.query != nil { warnings.append("painel \(p.name): o endereço tem parâmetros (?…); confira se não levam segredo") }
+                    guard let plain = u.string else { warnings.append(tr("painel \(p.name): endereço inválido; salvo sem endereço", "panel \(p.name): invalid address; saved without an address")); continue }
+                    if u.query != nil { warnings.append(tr("painel \(p.name): o endereço tem parâmetros (?…); confira se não levam segredo", "panel \(p.name): the address has parameters (?…); check they carry no secret")) }
                     state[k] = .string(plain)
                 } else { state[k] = v }
             }
@@ -169,7 +169,7 @@ extension CommandRouter {
         if caller == nil {
             for (n, v) in try object(r, "frames") {
                 guard case .object(let o) = v, case .number(let x)? = o["x"], case .number(let y)? = o["y"],
-                      case .number(let w)? = o["w"], case .number(let h)? = o["h"] else { throw invalid("a posição de '\(n)' precisa de x, y, w, h") }
+                      case .number(let w)? = o["w"], case .number(let h)? = o["h"] else { throw invalid(tr("a posição de '\(n)' precisa de x, y, w, h", "the position of '\(n)' needs x, y, w, h")) }
                 frames[n.lowercased()] = HerdFrame(x: x, y: y, w: w, h: h)
             }
         }
@@ -195,7 +195,7 @@ extension CommandRouter {
             pt.leashes.append([a, b])
         }
         try HerdFormat.validate(pt)
-        if !flag(r, "replace"), let old = await herds.get(id) { throw invalid("já existe um rebanho \(old.name)") }
+        if !flag(r, "replace"), let old = await herds.get(id) { throw invalid(tr("já existe um rebanho \(old.name)", "a herd named \(old.name) already exists")) }
         try await herds.put(pt)
         return .object(["id": .string(id), "warnings": .array(warnings.map { .string($0) })])
     }

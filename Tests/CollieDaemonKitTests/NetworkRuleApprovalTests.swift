@@ -36,7 +36,7 @@ private func rules(_ d: Daemon, _ p: Paths) async throws -> [[String: JSONValue]
 }
 private let add: [String: JSONValue] = ["method": "GET", "host": "api.example.com", "path": "/pdp", "status": 418, "body": "oi", "delay": 300]
 
-@Suite(.serialized) struct NetworkRuleApprovalTests {
+@Suite(.serialized, .daemonPt) struct NetworkRuleApprovalTests {
     @Test func agentRuleAddRaisesCardAndStaysDisabledUntilAllowed() async throws {
         try await withDaemon { d, p in
             let t = try await shepherd(d, p)

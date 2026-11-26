@@ -34,7 +34,7 @@ final class FakeUpdateFetch: @unchecked Sendable {
     }
 }
 
-struct UpdateCheckerTests {
+@Suite(.daemonPt) struct UpdateCheckerTests {
     static let manifestURL = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json")!
     static let dmg = Data(repeating: 7, count: 2048)
     static func hex(_ d: Data) -> String { SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() }

@@ -18,7 +18,7 @@ extension CommandRouter {
     /// args `{url, offset? (default 0), etag? (the first chunk's)}` → `{mime, size, offset, d, done, etag}`.
     func remoteFile(_ r: Request, device: RemoteDevice) async throws -> JSONValue {
         func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        let gone = ProtocolError(code: .notFound, message: "Arquivo não encontrado.")
+        let gone = ProtocolError(code: .notFound, message: tr("Arquivo não encontrado.", "File not found."))
         guard let raw = str(r, "url"), let u = URLComponents(string: raw), let host = u.host?.lowercased() else { throw bad("url: collie-artifact://<id>/<caminho> ou collie-lib://…") }
         var offset = 0
         if let v = r.args["offset"] {
@@ -33,7 +33,7 @@ extension CommandRouter {
         switch u.scheme?.lowercased() {
         case "collie-artifact":
             guard let id = UUID(uuidString: host), let a = try await artifacts.list().first(where: { $0.id == id }) else { throw gone }
-            guard !parts.isEmpty else { throw bad("Falta o caminho do arquivo no artifact.") }
+            guard !parts.isEmpty else { throw bad(tr("Falta o caminho do arquivo no artifact.", "The file path inside the artifact is missing.")) }
             let base = (await artifacts.dir).appendingPathComponent(a.folder).resolvingSymlinksInPath()
             // resolved, links included: a link that leads out of the artifact's folder is refused, not followed
             let f = base.appendingPathComponent(parts.joined(separator: "/")).resolvingSymlinksInPath()
@@ -65,10 +65,10 @@ extension CommandRouter {
         }
 
         if let e = str(r, "etag"), e != file.etag {
-            throw ProtocolError(code: .conflict, message: "O arquivo mudou entre as partes: comece de novo.")
+            throw ProtocolError(code: .conflict, message: tr("O arquivo mudou entre as partes: comece de novo.", "The file changed between parts: start again."))
         }
         let size = file.data.count
-        guard offset < size || offset == 0 else { throw bad("offset além do fim do arquivo (\(size) bytes).") }
+        guard offset < size || offset == 0 else { throw bad(tr("offset além do fim do arquivo (\(size) bytes).", "offset past the end of the file (\(size) bytes).")) }
         let end = min(size, offset + Self.fileChunk)
         if let wait = remoteLimits.takeBytes(device.id, end - offset) {
             throw ProtocolError(code: .tooMany, message: "Muitos arquivos de uma vez: tente de novo em instantes.", retryAfter: (wait * 10).rounded(.up) / 10)

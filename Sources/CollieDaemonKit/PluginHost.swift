@@ -127,7 +127,7 @@ extension CommandRouter {
         if plugin.id == "diagram" || plugin.id == "preview", let me = caller, panel.placement != .canvas, panel.placement != .headless {
             let mine = DiagramFile.real(try await projectRoot(of: me)).path
             guard case .string(let root)? = panel.state["root"], DiagramFile.real(URL(fileURLWithPath: root)).path == mine else {
-                throw ProtocolError(code: .notConnected, message: "O painel '\(panel.name)' é de outro projeto")
+                throw ProtocolError(code: .notConnected, message: tr("O painel '\(panel.name)' é de outro projeto", "Panel '\(panel.name)' belongs to another project"))
             }
         }
         var args = r.args; args["panel"] = nil

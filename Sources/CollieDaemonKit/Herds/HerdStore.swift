@@ -41,25 +41,25 @@ actor HerdStore {
     }
 
     func put(_ p: Herd) async throws {
-        guard !Herd.factory.contains(where: { $0.id == p.id }) else { throw Self.bad("rebanho de fábrica não pode ser substituído") }
+        guard !Herd.factory.contains(where: { $0.id == p.id }) else { throw Self.bad(tr("rebanho de fábrica não pode ser substituído", "a factory herd cannot be replaced")) }
         try HerdFormat.validate(p)
         let data: Data
-        do { data = try HerdFormat.encode(p) } catch { throw Self.bad("rebanho: não foi possível codificar", .internal) }
+        do { data = try HerdFormat.encode(p) } catch { throw Self.bad(tr("rebanho: não foi possível codificar", "herd: could not encode"), .internal) }
         let to = dir.appendingPathComponent("\(p.id).\(Self.ext)")
         try await UnixSocketClient.offPool { try DesignService.writePrivate(data, to: to) }
     }
 
     func setAside(_ id: String) async throws {
-        guard !Herd.factory.contains(where: { $0.id == id }) else { throw Self.bad("rebanho de fábrica não pode ser removido") }
-        guard Self.safe(id) else { throw Self.bad("rebanho \(id) não existe", .notFound) }
+        guard !Herd.factory.contains(where: { $0.id == id }) else { throw Self.bad(tr("rebanho de fábrica não pode ser removido", "a factory herd cannot be removed")) }
+        guard Self.safe(id) else { throw Self.bad(tr("rebanho \(id) não existe", "herd \(id) does not exist"), .notFound) }
         let from = dir.appendingPathComponent("\(id).\(Self.ext)")
         let stamp = "\(Int64(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(8).lowercased())"   // same ms: no overwrite
         let to = dir.appendingPathComponent(".removed/\(id)-\(stamp).\(Self.ext)")
         try await UnixSocketClient.offPool {
             let fm = FileManager.default
-            guard fm.fileExists(atPath: from.path) else { throw Self.bad("rebanho \(id) não existe", .notFound) }
+            guard fm.fileExists(atPath: from.path) else { throw Self.bad(tr("rebanho \(id) não existe", "herd \(id) does not exist"), .notFound) }
             try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            guard rename(from.path, to.path) == 0 else { throw Self.bad("rebanho: não foi possível mover \(from.path)", .internal) }
+            guard rename(from.path, to.path) == 0 else { throw Self.bad(tr("rebanho: não foi possível mover \(from.path)", "herd: could not move \(from.path)"), .internal) }
         }
     }
 }

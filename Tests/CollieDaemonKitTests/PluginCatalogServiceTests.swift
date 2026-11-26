@@ -110,7 +110,7 @@ private func leftovers(_ root: URL) -> [String] {
         .filter { !["installed.json", "catalog.json", "catalog.json.sig"].contains($0) }.sorted()
 }
 
-@Suite struct PluginCatalogServiceTests {
+@Suite(.daemonPt) struct PluginCatalogServiceTests {
     @Test func installsFromCatalog() async throws {
         try await withTemp { d in
             let root = d.appendingPathComponent("root"), net = Net(), p = try pack(d, version: "0.1.0")

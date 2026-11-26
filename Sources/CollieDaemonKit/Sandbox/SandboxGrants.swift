@@ -79,31 +79,31 @@ struct SandboxGrantStore {
     }
 
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
-        if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
+        if op == "exec" { return tr("Executar este programa não pode ser liberado no sandbox.", "Running this program cannot be allowed in the sandbox.") }
         // B (round 3): every refusal compares without case, as the macOS volume does
         let p = URL(fileURLWithPath: path).pathComponents.map { $0.lowercased() }
         func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents.map { $0.lowercased() } }
         if comps(home).starts(with: p) || EssentialPaths.tooWide.contains(where: { comps(home.appendingPathComponent($0)) == p }) {
-            return "Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas."
+            return tr("Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas.", "Too broad: Collie does not allow the whole home folder, ~/Library or ~/Library/Application Support, nor anything above them.")
         }
         func within(_ u: URL) -> Bool { p.starts(with: comps(u)) }
         func closes(_ e: String) -> Bool { Self.closes(p, e, home: home) }
-        if within(collie) { return "Dados do Collie (e o token de admin) nunca são liberados para um agente." }
+        if within(collie) { return tr("Dados do Collie (e o token de admin) nunca são liberados para um agente.", "Collie data (and the admin token) is never allowed for an agent.") }
         if (EssentialPaths.secrets + EssentialPaths.neverGranted).contains(where: closes) {
-            return "Segredos (chaves SSH, credenciais, chaves do sistema, e-mail, mensagens, perfis de navegador) e agentes do launchd nunca são liberados."
+            return tr("Segredos (chaves SSH, credenciais, chaves do sistema, e-mail, mensagens, perfis de navegador) e agentes do launchd nunca são liberados.", "Secrets (SSH keys, credentials, system keys, email, messages, browser profiles) and launchd agents are never allowed.")
         }
         if let app, within(app) || comps(app).starts(with: p) {
-            return "O app do Collie (e as pastas que o contêm) nunca é liberado: o launchd roda o daemon de lá, fora do sandbox."
+            return tr("O app do Collie (e as pastas que o contêm) nunca é liberado: o launchd roda o daemon de lá, fora do sandbox.", "The Collie app (and the folders containing it) is never allowed: launchd runs the daemon from there, outside the sandbox.")
         }
         if p.contains(where: { $0.hasSuffix(".git") }) {
-            return "Pastas do git (.git) nunca são liberadas: o seu git executa hooks e configuração de lá fora do sandbox."
+            return tr("Pastas do git (.git) nunca são liberadas: o seu git executa hooks e configuração de lá fora do sandbox.", "Git folders (.git) are never allowed: your git runs hooks and configuration from there, outside the sandbox.")
         }
         guard op != "read" else { return nil }
         if EssentialPaths.neverWritable.contains(where: closes) {
-            return "Configuração que roda fora do sandbox (rc do shell, git, gh, npm, preferências, ~/Applications) nunca é liberada para escrita."
+            return tr("Configuração que roda fora do sandbox (rc do shell, git, gh, npm, preferências, ~/Applications) nunca é liberada para escrita.", "Configuration that runs outside the sandbox (shell rc, git, gh, npm, preferences, ~/Applications) is never allowed for writing.")
         }
         if closed.contains(where: within) {
-            return "Os cercados deste pasto nunca são graváveis daqui: abra um terminal no cercado."
+            return tr("Os cercados deste pasto nunca são graváveis daqui: abra um terminal no cercado.", "This pasture's paddocks are never writable from here: open a terminal in the paddock.")
         }
         return nil
     }

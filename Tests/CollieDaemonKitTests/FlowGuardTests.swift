@@ -374,7 +374,7 @@ struct FlowGuardTests {
         let fx = try Droid(xml([ax("Voltar", "[0,0][300,100]", clickable: true), ax("Pagar", "[0,2000][1080,2200]", clickable: true)]))
         let svc = fx.svc, panel = fx.panel
         // the plan's own classification lets everything through: the command's guard alone refuses
-        var runner = FlowRunner(resolve: { s async throws(ProtocolError) in (false, s) }) { c, a async throws(ProtocolError) in
+        var runner = FlowRunner(classify: { _ in false }) { c, a async throws(ProtocolError) in
             try await svc.run(c, panel: panel, args: a, cwd: nil)
         }
         runner.guarded = true
@@ -391,5 +391,124 @@ struct FlowGuardTests {
             #expect(await sent.args.map { $0["guard"] } == (confirmed ? [nil, nil, nil] : [.string("destructive"), .string("destructive"), nil]))
         }
         await fx.cleanup()
+    }
+}
+
+// wf2: a guarded `tap ref:` (a plan's, or one from the step before) reads the screen again, needs the node the ref named
+// there (`FlowClassifier.refound`: same class, text, description and id, edges within `refTolerance`), touches that
+// node of the new read (its new centre) and classifies it; no such node: `.conflict`, nothing touched. Through the real
+// `DeviceService` (the fakes above).
+
+/// The ref the panel's last read gave the node labelled `label`.
+private func ref(_ svc: DeviceService, _ panel: Panel, _ label: String) async throws -> String {
+    try #require(await svc.refs[panel.id]?.first { $0.text == label || $0.desc == label }?.ref)
+}
+
+struct FlowGuardRefTests {
+    @Test func androidARefToVoltarOnAScreenThatAdvancedToPagarIsRefusedNeverTouchingPagar() async throws {
+        let fx = try Droid(xml([ax("Voltar", "[0,0][300,100]", clickable: true)]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        try fx.show(xml([ax("Pagar", "[0,0][300,100]", clickable: true)]))   // the screen moved on by itself
+        let e = await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }
+        #expect(e?.code == .conflict, "\(String(describing: e))")
+        #expect(fx.touches.isEmpty, "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func iosARefToVoltarOnAScreenThatAdvancedToPagarIsRefusedNeverTouchingPagar() async throws {
+        let fx = try Sim(app([el("Button", "Voltar", (0, 40, 100, 40))]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        try fx.show(app([el("Button", "Pagar", (0, 40, 100, 40))]))
+        let e = await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }
+        #expect(e?.code == .conflict, "\(String(describing: e))")
+        #expect(fx.touches.isEmpty, "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func androidARefWhoseNodeIsUnchangedOnePixelOffIsTappedAtTheNewCentre() async throws {
+        let fx = try Droid(xml([ax("Voltar", id: "com.shop:id/back", "[0,0][300,100]", clickable: true)]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        // a banner above renumbers the refs; the helper and uiautomator round 1 px apart
+        try fx.show(xml([ax("Oferta", cls: "TextView", "[0,1200][300,1300]"), ax("Voltar", id: "com.shop:id/back", "[1,1][301,101]", clickable: true)]))
+        #expect(try await fx.run("device.tap", with(["ref": .string(r)])) == .object([:]))
+        #expect(fx.touches == ["-s R58M shell input tap 151 51"], "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func iosARefWhoseNodeIsUnchangedOnePixelOffIsTappedAtTheNewCentre() async throws {
+        let fx = try Sim(app([el("Button", "Voltar", id: "back", (0, 40, 100, 40))]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        try fx.show(app([el("Button", "Voltar", id: "back", (1, 41, 100, 40))]))
+        #expect(try await fx.run("device.tap", with(["ref": .string(r)])) == .object([:]))
+        #expect(fx.touches == ["tap -x 51 -y 61 --udid \(fx.udid)"], "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func aNodeMovedBeyondTheToleranceIsAConflict() async throws {
+        let fx = try Droid(xml([ax("Voltar", "[0,0][300,100]", clickable: true)]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        try fx.show(xml([ax("Voltar", "[0,20][300,120]", clickable: true)]))   // 20 px down: another layout
+        let e = await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }
+        #expect(e?.code == .conflict && e?.message.contains("screen changed") == true, "\(String(describing: e))")
+        #expect(fx.touches.isEmpty, "\(fx.touches)")
+        // unit: the tolerance, the identity, and two candidates (fail-closed)
+        let n = UINode(ref: "e2", cls: "Button", text: "Voltar", desc: "", id: "back", bounds: CGRect(x: 0, y: 0, width: 300, height: 100), clickable: true, depth: 1)
+        func moved(_ d: CGFloat, text: String = "Voltar") -> UINode {
+            var m = n; m.ref = "e7"; m.text = text; m.bounds = n.bounds.offsetBy(dx: d, dy: d); return m
+        }
+        #expect(FlowClassifier.refound(n, in: [moved(FlowClassifier.refTolerance)])?.ref == "e7")
+        #expect(FlowClassifier.refound(n, in: [moved(FlowClassifier.refTolerance + 1)]) == nil)
+        #expect(FlowClassifier.refound(n, in: [moved(0, text: "Pagar")]) == nil)
+        #expect(FlowClassifier.refound(n, in: [moved(0), moved(1)]) == nil)
+        await fx.cleanup()
+    }
+
+    @Test func androidARefOfANonClickableContainerWithFinalizarPedidoAtItsCentreIsRefused() async throws {
+        let fx = try Droid(xml([ax(id: "com.shop:id/footer", cls: "LinearLayout", "[0,1800][1080,2200]",
+                                   [ax("Finalizar pedido", cls: "TextView", "[340,1950][740,2050]", clickable: true)])]))
+        _ = try await fx.run("device.ui")
+        let r = try #require(await fx.svc.refs[fx.panel.id]?.first { $0.id == "com.shop:id/footer" }?.ref)
+        #expect(destructive(await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }))
+        #expect(fx.touches.isEmpty, "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func iosARefOfANonClickableGroupWithFinalizarPedidoAtItsCentreIsRefused() async throws {
+        let fx = try Sim(app([el("Other", id: "checkout", (0, 600, 390, 200), [el("Button", "Finalizar pedido", (95, 680, 200, 40))])]))
+        _ = try await fx.run("device.ui")
+        let r = try #require(await fx.svc.refs[fx.panel.id]?.first { $0.id == "checkout" }?.ref)
+        #expect(destructive(await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }))
+        #expect(fx.touches.isEmpty, "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func aGuardedPlanReadsTheScreenOncePerStep() async throws {
+        let fx = try Droid(xml([ax("Voltar", "[0,0][300,100]", clickable: true), ax("Menu", "[0,500][300,600]", clickable: true)]))
+        _ = try await fx.run("device.ui")
+        let r = try await ref(fx.svc, fx.panel, "Voltar")
+        let svc = fx.svc, panel = fx.panel
+        var runner = FlowRunner { c, a async throws(ProtocolError) in try await svc.run(c, panel: panel, args: a, cwd: nil) }
+        runner.guarded = true
+        let dumps = { fx.adb.filter { $0.contains("uiautomator dump") }.count }
+        let before = dumps()
+        let plan = try FlowPlan.parse(Data(#"{"steps":[{"action":"tap","target":"ref:\#(r)"},{"action":"tap","target":"Menu"},{"action":"tap","target":"150,550"},{"action":"key","target":"Back"}]}"#.utf8))
+        #expect(try await runner.run(plan) == .object(["ok": .bool(true), "steps": .number(4)]))
+        #expect(dumps() - before == 3, "\(fx.adb)")   // the three taps' own reads; the key reads none
+        #expect(fx.touches == ["-s R58M shell input tap 150 50", "-s R58M shell input tap 150 550", "-s R58M shell input tap 150 550"], "\(fx.touches)")
+        await fx.cleanup()
+    }
+
+    @Test func aStepHasNoPinAndAPlanWithPinIsRefused() throws {
+        #expect(!Mirror(reflecting: FlowPlan.Step(action: "tap", target: "ref:e2")).children.contains { $0.label == "pin" })
+        #expect(throws: ProtocolError.self) { try FlowPlan.parse(Data(#"{"steps":[{"action":"tap","target":"ref:e2","pin":{"text":"Voltar"}}]}"#.utf8)) }
+        do { _ = try FlowPlan.parse(Data(#"{"steps":[{"action":"tap","target":"ref:e2","pin":{"text":"Voltar"}}]}"#.utf8)) } catch {
+            #expect(error.code == .invalidArgs && error.message.contains("unknown key 'pin'"), "\(error)")
+        }
+        #expect(try FlowRunner.command(FlowPlan.Step(action: "tap", target: "ref:e2")).1 == ["ref": .string("e2")])
     }
 }

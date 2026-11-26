@@ -176,7 +176,6 @@ extension DeviceService {
                 guard var n = guarded ?? refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
-                try FlowClassifier.checkPin(args, n)   // we1: the node classified, or refused
                 // semantic click on a node the helper read; a stale path: one fresh read, the same node found again
                 // (class, text, desc and id), one more click. Still gone, or not clickable by the helper: tap its center.
                 if let path = n.path, var done = await click(path) {
@@ -185,7 +184,6 @@ extension DeviceService {
                         try alive()
                         refs[panel.id] = fresh
                         if let m = fresh.first(where: { $0.cls == n.cls && $0.text == n.text && $0.desc == n.desc && $0.id == n.id }), let p = m.path {
-                            try FlowClassifier.checkPin(args, m)   // we1: the node found again is checked too
                             // wf1: the node found again is classified in the read it was found in
                             if guarded != nil { try FlowClassifier.guardCheck(FlowPlan.Step(action: "tap", target: "ref:" + m.ref), nodes: fresh, touching: m) }
                             n = m; done = await click(p) ?? false

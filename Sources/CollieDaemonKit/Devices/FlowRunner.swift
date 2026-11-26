@@ -13,8 +13,6 @@ struct FlowPlan: Codable, Sendable, Equatable {
         var text: String? = nil
         var expectSig: String? = nil
         var destructive: Bool? = nil   // d7: runs only with the user's confirmation (FlowRunner.confirmed)
-        /// we1: the node a `ref:` tap was classified on (`FlowClassifier.resolve`), sent to the tap as `pin`; never in a plan file.
-        var pin: UINode? = nil
         enum CodingKeys: String, CodingKey, CaseIterable { case action, target, text, expectSig, destructive }
     }
     var steps: [Step]
@@ -115,61 +113,20 @@ enum FlowClassifier {
 
     static func destructive(_ s: FlowPlan.Step, nodes: [UINode]) -> Bool { labels(s, nodes: nodes).contains(where: destructive) }
 
-    /// c1: `s` classified against the screen its command will act on. `nodes` is the last read; `dump` reads the screen
-    /// again (the `device.ui` path). A `ref:` keeps `nodes` (a new read renumbers the refs the tap will use); any other tap
-    /// or swipe reads first (we1: even a read "fresh" by generation, since a screen changes by itself, a timer or a load).
-    static func classify(_ s: FlowPlan.Step, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
-                         dump: () async throws(ProtocolError) -> [UINode]) async throws(ProtocolError) -> Bool {
-        try await resolve(s, nodes: nodes, dump: dump).destructive
-    }
+    /// wf2: how far a node may move between two reads and still be the node a `ref:` named (`uiautomator` and the helper
+    /// round bounds 1 px apart). ponytail: one value for Android pixels and iOS points (8 pt ≈ 24 px); per platform if it bites.
+    static let refTolerance: CGFloat = 8
 
-    /// wd1: `classify`, plus the step to run in its place. A tap by text or `id:` is pinned to the `ref:` of the node it
-    /// resolved to in that same read (`nth` as `device.tap`: none, so several hits are its invalidArgs), so the tap touches
-    /// what was classified and reads no second dump. A text the tree misses goes to `ocr` (the OCR fallback: its nodes,
-    /// joined to the refs, or nil); then the OCR's own label is classified, and no OCR hit with a label is refused (fail-closed:
-    /// an unpinned tap would read and OCR again, unclassified). An `id:` the tree misses is the tap's notFound.
-    /// we1: every pinned tap (a plan's `ref:` too) carries the node classified in `pin`; the tap refuses a ref that resolves
-    /// to another node by then (`checkPin`: a concurrent `device screen` renumbered the refs). A `ref:` with no node in
-    /// `nodes` is refused (fail-closed: nothing was classified).
-    static func resolve(_ s: FlowPlan.Step, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
-                        dump: () async throws(ProtocolError) -> [UINode],
-                        ocr: ([UINode]) async -> [UINode]? = { _ in nil }) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
-        guard s.action == "tap" || s.action == "swipe" else { return (false, s) }
-        var pinned = s
-        if s.action == "tap", s.target.hasPrefix("ref:") {
-            guard let n = nodes.first(where: { "ref:" + $0.ref == s.target }) else { return (true, s) }
-            pinned.pin = n
-            return (destructive(s, nodes: nodes), pinned)
+    /// wf2: the node of `fresh` (a new read) that is still `n` (a node of the read a `ref:` named): same class, text,
+    /// description and id, every edge within `refTolerance`. None, or more than one: nil (the screen changed; fail-closed).
+    static func refound(_ n: UINode, in fresh: [UINode]) -> UINode? {
+        let t = refTolerance
+        let same = fresh.filter {
+            $0.cls == n.cls && $0.text == n.text && $0.desc == n.desc && $0.id == n.id
+                && abs($0.bounds.minX - n.bounds.minX) <= t && abs($0.bounds.minY - n.bounds.minY) <= t
+                && abs($0.bounds.maxX - n.bounds.maxX) <= t && abs($0.bounds.maxY - n.bounds.maxY) <= t
         }
-        let read = try await dump()
-        guard s.action == "tap", point(s) == nil else { return (destructive(s, nodes: read), s) }
-        let id = s.target.hasPrefix("id:") ? String(s.target.dropFirst(3)) : nil
-        let text = id == nil ? s.target : nil
-        do {
-            let n = try UITree.target(read, text: text, id: id, nth: nil)
-            pinned.target = "ref:" + n.ref; pinned.pin = n
-            return (destructive(s, nodes: read), pinned)
-        } catch where error.code == .notFound {
-            guard let text else { throw error }
-            let all = read + (await ocr(read) ?? [])
-            // the tap could not be pinned to a node classified: refused, never left to the tap's own read
-            guard let n = try? UITree.target(all, text: text, id: nil, nth: nil), !(n.text + n.desc).isEmpty else { return (true, s) }
-            pinned.target = "ref:" + n.ref; pinned.pin = n
-            return (destructive(s, nodes: all), pinned)
-        }
-    }
-
-    /// we1: what a pinned tap names of the node classified: class, text, description, id and bounds.
-    static func identity(_ n: UINode) -> JSONValue {
-        .object(["cls": .string(n.cls), "text": .string(n.text), "desc": .string(n.desc), "id": .string(n.id),
-                 "bounds": .array([n.bounds.minX, n.bounds.minY, n.bounds.width, n.bounds.height].map { .number(Double($0)) })])
-    }
-
-    /// we1: called by `device.tap --ref` on the node it is about to touch; a `pin` (the plan runner's) naming another node is
-    /// refused, never tapped. No `pin` (an agent's own `--ref`): unchecked, as before.
-    static func checkPin(_ args: [String: JSONValue], _ n: UINode) throws(ProtocolError) {
-        guard let p = args["pin"], p != .null, p != identity(n) else { return }
-        throw ProtocolError(code: .conflict, message: "ref \(n.ref) is no longer the node classified (the screen was read again meanwhile); tap refused")
+        return same.count == 1 ? same[0] : nil
     }
 
     /// wf1: how a guarded command's refusal of a destructive target starts (`FlowRunner` turns it into `refused: destructive`).
@@ -275,29 +232,24 @@ enum FlowClassifier {
 /// carries the `errors` joined so far in its message (the crash that explains a later "not found").
 /// d7: a `destructive` step runs only when `confirmed` (the user's `--confirm-destructive`; the router never sets it for
 /// an agent); else the plan stops before it: `{ok:false, refused:"destructive", at (1-based), done}`, the earlier
-/// steps staying run. b3/c1: a step `classify` finds destructive (the device service, `DeviceService.flowDestructive`,
-/// on the screen the step acts on) is refused the same way, marked or not; a failing classification stops the plan.
+/// steps staying run. b3: a step `classify` finds destructive (by default by its own target text, no read) is refused the
+/// same way, marked or not; a failing classification stops the plan. wf2: the screen is classified by each tap and
+/// swipe's `guard` alone, in the command's own read (one read per step); the runner only sends it and reports the refusal.
 struct FlowRunner: Sendable {
     typealias Act = @Sendable (_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue
     typealias Classify = @Sendable (FlowPlan.Step) async throws(ProtocolError) -> Bool
-    /// wd1: the classification and the step to run in its place (`FlowClassifier.resolve`: a tap pinned to the ref classified).
-    typealias Resolve = @Sendable (FlowPlan.Step) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step)
     var confirmed = false
     /// wf1: every tap and swipe of an unconfirmed plan carries `guard: "destructive"`, so the command classifies the node it
     /// resolved in its own read and refuses it before touching (`FlowClassifier.guardCheck`). `device.run` sets it; off
     /// only for tests of the runner's own steps.
     var guarded = false
-    let resolve: Resolve
+    let classify: Classify
     let act: Act
     /// c2: the plan's client is gone; read between steps.
     var hungUp: @Sendable () -> Bool = { false }
 
     init(confirmed: Bool = false, classify: @escaping Classify = { FlowClassifier.destructive($0, nodes: []) }, act: @escaping Act) {
-        self.init(confirmed: confirmed, resolve: { s throws(ProtocolError) in (try await classify(s), s) }, act: act)
-    }
-
-    init(confirmed: Bool = false, resolve: @escaping Resolve, act: @escaping Act) {
-        self.confirmed = confirmed; self.resolve = resolve; self.act = act
+        self.confirmed = confirmed; self.classify = classify; self.act = act
     }
 
     /// ponytail: a fixed screen (`nodes`, never read again), for tests of `FlowClassifier.labels`.
@@ -305,10 +257,10 @@ struct FlowRunner: Sendable {
         self.init(confirmed: confirmed, classify: { s in FlowClassifier.destructive(s, nodes: await nodes()) }, act: act)
     }
 
-    /// Marked by the plan, or a step the server classifies; the step to run (`resolve`'s).
-    func destructive(_ s: FlowPlan.Step) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
-        if s.destructive == true { return (true, s) }
-        return try await resolve(s)
+    /// Marked by the plan, or a step `classify` finds destructive.
+    func destructive(_ s: FlowPlan.Step) async throws(ProtocolError) -> Bool {
+        if s.destructive == true { return true }
+        return try await classify(s)
     }
 
     func run(_ plan: FlowPlan) async throws(ProtocolError) -> JSONValue {
@@ -318,14 +270,14 @@ struct FlowRunner: Sendable {
             if !errors.isEmpty { o["errors"] = .array(errors) }
             return .object(o)
         }
-        for (i, planned) in plan.steps.enumerated() {
+        for (i, step) in plan.steps.enumerated() {
             // ponytail: Task.checkCancellation() throws an untyped error; the flag is the same check, typed
             if Task.isCancelled || hungUp() {
                 throw ProtocolError(code: .timeout, message: "plan cancelled before step \(i + 1) (done: \(i))")
             }
-            var refuse = false, step = planned
-            do { (refuse, step) = confirmed ? (false, planned) : try await destructive(planned) } catch {
-                throw ProtocolError(code: error.code, message: "step \(i + 1) (\(planned.action) \(planned.target)): \(error.message)")
+            var refuse = false
+            do { refuse = confirmed ? false : try await destructive(step) } catch {
+                throw ProtocolError(code: error.code, message: "step \(i + 1) (\(step.action) \(step.target)): \(error.message)")
             }
             if refuse {
                 return result(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
@@ -340,7 +292,7 @@ struct FlowRunner: Sendable {
                     return result(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
                                    "done": .number(Double(i))])
                 }
-                var m = "step \(i + 1) (\(planned.action) \(planned.target)): \(error.message)"
+                var m = "step \(i + 1) (\(step.action) \(step.target)): \(error.message)"
                 if !errors.isEmpty, let e = try? JSONEncoder().encode(JSONValue.array(errors)) { m += "; errors so far: " + String(decoding: e, as: UTF8.self) }
                 throw ProtocolError(code: error.code, message: m)
             }
@@ -368,11 +320,7 @@ struct FlowRunner: Sendable {
         switch s.action {
         case "tap":
             if t.hasPrefix("id:"), t.count > 3 { return ("device.tap", ["id": .string(String(t.dropFirst(3)))]) }
-            if t.hasPrefix("ref:"), t.count > 4 {   // b3; we1: with the node classified, checked by the tap
-                var a: [String: JSONValue] = ["ref": .string(String(t.dropFirst(4)))]
-                if let n = s.pin { a["pin"] = FlowClassifier.identity(n) }
-                return ("device.tap", a)
-            }
+            if t.hasPrefix("ref:"), t.count > 4 { return ("device.tap", ["ref": .string(String(t.dropFirst(4)))]) }   // b3
             if let xy = ints(2) { return ("device.tap", ["x": .string(xy[0]), "y": .string(xy[1])]) }
             guard !t.isEmpty else { throw bad("tap needs a target (a label, id:<id>, ref:<ref> or x,y)") }
             return ("device.tap", ["text": .string(t)])

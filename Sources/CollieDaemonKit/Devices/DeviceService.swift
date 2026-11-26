@@ -419,15 +419,21 @@ actor DeviceService {
             }
             args["ref"] = touched.map { .string($0.ref) }
             if let step { try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched) }
-        } else if let step {
-            let nodes: [UINode]
-            if case .string(let ref)? = args["ref"] {   // a ref names a node of the last read: that read is the tap's
-                nodes = refs[panel.id] ?? []
-                guard let n = nodes.first(where: { $0.ref == ref }) else {
+        } else if var step {
+            var named: UINode?   // wf2: a ref names a node of the last read; the tap reads again and touches it there
+            if case .string(let ref)? = args["ref"] {
+                guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
-                touched = n
-            } else { nodes = try await read() }   // a point: its labels in a fresh read
+                named = n
+            }
+            let nodes = try await read()   // a ref or a point: classified in a fresh read
+            if let named {
+                guard let m = FlowClassifier.refound(named, in: nodes) else {
+                    throw ProtocolError(code: .conflict, message: "ref \(step.target.dropFirst(4)) is no longer on the screen read again (the screen changed); tap refused, nothing touched")
+                }
+                touched = m; args["ref"] = .string(m.ref); step.target = "ref:" + m.ref
+            }
             try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched)
         }
         var r = try await act(command, args, step == nil ? nil : touched)
@@ -702,24 +708,6 @@ actor DeviceService {
     /// The `sig` of the screen an action returned (`--then screen`); "" when none.
     static func screenSig(_ r: JSONValue) -> String {
         if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
-    }
-
-    /// c1/wd1: whether plan step `s` acts on a destructive node of `panel`, and the step to run (`FlowClassifier.resolve`:
-    /// a tap pinned to the ref classified, in these refs), the screen read again (the `device.ui` path, refs updated) for
-    /// every tap and swipe but a `ref:` (we1: one read per step, the tap reads none); a text the tree misses read by the OCR
-    /// as `device.tap` does.
-    func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
-        let serial = { if case .string(let v)? = panel.state["serial"] { v } else { "" } }()
-        return try await FlowClassifier.resolve(s, nodes: refs[panel.id] ?? [], dump: { () async throws(ProtocolError) -> [UINode] in
-            _ = try await tracked("device.ui", panel: panel, args: [:], cwd: cwd)
-            return refs[panel.id] ?? []
-        }, ocr: { nodes in
-            guard !nodes.contains(where: \.ocr) else { return nil }   // as ocrFallback: the tree already holds the OCR's items
-            let read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: OCRTrigger.find.rawValue, region: nil)
-            guard let found = read.nodes, !found.isEmpty else { return nil }
-            if !closed.contains(panel.id) { refs[panel.id] = nodes + found }   // the pinned OCR ref: its box centre
-            return found
-        })
     }
 
     /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.

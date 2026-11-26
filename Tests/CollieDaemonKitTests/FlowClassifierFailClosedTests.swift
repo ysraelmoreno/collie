@@ -5,37 +5,27 @@ import CollieDevice
 import CollieProtocol
 @testable import CollieDaemonKit
 
-/// A fake device the way `DeviceService` keeps it: the last read (`nodes`), fresh until an action; an action moves to
-/// the next screen, a dump reads the current one, `drift` changes the screen by itself (a timer: no action, still fresh).
-/// Each tap's args are kept, to check the ref it touches.
+/// A fake device: the screen shown (an action moves to the next one), each tap's args kept. The runner classifies the
+/// screen shown with `FlowClassifier.labels` (`FlowRunner(nodes:)`); reading and touching are `DeviceService`'s
+/// (`FlowGuardTests`, `FlowGuardRefTests`).
 private actor Device {
-    var screens: [[UINode]]
+    let screens: [[UINode]]
     var shown = 0
-    var nodes: [UINode]
-    var fresh = true
-    var dumps = 0
     var taps: [[String: JSONValue]] = []
-    var ocr: [UINode]?
-    init(_ screens: [[UINode]], ocr: [UINode]? = nil) { self.screens = screens; nodes = screens[0]; self.ocr = ocr }
+    init(_ screens: [[UINode]]) { self.screens = screens }
     func act(_ c: String, _ a: [String: JSONValue]) -> JSONValue {
         if c == "device.tap" { taps.append(a) }
-        fresh = false; shown = min(shown + 1, screens.count - 1)
+        shown = min(shown + 1, screens.count - 1)
         return .object([:])
     }
-    func drift() { shown = min(shown + 1, screens.count - 1) }
-    func dump() -> [UINode] { dumps += 1; nodes = screens[shown]; fresh = true; return nodes }
-    /// `DeviceService.flowDestructive` over this device.
-    func resolve(_ s: FlowPlan.Step) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
-        try await FlowClassifier.resolve(s, nodes: nodes, dump: { () throws(ProtocolError) -> [UINode] in dump() },
-                                         ocr: { _ in ocr })
-    }
+    func current() -> [UINode] { screens[shown] }
 }
 private func node(_ ref: String, cls: String = "android.view.View", text: String = "", id: String = "", _ r: CGRect,
                   clickable: Bool = false, depth: Int) -> UINode {
     UINode(ref: ref, cls: cls, text: text, desc: "", id: id, bounds: r, clickable: clickable, depth: depth)
 }
 private func run(_ json: String, _ d: Device) async throws -> JSONValue {
-    try await FlowRunner(resolve: { s async throws(ProtocolError) in try await d.resolve(s) }) { c, a async throws(ProtocolError) in
+    try await FlowRunner(nodes: { await d.current() }) { c, a async throws(ProtocolError) in
         await d.act(c, a)
     }.run(try FlowPlan.parse(Data(json.utf8)))
 }
@@ -97,36 +87,8 @@ struct FlowClassifierFailClosedTests {
         #expect(await d.taps.isEmpty)
     }
 
-    // aScreenThatChangesByItselfIsTappedOnTheRefClassified: rewritten in FlowTapPinTests (we1: a new read every step)
-
-    @Test func aStaleReadIsReadOnceAndTheTapTouchesTheRefOfThatRead() async throws {
-        let a = [node("e1", full, depth: 0), node("e2", text: "Início", CGRect(x: 0, y: 0, width: 200, height: 100), clickable: true, depth: 1)]
-        let b = [node("e1", full, depth: 0), node("e2", text: "Menu", CGRect(x: 0, y: 0, width: 200, height: 100), clickable: true, depth: 1),
-                 node("e3", text: "Perfil", CGRect(x: 0, y: 500, width: 200, height: 100), clickable: true, depth: 1)]
-        let d = Device([a, b])
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"Início"},{"action":"tap","target":"Perfil"}]}"#, d) == ran(2))
-        #expect(await d.dumps == 2)   // we1: one read per step, the tap reads none
-        #expect(await d.taps.map { $0["ref"] } == [.string("e2"), .string("e3")])
-    }
-
-    @Test func anOCROnlyTextIsClassifiedByTheOCRsLabelAndPinnedToIt() async throws {
-        let tree = [node("e1", full, depth: 0)]
-        var pagar = node("o1", text: "Pagar", CGRect(x: 300, y: 2000, width: 400, height: 100), depth: 0); pagar.ocr = true
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"agar"}]}"#, Device([tree], ocr: [pagar])) == refused(at: 1))
-        var voltar = pagar; voltar.text = "Voltar"
-        let d = Device([tree], ocr: [voltar])
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"oltar"}]}"#, d) == ran(1))
-        #expect(await d.taps.map { $0["ref"] } == [.string("o1")])
-    }
-
-    @Test func aTextNeitherTheTreeNorTheOCRFindsIsRefused() async throws {
-        let tree = [node("e1", full, depth: 0)]
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"agar"}]}"#, Device([tree])) == refused(at: 1))
-        var blank = node("o1", CGRect(x: 300, y: 2000, width: 400, height: 100), depth: 0); blank.ocr = true
-        let d = Device([tree], ocr: [blank])
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"agar"}]}"#, d) == refused(at: 1))
-        #expect(await d.taps.isEmpty)
-    }
+    // wf2: a stale read, an OCR-only text and a text nothing finds are the tap's own read (`FlowGuardTests`: the changed
+    // screen, the OCR labels, the OCR node with no label; a text no read finds is `device.tap`'s notFound, nothing touched).
 
     @Test func theWiderListIsRefusedAndVoltarIsNot() async throws {
         let forms = ["cancelar assinatura", "cancel subscription", "encerrar conta", "close account", "limpar dados", "clear data",

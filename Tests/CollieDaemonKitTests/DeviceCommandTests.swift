@@ -105,9 +105,11 @@ private struct LiteFx {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("flow-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let flag = dir.appendingPathComponent(".collie/flows/enabled").path
         try await withDevice { d, p in
-            #expect(try await admin(d, p, "paddock.create", ["name": "k", "folder": dir.path]).ok)
+            let made = try await admin(d, p, "paddock.create", ["name": "k", "folder": dir.path])
+            guard made.ok, case .string(let pid)? = field(made, "id"), let uuid = UUID(uuidString: pid) else { Issue.record("\(made)"); return }
+            // b2: the opt-in lives in the daemon's root (CommandRouter.flowFlag), not in the worktree
+            let flag = p.root.appendingPathComponent("flows/\(uuid.uuidString)/enabled").path
             let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
                 args: ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")]), to: p.socket, timeoutSeconds: 60)
             guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }

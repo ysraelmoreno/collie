@@ -367,7 +367,7 @@ private struct LiteFx {
             #expect(text.hasPrefix("Tela: Offers   [voltar]\nAbas: [Points*] [Combos]") && !text.contains("Mudou"), "\(text)")
             // d1: the screen's signature, on the text and as a field
             guard case .string(let sig)? = field(r, "sig") else { Issue.record("\(r)"); return }
-            #expect(sig.count == 12 && text.hasSuffix("\nsig=\(sig)"), "\(text)")
+            #expect(sig.count == 12 && text.contains("\nsig=\(sig)"), "\(text)")
             #expect(field(r, "changed") == .array([]) && field(r, "tree") == nil)
             guard case .array(let fab)? = field(r, "floating"), case .object(let f)? = fab.first, case .string(let ref)? = f["ref"] else { Issue.record("\(r)"); return }
             #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs

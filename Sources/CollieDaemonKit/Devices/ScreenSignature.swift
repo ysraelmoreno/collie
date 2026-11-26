@@ -33,9 +33,12 @@ enum ScreenSignature {
             Node(label: i.label, id: i.id, role: role ?? i.role, selected: i.state.contains("selected"), inList: i.inList)
         }
         var nodes = s.title.map { [Node(label: $0, role: "title")] } ?? []
-        nodes += [s.back].compactMap { $0 }.map { node($0, "back") } + s.tabs.map { node($0, "tab") } + s.actions.map { node($0) }
-            + s.fields.map { node($0, "field") } + s.floating.map { node($0, "floating") }
-            + s.content.filter { !$0.ocr }.map { node($0) }
+        if let b = s.back { nodes.append(node(b, "back")) }
+        nodes += s.tabs.map { node($0, "tab") }
+        nodes += s.actions.map { node($0) }
+        nodes += s.fields.map { node($0, "field") }
+        nodes += s.floating.map { node($0, "floating") }
+        nodes += s.content.filter { !$0.ocr }.map { node($0) }
         return compute(nodes)
     }
 

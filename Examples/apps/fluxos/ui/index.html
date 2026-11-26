@@ -36,7 +36,7 @@
 <table><thead><tr><th>De</th><th>Ação</th><th>Alvo</th><th>Para</th><th>Vezes</th><th>Versão</th></tr></thead><tbody id="edges"></tbody></table>
 
 <script>
-// Everything shown is app data (screen names, labels): always textContent, never innerHTML.
+// Everything shown is app data (screen names, labels): always textContent, never parsed as markup.
 function cell(row, text, cls) {
   var td = document.createElement("td");
   td.textContent = text == null ? "" : String(text);

@@ -175,7 +175,7 @@ enum ArtifactTemplates {
         let common = """
             function libsMissing() {
               if (document.querySelector('.libs-note')) return;
-              const p = document.createElement('p'); p.className = 'muted libs-note'; p.textContent = 'Bibliotecas offline indisponíveis';
+              const p = document.createElement('p'); p.className = 'muted libs-note'; p.textContent = '\(tr("Bibliotecas offline indisponíveis", "Offline libraries unavailable"))';
               document.body.appendChild(p);
             }
             if (window.lucide) {

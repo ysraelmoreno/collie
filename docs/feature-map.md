@@ -236,7 +236,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 ### Fluxos (app de exemplo: grafo do app no device)
 
 - **Para que serve:** lê o log de ações `<cercado>/.collie/flows/actions.jsonl` (escrito por `collie device` com o log ligado) e monta o grafo do app (`Examples/apps/fluxos/store.py`, Python 3.9 sem dependências): nó = `sig` da tela, aresta = ação (`action`, `target`) de `sigBefore` para `sigAfter` com contagem, `app`, `appVersion` e `obsolete` (aresta de versão antiga contradita por uma nova fica obsoleta, não apagada); metas nomeadas apontam para nós. Grava `<cercado>/.collie/flows/graph.json` (0600, atômico); linha malformada conta em `skipped`.
-- **Como verificar:** `scripts/check-device-flows.sh d8`.
+- **Painel (d10):** `ui/index.html` servido em `/` (sem host externo; dados só como texto) lista metas, nós e arestas e o estado do registro (`GET /api/status`, mesmos campos de `device flow status`, lidos do arquivo `enabled`); `GET /api/graph` devolve o `graph.json`. Contrato, opt-in e roteiro manual do dono em `Examples/apps/fluxos/README.md`.
+- **Como verificar:** `scripts/check-device-flows.sh d8`, `d9`, `d10`.
 
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 

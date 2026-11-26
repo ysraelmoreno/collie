@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluxos</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fff; --muted: #6e6e73; --line: #d2d2d7; --on: #1a7f37; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --muted: #98989d; --line: #3a3a3c; --on: #3fb950; } }
+  body { margin: 0; padding: 12px 16px; font: 13px/1.4 -apple-system, system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  h2 { font-size: 13px; margin: 16px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: top; word-break: break-all; }
+  th { color: var(--muted); font-weight: 500; }
+  code { font: 12px ui-monospace, monospace; }
+  .on { color: var(--on); font-weight: 600; }
+  .muted, .obsolete { color: var(--muted); }
+  .obsolete { text-decoration: line-through; }
+  button { font: inherit; }
+</style>
+</head>
+<body>
+<h1>Fluxos</h1>
+<!-- ponytail: plain tables, no graph drawing; a layout comes when tables stop being readable. -->
+<p id="status" class="muted">Carregando…</p>
+<button id="reload" type="button">Atualizar</button>
+
+<h2>Metas</h2>
+<table><thead><tr><th>Meta</th><th>Tela (sig)</th></tr></thead><tbody id="goals"></tbody></table>
+
+<h2>Nós</h2>
+<table><thead><tr><th>Tela (sig)</th></tr></thead><tbody id="nodes"></tbody></table>
+
+<h2>Arestas</h2>
+<table><thead><tr><th>De</th><th>Ação</th><th>Alvo</th><th>Para</th><th>Vezes</th><th>Versão</th></tr></thead><tbody id="edges"></tbody></table>
+
+<script>
+// Everything shown is app data (screen names, labels): always textContent, never innerHTML.
+function cell(row, text, cls) {
+  var td = document.createElement("td");
+  td.textContent = text == null ? "" : String(text);
+  if (cls) td.className = cls;
+  row.appendChild(td);
+}
+function fill(id, rows, empty, cols) {
+  var body = document.getElementById(id);
+  body.textContent = "";
+  if (!rows.length) {
+    var tr = document.createElement("tr");
+    var td = document.createElement("td");
+    td.colSpan = cols; td.className = "muted"; td.textContent = empty;
+    tr.appendChild(td); body.appendChild(tr);
+    return;
+  }
+  rows.forEach(function (r) { body.appendChild(r); });
+}
+function row(values, cls) {
+  var tr = document.createElement("tr");
+  if (cls) tr.className = cls;
+  values.forEach(function (v) { cell(tr, v); });
+  return tr;
+}
+function get(path) {
+  return fetch(path, { cache: "no-store" }).then(function (r) {
+    if (!r.ok) throw new Error(path + ": " + r.status);
+    return r.json();
+  });
+}
+function load() {
+  get("api/status").then(function (s) {
+    var p = document.getElementById("status");
+    p.textContent = "";
+    var b = document.createElement("span");
+    b.className = s.enabled ? "on" : "muted";
+    b.textContent = s.enabled ? "Registro de ações ligado" : "Registro de ações desligado (collie device flow on)";
+    p.appendChild(b);
+    p.appendChild(document.createTextNode(" · " + s.path + " · " + s.bytes + " bytes"));
+  }).catch(function (e) { document.getElementById("status").textContent = "Estado do registro indisponível: " + e.message; });
+
+  get("api/graph").then(function (g) {
+    var goals = g.goals || {};
+    fill("goals", Object.keys(goals).sort().map(function (k) { return row([k, goals[k]]); }), "Nenhuma meta.", 2);
+    fill("nodes", (g.nodes || []).map(function (n) { return row([n]); }), "Nenhum nó: rode flow learn.", 1);
+    fill("edges", (g.edges || []).map(function (e) {
+      return row([e.from, e.action, e.target, e.to, e.count, e.appVersion], e.obsolete ? "obsolete" : "");
+    }), "Nenhuma aresta.", 6);
+  }).catch(function (e) { fill("edges", [], "Grafo indisponível: " + e.message, 6); });
+}
+document.getElementById("reload").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>

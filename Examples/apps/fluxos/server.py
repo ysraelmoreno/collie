@@ -5,6 +5,9 @@ GET  /api/goals                   -> {"goals": {name: sig}}
 GET  /api/go?goal=<meta>[&from=]  -> {"plan": FlowPlan} or 404 {"error": reason}; never runs anything
 GET  /api/show?goal=<meta>        -> the goal's node with the live edges in and out of it
 POST /api/learn                   -> rebuilds graph.json from actions.jsonl
+GET  /                            -> the panel (ui/index.html, no external host)
+GET  /api/graph                   -> graph.json as is (goals, nodes, edges) for the panel
+GET  /api/status                  -> the log's state as `collie device flow status` shows it: {enabled, path, bytes}
 
 The graph lives in `<paddock>/.collie/flows/` (store.py). Nothing here talks to the device or to the daemon: the agent
 runs the plan with `collie device run --plan`. Python 3.9 stdlib only.
@@ -26,6 +29,17 @@ from store import Invalid, Store  # noqa: E402
 
 HOST = "127.0.0.1"
 LOOPBACK_NAMES = ("127.0.0.1", "localhost")
+UI_INDEX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "index.html")
+
+
+def log_status(store):
+    """Same fields as `device flow status`, read from the files the daemon keeps (the `enabled` flag is the opt-in)."""
+    path = os.path.join(store.dir, "actions.jsonl")
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    return {"enabled": os.path.exists(os.path.join(store.dir, "enabled")), "path": path, "bytes": size}
 
 
 def last_sig(store):
@@ -80,6 +94,20 @@ class Handler(BaseHTTPRequestHandler):
         q = {k: v[0] for k, v in parse_qs(parts.query).items()}
         store = self.server.store
         try:
+            if method == "GET" and parts.path in ("/", "/ui", "/ui/", "/ui/index.html"):
+                with open(UI_INDEX, "rb") as handle:
+                    body = handle.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'")
+                self.end_headers()
+                return self.wfile.write(body)
+            if method == "GET" and parts.path == "/api/graph":
+                return self._json(200, store.load())
+            if method == "GET" and parts.path == "/api/status":
+                return self._json(200, log_status(store))
             if method == "GET" and parts.path == "/healthz":
                 return self._json(200, {"ok": True})
             if method == "GET" and parts.path == "/api/goals":

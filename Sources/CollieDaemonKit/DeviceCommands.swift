@@ -49,7 +49,16 @@ extension CommandRouter {
         }
         let panel = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: "device", from: caller?.id, in: ws)
         var args = r.args; args["panel"] = nil
-        return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd)
+        // d5: an agent's action goes to its paddock's flow log (the panel's when the agent is on the pasture); the user's
+        // own CLI calls are neither agent nor panel and are not recorded
+        let flow = caller.flatMap { me in flowLog(me.paddockId ?? panel?.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
+        return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd, flow: flow)
+    }
+
+    /// The flow log of paddock `id` (d5); nil without one. On or off is read when writing.
+    func flowLog(_ id: UUID?) -> FlowActionLog? {
+        guard let id, let p = ws.paddocks.first(where: { $0.id == id }) else { return nil }
+        return FlowActionLog(paddock: URL(fileURLWithPath: p.path))
     }
 
     /// `device.flow on|off|status` (d4): a terminal acts on its own paddock, the user names one with --paddock. Only the

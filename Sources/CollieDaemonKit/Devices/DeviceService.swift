@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CollieCore
 import CollieDevice
 import CollieProtocol
@@ -28,6 +29,8 @@ actor DeviceService {
     var refs: [UUID: [UINode]] = [:]
     /// The last `device.screen` per panel, for its `changed`.
     var lastScreen: [UUID: Screen] = [:]
+    /// The last queued flow log write (d5): the next one waits for it.
+    private var flowWrite: Task<Void, Never>?
     /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
     var simPoints: [UUID: CGSize] = [:]
     /// Panels closed so far: a command that was awaiting adb when its panel closed must not write anything afterwards.
@@ -167,7 +170,24 @@ actor DeviceService {
         }
     }
 
-    func run(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+    /// `flow`: who acts and the paddock's `FlowActionLog` (d5); an action that succeeds is recorded when the log is on.
+    func run(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?, flow: FlowRecorder? = nil) async throws(ProtocolError) -> JSONValue {
+        guard let flow, let panel, let action = Self.flowActions[command], flow.log.enabled else { return try await perform(command, panel: panel, args: args, cwd: cwd) }
+        let before = flowSig(panel.id)   // read before the action: `--then screen` updates it
+        let nodes = refs[panel.id] ?? []
+        let r = try await perform(command, panel: panel, args: args, cwd: cwd)
+        var sigAfter = ""
+        if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sigAfter = sig }
+        record(FlowAction(origin: flow.origin, action: action, target: Self.flowTarget(command, args, nodes),
+                          text: command == "device.text" ? { if case .string(let t)? = args["text"] { t } else { nil } }() : nil,
+                          // ponytail: any password field on the last read masks the typed text; over-masks a screen with a
+                          // password field and another one, never leaks
+                          secure: nodes.contains(where: \.password) || (refs[panel.id] ?? []).contains(where: \.password),
+                          sigBefore: before, sigAfter: sigAfter), to: flow.log)
+        return r
+    }
+
+    private func perform(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
@@ -555,10 +575,69 @@ actor DeviceService {
         return v
     }
 
+    // MARK: flow log (d5)
+
+    static let flowActions = ["device.tap": "tap", "device.text": "text", "device.swipe": "swipe", "device.key": "key", "device.launch": "launch"]
+
+    /// The signature of the panel's last `device.screen`; "" before any.
+    func flowSig(_ panel: UUID) -> String { lastScreen[panel].map(ScreenSignature.compute) ?? "" }
+
+    /// What the action acted on, from its args (`nodes`: the refs before it, for `--ref`).
+    static func flowTarget(_ command: String, _ a: [String: JSONValue], _ nodes: [UINode]) -> String {
+        func s(_ k: String) -> String? { if case .string(let v)? = a[k], !v.isEmpty { v } else if case .number(let n)? = a[k] { String(Int(n)) } else { nil } }
+        switch command {
+        case "device.tap":
+            if let t = s("text") { return t }
+            if let i = s("id") { return "id:" + i }
+            if let r = s("ref") { return nodes.first { $0.ref == r }.map { $0.text.isEmpty ? ($0.desc.isEmpty ? r : $0.desc) : $0.text } ?? r }
+            return [s("x"), s("y")].compactMap { $0 }.joined(separator: ",")
+        case "device.swipe": return [s("x1"), s("y1"), s("x2"), s("y2")].compactMap { $0 }.joined(separator: ",")
+        case "device.key": return s("key") ?? ""
+        case "device.launch": return [s("package"), s("bundle"), s("activity")].compactMap { $0 }.joined(separator: "/")
+        default: return ""
+        }
+    }
+
+    /// Writes off the actor, in order (each write waits for the one before), so the command does not wait for the disk
+    /// (a rotation rewrites up to 10 MiB). A failure only reaches the daemon's log (stderr).
+    func record(_ a: FlowAction, to log: FlowActionLog) {
+        let prev = flowWrite
+        flowWrite = Task.detached {
+            await prev?.value
+            do { try log.append(a) } catch { FileHandle.standardError.write(Data("collied: flow log \(log.file.path): \(error)\n".utf8)) }
+        }
+    }
+
+    /// Waits for the writes queued so far (tests; the daemon never waits).
+    func flowFlushed() async { await flowWrite?.value }
+
+    /// A tap from the panel's viewer: on iOS a `SimInput.tap` (points), on Android a scrcpy touch up within 16 px of its
+    /// down (frame pixels; farther is a drag, not recorded). `down`: the viewer's last touch down. Returns "x,y".
+    static func panelTap(_ d: Data, ios: Bool, down: inout (x: Int32, y: Int32)?) -> String? {
+        if ios {
+            guard case .tap(let x, let y)? = try? JSONDecoder().decode(SimInput.self, from: d) else { return nil }
+            return "\(Int(x)),\(Int(y))"
+        }
+        let b = [UInt8](d)
+        guard b.count == 32, b[0] == 2, b[1] <= 1 else { return nil }   // touch, down or up
+        func i32(_ at: Int) -> Int32 { Int32(bitPattern: b[at..<(at + 4)].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }) }
+        let p = (x: i32(10), y: i32(14))
+        if b[1] == 0 { down = p; return nil }
+        defer { down = nil }
+        guard let s = down, abs(s.x - p.x) <= 16, abs(s.y - p.y) <= 16 else { return nil }
+        return "\(p.x),\(p.y)"
+    }
+
+    /// Records a panel tap (origin `panel`); no screen comes back, so `sigAfter` is empty.
+    func recordPanelTap(panel: UUID, target: String, log: FlowActionLog) {
+        record(FlowAction(origin: "panel", action: "tap", target: target, sigBefore: flowSig(panel)), to: log)
+    }
+
     // MARK: video
 
     /// A `ui.device` viewer of `panel`: opens `conn` and joins the panel's session, starting one if there is none.
-    func attach(panel: Panel, conn: StreamConn, ok: Response) {
+    /// `flowLog`: the panel's paddock log (d5), where its taps are recorded when it is on.
+    func attach(panel: Panel, conn: StreamConn, ok: Response, flowLog: FlowActionLog? = nil) {
         idle.removeValue(forKey: panel.id)?.cancel()
         let s: any ViewerSession
         let serial = { if case .string(let v)? = panel.state["serial"] { v } else { "" } }()
@@ -580,7 +659,13 @@ actor DeviceService {
                 catch { dev.end("error", error.message) }
             }
         }
-        conn.open(ok, onFrame: { [unowned conn, weak s] f in if case .in(let d) = f { s?.input(d, from: conn) } },
+        let ios = panel.state["platform"] == .string("ios"), down = OSAllocatedUnfairLock<(x: Int32, y: Int32)?>(initialState: nil), id = panel.id
+        conn.open(ok, onFrame: { [unowned conn, weak s] f in
+                      guard case .in(let d) = f else { return }
+                      s?.input(d, from: conn)
+                      guard let flowLog, let t = down.withLock({ Self.panelTap(d, ios: ios, down: &$0) }), flowLog.enabled else { return }
+                      Task { await self.recordPanelTap(panel: id, target: t, log: flowLog) }
+                  },
                   onClose: { [weak s] in Task { if let s { await self.left(s, conn) } } })
         if !s.join(conn) {   // ended between the check and the join (another thread): tell the viewer, it reconnects
             conn.send(.deviceStatus(state: "ended", message: nil)); conn.closeAfterFlush()

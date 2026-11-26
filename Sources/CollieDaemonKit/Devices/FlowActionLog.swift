@@ -15,6 +15,9 @@ struct FlowAction: Sendable, Equatable {
     var appVersion: String = ""
 }
 
+/// Who acts on the device (`agent:<name>`) and the log of their paddock (d5).
+struct FlowRecorder: Sendable { var origin: String; var log: FlowActionLog }
+
 /// Appends one JSON line per action to `<paddock>/.collie/flows/actions.jsonl`, only when the paddock opted in
 /// (`<paddock>/.collie/flows/enabled` exists: `collie device flow on`). Folder 0700, files 0600. At 5 MiB the file moves
 /// to `actions.1.jsonl` (`.1` to `.2`; 3 files in all: current, .1, .2); a rotation also drops lines older than 30 days.

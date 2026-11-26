@@ -359,7 +359,7 @@ actor CommandRouter {
                       let p = ws.panels.first(where: { $0.id == id && $0.pluginId == "device" }) else {
                     throw ProtocolError(code: .notFound, message: "No device panel '\(str(req, "panel") ?? "")'")
                 }
-                await devices.attach(panel: p, conn: conn, ok: ok)
+                await devices.attach(panel: p, conn: conn, ok: ok, flowLog: flowLog(p.paddockId))
             case "ui.snapshot": return Response(id: req.id, ok: true, result: try await snapshot())
             case "ui.usage":
                 let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601

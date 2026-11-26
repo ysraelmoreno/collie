@@ -48,7 +48,7 @@ private struct Fake {
     func recorded() throws -> [String] { try String(contentsOf: rec, encoding: .utf8).components(separatedBy: "---\n") }
 }
 
-@Suite(.serialized) struct CursorCuratorRunnerTests {
+@Suite(.serialized, .curatorPT) struct CursorCuratorRunnerTests {
     @Test func argumentsPinned() {
         let cwd = URL(fileURLWithPath: "/tmp/w")
         #expect(CursorCuratorRunner.arguments(model: "auto", cwd: cwd)
@@ -165,7 +165,7 @@ private struct Fake {
         await #expect(throws: ProtocolError(code: .unavailable, message: "cursor sem login para o curador")) {
             try await f.runner().run(call, model: "", timeout: .seconds(5))
         }
-        #expect(await f.runner().availability() == .unavailable("cursor sem login para o curador"))
+        #expect(await f.runner().availability() == .unavailable("cursor sem login para o curador", code: .noLogin))
         #expect(try fm.contentsOfDirectory(atPath: outside.path).isEmpty)
         // "Entrar" replaces the link with a real 0700 dir; nothing lands in the link's target
         _ = try CursorCuratorRunner.prepareLogin(root: f.root, exe: URL(fileURLWithPath: "/x/cursor-agent"))
@@ -235,7 +235,7 @@ private struct Fake {
 
     @Test func proseIsJunk() {
         for out in [#"{"type":"result","is_error":false,"result":"Claro! Aqui está: {\"ops\":[]}"}"#, "texto solto", ""] {
-            #expect(throws: ProtocolError(code: .unavailable, message: "resposta ilegível do cursor"), "\(out)") {
+            #expect(throws: ProtocolError(code: .unavailable, message: CursorCuratorRunner.unreadable), "\(out)") {
                 try CursorCuratorRunner.parse(out, status: 0, stderr: "")
             }
         }
@@ -258,7 +258,7 @@ private struct Fake {
         await #expect(throws: ProtocolError(code: .unavailable, message: "cursor sem login para o curador")) {
             try await r.run(call, model: "", timeout: .seconds(20))
         }
-        #expect(await r.availability() == .unavailable("cursor sem login para o curador"))   // the run's answer is cached
+        #expect(await r.availability() == .unavailable("cursor sem login para o curador", code: .noLogin))   // the run's answer is cached
     }
 
     /// NOT measured in R3 (no usage-limit error seen): the generic texts, as for Claude.
@@ -278,9 +278,9 @@ private struct Fake {
 
     /// Only status/isAuthenticated are read: nothing of userInfo (e-mail, names, team) can come out.
     @Test func statusUnauthenticated() async throws {
-        #expect(CursorCuratorRunner.login(try fixture("cursor-status-unauthenticated.json")) == .unavailable("cursor sem login para o curador"))
-        #expect(await (try Fake(status: "cursor-status-unauthenticated.json")).runner().availability() == .unavailable("cursor sem login para o curador"))
-        #expect(CursorCuratorRunner.login("{") == .unavailable("cursor não respondeu"))
+        #expect(CursorCuratorRunner.login(try fixture("cursor-status-unauthenticated.json")) == .unavailable("cursor sem login para o curador", code: .noLogin))
+        #expect(await (try Fake(status: "cursor-status-unauthenticated.json")).runner().availability() == .unavailable("cursor sem login para o curador", code: .noLogin))
+        #expect(CursorCuratorRunner.login("{") == .unavailable("cursor não respondeu", code: .noAnswer))
         let a = CursorCuratorRunner.login(try fixture("cursor-status-authenticated.json"))
         #expect(!"\(a)".contains("example") && !"\(a)".contains("Example"))
     }
@@ -297,7 +297,7 @@ private struct Fake {
     /// No cursor-home: never logged in for the curator; no `status` is run (Collie never logs in by itself).
     @Test func noCursorHomeUnavailable() async throws {
         let f = try Fake(home: false)
-        #expect(await f.runner().availability() == .unavailable("cursor sem login para o curador"))
+        #expect(await f.runner().availability() == .unavailable("cursor sem login para o curador", code: .noLogin))
         #expect(await f.runner().models() == [])
         await #expect(throws: ProtocolError(code: .unavailable, message: "cursor sem login para o curador")) {
             try await f.runner().run(call, model: "", timeout: .seconds(5))

@@ -24,13 +24,21 @@ struct CursorCuratorRunner: CuratorRunner {
     static let port = 443
     /// The PATH of a sandboxed call: the user's PATH only locates the CLI; the script's `bash`, `realpath`… come from here.
     static let sandboxPath = "/usr/bin:/bin"
-    static let unreadable = "resposta ilegível do cursor"
-    static let noAnswer = "cursor não respondeu"
-    static let noLogin = "cursor sem login para o curador"
-    static let missing = "cursor não encontrado"
-    static let tampered = "cursor: a configuração fechada mudou durante a chamada; resposta descartada"
+    static let unreadable = "\(CuratorTag.unreadable) (cursor)"
+    static var noAnswer: String { tr("cursor não respondeu", "cursor didn't answer") }
+    static var noLogin: String { tr("cursor sem login para o curador", "cursor has no login for the curator") }
+    static var missing: String { tr("cursor não encontrado", "cursor not found") }
+    static var tampered: String {
+        tr("cursor: a configuração fechada mudou durante a chamada; resposta descartada",
+           "cursor: the closed configuration changed during the call; answer discarded")
+    }
     /// Exact (spec): the schema goes in the prompt (no native schema flag).
-    static let schemaLine = "Responda só com um objeto JSON que siga este JSON Schema, sem texto antes ou depois:"
+    static var schemaLine: String {
+        tr("Responda só com um objeto JSON que siga este JSON Schema, sem texto antes ou depois:",
+           "Answer only with a JSON object that follows this JSON Schema, with no text before or after:")
+    }
+    /// Logged out: exit 1, empty stdout, "Authentication required" on stderr.
+    static func needsLogin(_ stderr: String) -> Bool { stderr.range(of: "authentication required", options: .caseInsensitive) != nil }
     /// Global Constraints: allowlist with nothing allowed and every tool denied.
     static let closedConfig = #"{"version":1,"approvalMode":"allowlist","permissions":{"allow":[],"deny":["Shell(*)","Write(**)","Read(**)","WebFetch(*)","Mcp(*:*)"]},"autoAcceptWebSearch":false,"sandbox":{"mode":"disabled"}}"#
 
@@ -118,16 +126,15 @@ struct CursorCuratorRunner: CuratorRunner {
     /// R3: one `{"type":"result", "is_error", "result": "<the curator's JSON as text>", "usage": {inputTokens,
     /// outputTokens, …}}`. Logged out: exit 1, empty stdout, "Authentication required" on stderr. Tokens filled, cost nil.
     static func parse(_ stdout: String, status: Int32, stderr: String) throws(ProtocolError) -> CuratorOutput {
-        if stderr.range(of: "authentication required", options: .caseInsensitive) != nil {
-            throw ProtocolError(code: .unavailable, message: noLogin)
-        }
+        if needsLogin(stderr) { throw ProtocolError(code: .unavailable, message: noLogin) }
         if exhausted(stderr) { throw ProtocolError(code: .unavailable, message: String(stderr.prefix(300))) }
         let line = stdout.split(separator: "\n").reversed().first { $0.trimmingCharacters(in: .whitespaces).hasPrefix("{") }
         guard let line, case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)) else {
             if status != 0, let p = CuratorSandboxProfile.blocked(stderr) {
-                throw ProtocolError(code: .unavailable, message: "curador bloqueado pelo sandbox: \(p)")
+                throw ProtocolError(code: .unavailable, message: tr("curador bloqueado pelo sandbox: \(p)", "curator blocked by the sandbox: \(p)"))
             }
-            throw ProtocolError(code: .unavailable, message: status == 0 ? unreadable : "cursor saiu com \(status): \(stderr.prefix(300))")
+            throw ProtocolError(code: .unavailable, message: status == 0 ? unreadable
+                                : tr("cursor saiu com \(status): \(stderr.prefix(300))", "cursor exited with \(status): \(stderr.prefix(300))"))
         }
         let result: String? = if case .string(let s)? = o["result"] { s } else { nil }
         if case .bool(true)? = o["is_error"] { throw ProtocolError(code: .unavailable, message: result ?? "cursor error") }
@@ -142,8 +149,8 @@ struct CursorCuratorRunner: CuratorRunner {
     /// `status --format json`: only `status`/`isAuthenticated` are read (never `userInfo`: e-mail, names, team).
     static func login(_ statusJSON: String) -> CuratorAvailability {
         guard case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(statusJSON.utf8)),
-              case .string(let s)? = o["status"] else { return .unavailable(noAnswer) }
-        return s == "authenticated" && o["isAuthenticated"] == .bool(true) ? .available : .unavailable(noLogin)
+              case .string(let s)? = o["status"] else { return .unavailable(noAnswer, code: .noAnswer) }
+        return s == "authenticated" && o["isAuthenticated"] == .bool(true) ? .available : .unavailable(noLogin, code: .noLogin)
     }
 
     /// `cursor-agent models`: "auto - Auto (default)" lines → their ids.
@@ -185,15 +192,15 @@ struct CursorCuratorRunner: CuratorRunner {
         }
         // no cursor-home: never logged in for the curator (no `status` run; "Entrar" creates it)
         guard Self.ownDir(cursorHome) else {   // a link there is never used either
-            await cache.set(.unavailable(Self.noLogin), for: retryAfter)
-            return .unavailable(Self.noLogin)
+            await cache.set(.unavailable(Self.noLogin, code: .noLogin), for: retryAfter)
+            return .unavailable(Self.noLogin, code: .noLogin)
         }
         let r = try? await curatorTempDir { cwd throws(ProtocolError) in
             try await BoundedProcess.run(executable: exe, args: ["status", "--format", "json"], in: cwd,
                                          env: Self.environment(root: root, path: p), timeout: .seconds(15), cap: 64 << 10)
         }
-        let v = r.map { Self.login($0.stdout) } ?? .unavailable(Self.noAnswer)
-        await cache.set(v, for: v == .unavailable(Self.noAnswer) ? retryAfter : Self.availabilityTTL)
+        let v = r.map { Self.login($0.stdout) } ?? .unavailable(Self.noAnswer, code: .noAnswer)
+        await cache.set(v, for: v.code == .noAnswer ? retryAfter : Self.availabilityTTL)
         return v
     }
 
@@ -253,8 +260,8 @@ struct CursorCuratorRunner: CuratorRunner {
             do throws(ProtocolError) { out = try Self.parse(r.stdout, status: r.status, stderr: r.stderr) } catch {
                 if Self.exhausted(error.message) {
                     await cache.set(.exhausted(error.message, until: Date().addingTimeInterval(Self.exhaustedFor)), for: .seconds(Int64(Self.exhaustedFor)))
-                } else if error.message == Self.noLogin {
-                    await cache.set(.unavailable(Self.noLogin), for: retryAfter)
+                } else if Self.needsLogin(r.stderr) {
+                    await cache.set(.unavailable(Self.noLogin, code: .noLogin), for: retryAfter)
                 }
                 throw error
             }

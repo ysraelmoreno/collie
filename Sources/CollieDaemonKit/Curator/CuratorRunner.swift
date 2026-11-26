@@ -19,12 +19,31 @@ struct CuratorOutput: Sendable {
     var curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
 }
 
-/// `unavailable` carries the pt-BR reason shown as "curador indisponível: <motivo>". `exhausted` (E6): the provider
-/// refused for credit or quota (its raw message) until about `until`; jobs wait without spending attempts.
+/// Why a provider is unavailable, for whoever must act on it (the Preferences "Entrar" button, the consent text): a stable
+/// code that travels beside the translated reason, never compared by its text (idiomas Task 4).
+enum CuratorReason: String, Codable, Equatable, Sendable {
+    /// Logged out of the provider (Cursor: "Entrar" creates the curator's login).
+    case noLogin
+    /// `status` gave no usable answer (retried soon).
+    case noAnswer
+    /// The login bills per use or isn't recognized: only with consent.
+    case paidLogin
+}
+
+/// `unavailable` carries the reason in the user's language, shown as "curador indisponível: <motivo>", and, when someone
+/// acts on it, its `code`. `exhausted` (E6): the provider refused for credit or quota (its raw message) until about
+/// `until`; jobs wait without spending attempts.
 enum CuratorAvailability: Equatable, Sendable {
     case available
-    case unavailable(String)
+    case unavailable(String, code: CuratorReason? = nil)
     case exhausted(String, until: Date?)
+    var code: CuratorReason? { if case .unavailable(_, let c) = self { c } else { nil } }
+}
+
+/// `ProtocolError` has no field for a runner's failure kind, so the one the Curator acts on (an answer it couldn't read)
+/// starts with a fixed, untranslated tag, like "curator: junk answer": matched by prefix, never by its translation.
+enum CuratorTag {
+    static let unreadable = "curator: unreadable answer"
 }
 
 /// How the provider bills the logged-in account (spec 2026-11-17 E3): in a plan (`included`), per use or API
@@ -117,10 +136,13 @@ struct ClaudeCuratorRunner: CuratorRunner {
     let fallback: [String]
     private let cache = CuratorCache<Login>()
 
-    static let unreadable = "resposta ilegível do claude"
-    static let noAnswer = "claude não respondeu"
+    static let unreadable = "\(CuratorTag.unreadable) (claude)"
+    static var noAnswer: String { tr("claude não respondeu", "claude didn't answer") }
     /// No PATH in the user's env (its capture failed) and no claude in the known dirs: not the same as "not installed".
-    static let envNotCaptured = "ambiente do usuário não capturado (o shell excedeu o prazo; confira o .zshrc)"
+    static var envNotCaptured: String {
+        tr("ambiente do usuário não capturado (o shell excedeu o prazo; confira o .zshrc)",
+           "user environment not captured (the shell timed out; check your .zshrc)")
+    }
     /// R5 (user decision): the plan login, never an API key from the shell (no silent token billing).
     /// Review T2: nor another provider or endpoint (Bedrock, Vertex, a proxy URL).
     static let strippedKeys: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
@@ -144,6 +166,12 @@ struct ClaudeCuratorRunner: CuratorRunner {
     /// `is_error` → `.unavailable` with its text. Tolerant of lines before it (a banner) and of an event array (its last
     /// `result`); nothing usable → `.unavailable(unreadable)`.
     static func parse(_ stdout: String) throws(ProtocolError) -> CuratorOutput {
+        guard let out = try parseOrNil(stdout) else { throw ProtocolError(code: .unavailable, message: unreadable) }
+        return out
+    }
+
+    /// `parse`, but nil (not a thrown message) when nothing usable came out: `run` tells "unreadable" by this, not by text.
+    static func parseOrNil(_ stdout: String) throws(ProtocolError) -> CuratorOutput? {
         func decode(_ t: some StringProtocol) -> JSONValue? { try? JSONDecoder().decode(JSONValue.self, from: Data(t.utf8)) }
         func resultObject(_ v: JSONValue?) -> [String: JSONValue]? {
             switch v {
@@ -156,15 +184,13 @@ struct ClaudeCuratorRunner: CuratorRunner {
         }
         // ponytail: the whole output, else its last line that decodes (Claude prints its answer as one line)
         let candidates = [Substring(stdout)] + stdout.split(separator: "\n").reversed()
-        guard let o = candidates.lazy.compactMap({ resultObject(decode($0)) }).first else {
-            throw ProtocolError(code: .unavailable, message: unreadable)
-        }
+        guard let o = candidates.lazy.compactMap({ resultObject(decode($0)) }).first else { return nil }
         var result: String? { if case .string(let s)? = o["result"] { s } else { nil } }
         if case .bool(true)? = o["is_error"] { throw ProtocolError(code: .unavailable, message: result ?? "claude error") }
         let json: JSONValue
         if let s = o["structured_output"], s != .null { json = s }
         else if let t = result, let v = decode(unfenced(t)) { json = v }
-        else { throw ProtocolError(code: .unavailable, message: unreadable) }
+        else { return nil }
         func num(_ v: JSONValue?) -> Double { if case .number(let n)? = v { n } else { 0 } }
         var usage: [String: JSONValue] { if case .object(let u)? = o["usage"] { u } else { [:] } }
         return CuratorOutput(json: json, inputTokens: Int(num(usage["input_tokens"])), outputTokens: Int(num(usage["output_tokens"])),
@@ -189,7 +215,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
 
     /// The user's env has a PATH: `UserEnvironment.current()` gives [:] when the login shell failed or timed out.
     static func captured(_ env: [String: String]) -> Bool { !(env["PATH"] ?? "").isEmpty }
-    static func missing(_ env: [String: String]) -> String { captured(env) ? "claude não encontrado" : envNotCaptured }
+    static func missing(_ env: [String: String]) -> String { captured(env) ? tr("claude não encontrado", "claude not found") : envNotCaptured }
 
     /// An empty temp dir for `body` (`project,local` settings: none to load).
     private func inTempDir<T>(_ body: (URL) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
@@ -206,17 +232,17 @@ struct ClaudeCuratorRunner: CuratorRunner {
     static func login(_ stdout: String) -> Login? {
         guard case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(stdout.utf8)),
               case .bool(let loggedIn)? = o["loggedIn"] else { return nil }
-        guard loggedIn else { return Login(availability: .unavailable("claude sem login"), billing: .unknown) }
+        guard loggedIn else { return Login(availability: .unavailable(tr("claude sem login", "claude is not logged in")), billing: .unknown) }
         let method: String? = if case .string(let m)? = o["authMethod"] { m } else { nil }
         let provider: String? = if case .string(let p)? = o["apiProvider"] { p } else { nil }
         let billing: CuratorBilling
-        if method == "claude.ai", provider == "firstParty" { billing = .included("assinatura") }
+        if method == "claude.ai", provider == "firstParty" { billing = .included(tr("assinatura", "subscription")) }
         else if let m = method?.lowercased(), ["api", "console", "key"].contains(where: m.contains) { billing = .metered(apiBilling) }
         else if let p = provider, p != "firstParty" { billing = .metered(apiBilling) }
         else { billing = .unknown }
         return Login(availability: .available, billing: billing)
     }
-    static let apiBilling = "conta de API (cobrança por token)"
+    static var apiBilling: String { tr("conta de API (cobrança por token)", "API account (billed per token)") }
 
     func availability() async -> CuratorAvailability { await login().availability }
     func billing() async -> CuratorBilling { await login().billing }
@@ -236,7 +262,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
                                          timeout: .seconds(10), cap: 64 << 10)
         }
         guard let v = r.flatMap({ Self.login($0.stdout) }) else {
-            let v = Login(availability: .unavailable(Self.noAnswer), billing: .unknown)
+            let v = Login(availability: .unavailable(Self.noAnswer, code: .noAnswer), billing: .unknown)
             await cache.set(v, for: retryAfter)
             return v
         }
@@ -275,17 +301,25 @@ struct ClaudeCuratorRunner: CuratorRunner {
             } catch where error.code == .timeout {
                 throw ProtocolError(code: .timeout, message: Self.noAnswer)   // the fallback's motivo; the queue retries
             }
-            do throws(ProtocolError) { return try Self.parse(r.stdout) } catch where Self.exhausted(error.message) || Self.exhausted(r.stderr) {
-                let why = Self.exhausted(error.message) ? error.message : String(r.stderr.prefix(300))
+            func exhaust(_ why: String) async -> ProtocolError {
                 await cache.set(Login(availability: .exhausted(why, until: Date().addingTimeInterval(Self.exhaustedFor)),
                                       billing: await cache.get()?.billing ?? .unknown), for: .seconds(Int64(Self.exhaustedFor)))
-                throw ProtocolError(code: .unavailable, message: why)
-            } catch where error.message == Self.unreadable && r.status != 0 {
-                if let p = CuratorSandboxProfile.blocked(r.stderr) {
-                    throw ProtocolError(code: .unavailable, message: "curador bloqueado pelo sandbox: \(p)")
-                }
-                throw ProtocolError(code: .unavailable, message: "claude saiu com \(r.status): \(r.stderr.prefix(300))")
+                return ProtocolError(code: .unavailable, message: why)
             }
+            let parsed: CuratorOutput?
+            do throws(ProtocolError) { parsed = try Self.parseOrNil(r.stdout) } catch where Self.exhausted(error.message) || Self.exhausted(r.stderr) {
+                throw await exhaust(Self.exhausted(error.message) ? error.message : String(r.stderr.prefix(300)))
+            }
+            if let parsed { return parsed }
+            // nothing readable: a credit refusal on stderr, a sandbox block or a bad exit say more than "unreadable"
+            if Self.exhausted(r.stderr) { throw await exhaust(String(r.stderr.prefix(300))) }
+            if r.status != 0 {
+                if let p = CuratorSandboxProfile.blocked(r.stderr) {
+                    throw ProtocolError(code: .unavailable, message: tr("curador bloqueado pelo sandbox: \(p)", "curator blocked by the sandbox: \(p)"))
+                }
+                throw ProtocolError(code: .unavailable, message: tr("claude saiu com \(r.status): \(r.stderr.prefix(300))", "claude exited with \(r.status): \(r.stderr.prefix(300))"))
+            }
+            throw ProtocolError(code: .unavailable, message: Self.unreadable)
         }
     }
 }

@@ -52,6 +52,8 @@ struct CuratorProviderStatus: Codable, Sendable, Equatable {
     var availability: String
     var consentNeeded: Bool
     var destination: String
+    /// Why it isn't available when someone acts on it (the app offers "Entrar", words the consent): never read from `availability`.
+    var code: CuratorReason? = nil
 }
 
 /// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), by kind priority.
@@ -67,8 +69,10 @@ actor Curator {
     typealias JobHandler = @Sendable (CuratorJob, Call, _ inputMax: Int) async throws -> CuratorJobResult
     /// Tests' shorthand (every answer `ok`).
     typealias Handler = @Sendable (CuratorJob, Call) async throws -> Void
-    /// A handler throws this for an answer it can't read: it spends an attempt and counts toward the pause.
-    static func junk(_ what: String) -> ProtocolError { ProtocolError(code: .internal, message: "curator: junk answer (\(what))") }
+    /// A handler throws this for an answer it can't read: it spends an attempt and counts toward the pause. The prefix is
+    /// fixed and untranslated: the queue matches it (`junkTag`), `ProtocolError` having no field for the kind.
+    static let junkTag = "curator: junk answer"
+    static func junk(_ what: String) -> ProtocolError { ProtocolError(code: .internal, message: "\(junkTag) (\(what))") }
     static let pauseWindow = 20, pauseBad = 10
 
     static let tick: Duration = .seconds(600)
@@ -225,14 +229,17 @@ actor Curator {
 
     /// Claude needs no consent (it is today's curator); any other provider only after `consent`. `model` nil keeps the
     /// stored one. The running job finishes on the old provider; the next ones go to the new one.
-    static let badModel = "modelo inválido: use letras, números e . _ : / - (começando por letra ou número)"
+    static var badModel: String {
+        tr("modelo inválido: use letras, números e . _ : / - (começando por letra ou número)",
+           "invalid model: use letters, numbers and . _ : / - (starting with a letter or number)")
+    }
     /// Review A6: a model id (`""`: the provider's default) can never read as a flag or carry a space or newline.
     static func validModel(_ m: String) -> Bool { m.isEmpty || m.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9._:\/-]*/) != nil }
 
     func setProvider(_ p: CuratorProvider, model m: String?) throws(ProtocolError) {
         if let m, !Self.validModel(m) { throw ProtocolError(code: .invalidArgs, message: Self.badModel) }
         guard p == .claude || config.consented.contains(p.rawValue) else {
-            throw ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências")
+            throw ProtocolError(code: .unavailable, message: Self.consentMissing)
         }
         guard runners[p] != nil else { throw ProtocolError(code: .unavailable, message: Self.notInBuild) }
         config.provider = p.rawValue
@@ -249,8 +256,8 @@ actor Curator {
         write(config, to: dir.appendingPathComponent("config.json"))
     }
 
-    static let notInBuild = "provedor ainda não habilitado nesta versão"
-    static let consentMissing = "falta confirmar nas Preferências"
+    static var notInBuild: String { tr("provedor ainda não habilitado nesta versão", "provider not enabled in this version yet") }
+    static var consentMissing: String { tr("falta confirmar nas Preferências", "needs confirming in Preferences") }
 
     /// The chosen provider's availability: unconsented or missing in this build is unavailable, never run.
     private func availability() async -> CuratorAvailability { await availability(provider).0 }
@@ -264,7 +271,7 @@ actor Curator {
         let consented = config.consented.contains(p.rawValue)
         guard p == .claude || consented else { return (.unavailable(Self.consentMissing), true) }
         let w = outcomes[p] ?? [], bad = w.filter { $0 }.count
-        if bad >= Self.pauseBad { return (.unavailable("saída inválida em \(bad) de \(w.count) (troque de modelo)"), false) }
+        if bad >= Self.pauseBad { return (.unavailable(tr("saída inválida em \(bad) de \(w.count) (troque de modelo)", "invalid output in \(bad) of \(w.count) (switch model)")), false) }
         let admitted = Self.admit(await r.billing(), provider: p, consented: consented)
         return (admitted, admitted != .available)
     }
@@ -274,7 +281,8 @@ actor Curator {
     static func admit(_ b: CuratorBilling, provider p: CuratorProvider, consented: Bool) -> CuratorAvailability {
         if case .included = b { return .available }
         if consented { return .available }
-        return .unavailable("\(p.rawValue.capitalized): login com cobrança por uso ou não reconhecido; consentimento necessário")
+        return .unavailable(tr("\(p.rawValue.capitalized): login com cobrança por uso ou não reconhecido; consentimento necessário",
+                               "\(p.rawValue.capitalized): pay-per-use or unrecognized login; consent required"), code: .paidLogin)
     }
 
     /// Every provider of this build, in `allCases` order (the picker's).
@@ -283,13 +291,13 @@ actor Curator {
         for p in CuratorProvider.allCases {
             let (a, consent) = await availability(p)
             let why: String = switch a {
-            case .available: "disponível"
-            case .unavailable(let w): w
+            case .available: tr("disponível", "available")
+            case .unavailable(let w, _): w
             case .exhausted(let w, _): w
             }
             out.append(CuratorProviderStatus(provider: p.rawValue, installed: await installed(p), available: a == .available,
                                              availability: why, consentNeeded: consent,
-                                             destination: runners[p]?.info.destination ?? p.rawValue.capitalized))
+                                             destination: runners[p]?.info.destination ?? p.rawValue.capitalized, code: a.code))
         }
         return out
     }
@@ -297,8 +305,8 @@ actor Curator {
     /// "Testar agora": the chosen provider's availability and model list; zero generation.
     func test() async -> (availability: String, models: [String]) {
         let why: String = switch await availability() {
-        case .available: "disponível"
-        case .unavailable(let w): w
+        case .available: tr("disponível", "available")
+        case .unavailable(let w, _): w
         case .exhausted(let w, _): w
         }
         return (why, await runners[provider]?.models() ?? [])
@@ -307,13 +315,14 @@ actor Curator {
     /// "Testar com uma chamada": one synthetic call per answer format through `call` (each counts in today's cap and is
     /// logged); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
     func testCalls() async throws(ProtocolError) -> [(format: String, result: String)] {
-        if case .unavailable(let why) = await availability() { throw ProtocolError(code: .unavailable, message: why) }
-        let instructions = "Isto é um teste do Collie, sem dados reais. Responda só com a lista vazia."
+        if case .unavailable(let why, _) = await availability() { throw ProtocolError(code: .unavailable, message: why) }
+        let instructions = tr("Isto é um teste do Collie, sem dados reais. Responda só com a lista vazia.",
+                              "This is a Collie test, with no real data. Answer only with the empty list.")
         var out: [(String, String)] = []
         for (key, schema) in [("ops", CuratorOps.schema), ("items", ConversationCapture.schema), ("chunks", DocTerms.schema)] {
             let job = CuratorJob(id: UUID(), kind: .correction, store: "", payload: .null, dedupe: "", createdAt: now(), attempts: 0)
             do throws(ProtocolError) {
-                let o = try await call(CuratorCall(instructions: instructions, input: "teste", schema: schema), job: job)
+                let o = try await call(CuratorCall(instructions: instructions, input: tr("teste", "test"), schema: schema), job: job)
                 if case .object(let x) = o.json, case .array? = x[key] { out.append((key, "ok")) } else { out.append((key, "junk")) }
             } catch {
                 out.append((key, String(error.message.prefix(200))))
@@ -335,10 +344,10 @@ actor Curator {
         if reason == nil {
             switch await availability() {
             case .available: break
-            case .unavailable(let why): reason = why
+            case .unavailable(let why, _): reason = why
             case .exhausted(_, let until):
                 let f = DateFormatter(); f.dateFormat = "HH:mm"
-                reason = "cota do \(provider.rawValue) esgotada até " + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
+                reason = tr("cota do \(provider.rawValue) esgotada até ", "\(provider.rawValue) quota exhausted until ") + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
             }
         }
         rollDay()
@@ -401,9 +410,10 @@ actor Curator {
     private func capReason(_ kind: CuratorJobKind = .correction) -> String? {
         rollDay()   // first, cap or not: `call` counts into today right after this
         guard let cap = config.cap else { return nil }   // no cap: nothing to reach, nothing to hold back
-        if cap == 0 { return "desligado" }
-        if usage.today >= cap { return "limite diário atingido (\(cap))" }
-        return usage.today >= Self.limit(cap, for: kind) ? "resto do limite diário reservado às correções" : nil
+        if cap == 0 { return tr("desligado", "off") }
+        if usage.today >= cap { return tr("limite diário atingido (\(cap))", "daily limit reached (\(cap))") }
+        return usage.today >= Self.limit(cap, for: kind)
+            ? tr("resto do limite diário reservado às correções", "rest of the daily limit reserved for corrections") : nil
     }
 
     /// By kind (`CuratorJobKind.priority`), then oldest; a failed job waits for the next tick.
@@ -423,7 +433,7 @@ actor Curator {
                 count(job, -1)
                 return   // logged out / cap mid-run (before any run): the job waits, no attempt spent
             } catch {
-                if (error as? ProtocolError)?.message.hasPrefix("curator: junk answer") == true { note(p, bad: true) }
+                if (error as? ProtocolError)?.message.hasPrefix(Self.junkTag) == true { note(p, bad: true) }
                 backoff[job.id] = ticks
                 fail(job)
             }
@@ -476,7 +486,7 @@ actor Curator {
         if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
         // the provider is fixed for this call: a switch meanwhile takes the next one
         let p = provider, m = model(p)
-        guard let runner = runners[p] else { throw ProtocolError(code: .unavailable, message: "\(p.rawValue) não encontrado") }
+        guard let runner = runners[p] else { throw ProtocolError(code: .unavailable, message: tr("\(p.rawValue) não encontrado", "\(p.rawValue) not found")) }
         let info = runner.info
         var c = c
         // never a cut outside the fence (the closing mark would go): over the cap with no fence, the job fails
@@ -501,7 +511,7 @@ actor Curator {
             out = o
         } catch {
             logged(false, String(error.message.prefix(200)), nil)
-            if error.message.hasPrefix("resposta ilegível") { note(p, bad: true) }   // the runner couldn't read it either
+            if error.message.hasPrefix(CuratorTag.unreadable) { note(p, bad: true) }   // the runner couldn't read it either
             // E6: a credit/quota refusal left the runner exhausted: the job waits, no attempt spent (`drain` gives it back)
             if case .exhausted = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error

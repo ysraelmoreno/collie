@@ -31,7 +31,7 @@ extension CommandRouter {
             }
             var placement = flag(r, "visible") ? PanelPlacement.canvas : try placementArg(r, spec)
             if tester, pluginId == "preview" {
-                guard placement == .canvas else { throw refuse("a terminal that isn't a Shepherd opens Prévias on the canvas") }
+                guard placement == .canvas else { throw refuse(tr("a terminal that isn't a Shepherd opens Prévias on the canvas", "a terminal that isn't a Shepherd opens Previews on the canvas")) }
             } else if tester {
                 if r.args["placement"] == nil, !flag(r, "visible") { placement = .headless }
                 guard placement == .canvas || placement == .headless else { throw refuse("a terminal that isn't a Shepherd opens browsers headless or --visible on the canvas") }
@@ -199,7 +199,7 @@ extension CommandRouter {
                 state["artifact"] = .string(id.uuidString.lowercased())
                 if let root = try? await projectRootForPanel(paddock: paddock, caller: caller) { state["root"] = .string(root.path) }
             default:
-                throw ProtocolError(code: .invalidArgs, message: "Prévia: give --file <page.html> or --artifact <id>")
+                throw ProtocolError(code: .invalidArgs, message: Self.previewUsagePrefix + " give --file <page.html> or --artifact <id>")
             }
         }
         let canvas = placement == .canvas
@@ -230,7 +230,7 @@ extension CommandRouter {
         if let me = caller { return try await projectRoot(of: me) }
         if let f = ws.paddocks.first(where: { $0.id == paddock }) { return URL(fileURLWithPath: f.path) }
         guard let t = ws.terminals.first(where: { $0.paddockId == nil }) else {
-            throw ProtocolError(code: .invalidArgs, message: "abra antes um terminal no projeto (o arquivo do painel fica nele)")
+            throw ProtocolError(code: .invalidArgs, message: tr("abra antes um terminal no projeto (o arquivo do painel fica nele)", "open a terminal in the project first (the panel's file lives there)"))
         }
         return try await projectRoot(of: t)
     }
@@ -296,7 +296,7 @@ extension CommandRouter {
     func reservePreview(_ me: TerminalRecord) throws(ProtocolError) -> UUID {
         let open = ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "preview" })
         guard open + previewsOpening[me.id, default: []].count < Self.testerBrowserCap else {
-            throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`")
+            throw ProtocolError(code: .tooMany, message: tr("at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`", "at most \(Self.testerBrowserCap) open Previews per terminal; close one with `panel close`"))
         }
         let slot = UUID()
         previewsOpening[me.id, default: []].insert(slot)
@@ -309,6 +309,8 @@ extension CommandRouter {
 
     /// Max open browser panels per non-Shepherd terminal.
     static let testerBrowserCap = 8
+    /// Starts `panel.open`'s "give --file or --artifact" refusal: fixed and untranslated, the app matches it (`OpenPanelTarget.failureText`).
+    static let previewUsagePrefix = "preview:"
 
     /// `terminal` was removed or its process exited: its headless panels close (`.panelRemoved` lets the app drop their
     /// screenshots and data, as for any close).

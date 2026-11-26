@@ -28,7 +28,7 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
     }
 }
 
-@Suite(.serialized) struct CuratorProviderTests {
+@Suite(.serialized, .curatorPT) struct CuratorProviderTests {
     @Test func defaultsToClaude() async throws {
         let c = Curator(dir: dir(), runners: [.claude: FakeCurator(), .cursor: cursorFake()], clock: ManualClock())
         let s = await c.status()

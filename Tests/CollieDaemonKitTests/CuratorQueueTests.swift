@@ -72,7 +72,7 @@ private let oneCall: Curator.Handler = { j, call in
     _ = try await call(CuratorCall(instructions: "i", input: "\(j.payload)", schema: "{}"))
 }
 
-@Suite(.serialized) struct CuratorQueueTests {
+@Suite(.serialized, .curatorPT) struct CuratorQueueTests {
     // E7: config.json read field by field, both ways (an older daemon rewrites it with only cap and model)
     private func config(_ json: String) throws -> Curator.Config { try Curator.decoder.decode(Curator.Config.self, from: Data(json.utf8)) }
 
@@ -411,7 +411,7 @@ private let oneCall: Curator.Handler = { j, call in
 
     /// A runner answer it can't read counts against the provider like a junk answer.
     @Test func runnerUnreadableCountsAsJunk() async throws {
-        let fake = FakeCurator(); fake.failOn = "x"; fake.failMessage = "resposta ilegível do claude"
+        let fake = FakeCurator(); fake.failOn = "x"; fake.failMessage = ClaudeCuratorRunner.unreadable
         let c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
         for _ in 0..<10 { _ = await c.enqueue(job(prompt: "x")) }
         await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: "x", schema: "{}")) }

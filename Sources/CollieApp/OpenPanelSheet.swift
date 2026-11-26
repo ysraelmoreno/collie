@@ -16,7 +16,7 @@ struct OpenPanelTarget: Equatable {
     var needsTarget: Bool { plugin == "preview" }
     private var hasTarget: Bool { !(artifactId ?? "").isEmpty || !(filePath ?? "").isEmpty }
     var canOpen: Bool { !needsTarget || hasTarget }
-    var missingHint: String? { canOpen ? nil : "Escolha um artifact ou um arquivo HTML." }
+    var missingHint: String? { canOpen ? nil : tr("Escolha um artifact ou um arquivo HTML.", "Pick an artifact or an HTML file.") }
     /// The `panel.open` arguments the target adds: an artifact wins over a file when both are set.
     var args: [String: JSONValue] {
         guard needsTarget else { return [:] }
@@ -27,16 +27,17 @@ struct OpenPanelTarget: Equatable {
 
     /// A failure as text for the user: never the raw protocol error.
     static func failureText(_ e: ProtocolError) -> String {
-        if e.message.hasPrefix("Prévia:") { return "Escolha um artifact ou um arquivo HTML para abrir a Prévia." }
+        // fixed prefix from the daemon (`PanelCommands.previewUsagePrefix`), whatever the language
+        if e.message.hasPrefix("preview:") { return tr("Escolha um artifact ou um arquivo HTML para abrir a Prévia.", "Pick an artifact or an HTML file to open the Preview.") }
         // M6.5 (A9): `PreviewFile.resolve`'s refusal, in a fixed text (the daemon's message carries paths)
-        if e.message.hasPrefix("a página precisa ficar dentro do projeto") { return "A página precisa ficar dentro do projeto." }
+        if e.message.hasPrefix("a página precisa ficar dentro do projeto") { return tr("A página precisa ficar dentro do projeto.", "The page must be inside the project.") }
         switch e.code {
-        case .notFound: return "Não encontrei o artifact ou o arquivo escolhido."
-        case .unauthorized: return "O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso."
-        case .timeout: return "O painel demorou demais para abrir. Tente de novo."
-        case .daemonUnavailable, .unavailable: return "O serviço do Collie não está disponível. Tente de novo em instantes."
-        case .invalidArgs: return "Não foi possível abrir o painel com essas opções."
-        default: return "Não foi possível abrir o painel. Tente de novo."
+        case .notFound: return tr("Não encontrei o artifact ou o arquivo escolhido.", "Couldn't find the chosen artifact or file.")
+        case .unauthorized: return tr("O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso.", "Collie can't access that file. Use a file from the project or approve access.")
+        case .timeout: return tr("O painel demorou demais para abrir. Tente de novo.", "The panel took too long to open. Try again.")
+        case .daemonUnavailable, .unavailable: return tr("O serviço do Collie não está disponível. Tente de novo em instantes.", "The Collie service isn't available. Try again in a moment.")
+        case .invalidArgs: return tr("Não foi possível abrir o painel com essas opções.", "Couldn't open the panel with those options.")
+        default: return tr("Não foi possível abrir o painel. Tente de novo.", "Couldn't open the panel. Try again.")
         }
     }
 }
@@ -84,14 +85,14 @@ struct OpenPanelSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Abrir painel").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
-            Picker("Plug-in", selection: $plugin) {
+            Text(tr("Abrir painel", "Open panel")).font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
+            Picker(tr("Plug-in", "Plug-in"), selection: $plugin) {
                 ForEach(PluginRegistry.all, id: \.id) { Text($0.title).tag($0.id) }
             }
             .onChange(of: plugin) { _, _ in if let s = spec { placement = s.defaultPlacement } }
-            TextField("Nome (opcional)", text: $name).collieField()
+            TextField(tr("Nome (opcional)", "Name (optional)"), text: $name).collieField()
             if at == nil {
-            Picker("Posição", selection: $placement) {
+            Picker(tr("Posição", "Position"), selection: $placement) {
                 ForEach(PanelMenu.order.filter { spec?.placements.contains($0) ?? false }, id: \.self) {
                     Text(PanelMenu.labels[$0] ?? $0.rawValue).tag($0)
                 }
@@ -99,40 +100,40 @@ struct OpenPanelSheet: View {
             }
             if plugin == "device" {
                 HStack {
-                    Picker("Aparelho", selection: $serial) {
-                        if devices.isEmpty { Text("Nenhum aparelho conectado").tag("") }
+                    Picker(tr("Aparelho", "Device"), selection: $serial) {
+                        if devices.isEmpty { Text(tr("Nenhum aparelho conectado", "No device connected")).tag("") }
                         ForEach(devices, id: \.serial) { Text($0.label).tag($0.serial) }
                     }
-                    Button("Atualizar") { Task { await loadDevices() } }
+                    Button(tr("Atualizar", "Refresh")) { Task { await loadDevices() } }
                 }
                 if let d = devices.first(where: { $0.serial == serial }), d.off {
-                    Text(d.platform == "android" ? "Abrir vai ligar o emulador (pode levar até 3 min)." : "Abrir vai ligar o simulador (pode levar até 2 min).").foregroundStyle(Color.collieMuted).font(.collieUI(12))
+                    Text(d.platform == "android" ? tr("Abrir vai ligar o emulador (pode levar até 3 min).", "Opening will start the emulator (may take up to 3 min).") : tr("Abrir vai ligar o simulador (pode levar até 2 min).", "Opening will start the simulator (may take up to 2 min).")).foregroundStyle(Color.collieMuted).font(.collieUI(12))
                 }
             } else if plugin == "design" {
-                Picker("Arquivo", selection: $file) {
-                    if files.isEmpty { Text("Nenhum arquivo").tag("") }
+                Picker(tr("Arquivo", "File"), selection: $file) {
+                    if files.isEmpty { Text(tr("Nenhum arquivo", "No file")).tag("") }
                     ForEach(files, id: \.self) { Text($0).tag($0) }
                 }
                 HStack {
-                    TextField("Novo arquivo…", text: $newFile).collieField()
-                    Button("Criar", action: createFile).disabled(busy || newFile.trimmingCharacters(in: .whitespaces).isEmpty)
+                    TextField(tr("Novo arquivo…", "New file…"), text: $newFile).collieField()
+                    Button(tr("Criar", "Create"), action: createFile).disabled(busy || newFile.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } else if plugin == "preview" {
-                TextField("Pesquisar artifact…", text: $artifactSearch).collieField()
+                TextField(tr("Pesquisar artifact…", "Search artifact…"), text: $artifactSearch).collieField()
                 Picker("Artifact", selection: $artifactId) {
-                    Text(artifacts.isEmpty ? "Nenhum artifact" : "—").tag("")
+                    Text(artifacts.isEmpty ? tr("Nenhum artifact", "No artifact") : "—").tag("")
                     ForEach(shownArtifacts, id: \.id) { Text($0.title).tag($0.id) }
                 }
                 HStack {
-                    Button("Escolher arquivo HTML…", action: pickFile)
-                    Text(pickedFile.isEmpty ? "ou escolha um arquivo" : (pickedFile as NSString).lastPathComponent)
+                    Button(tr("Escolher arquivo HTML…", "Choose HTML file…"), action: pickFile)
+                    Text(pickedFile.isEmpty ? tr("ou escolha um arquivo", "or choose a file") : (pickedFile as NSString).lastPathComponent)
                         .foregroundStyle(Color.collieMuted).font(.collieUI(12)).lineLimit(1).truncationMode(.middle)
                 }
                 if let hint = target.missingHint { Text(hint).foregroundStyle(Color.collieMuted).font(.collieUI(12)) }
             } else {
-                if plugin == "browser" { TextField("URL inicial", text: $url).collieField(mono: true) }
-                Picker("Armazenamento", selection: $storage) {
-                    Text("Isolado").tag(StorageScope.isolated)
+                if plugin == "browser" { TextField(tr("URL inicial", "Initial URL"), text: $url).collieField(mono: true) }
+                Picker(tr("Armazenamento", "Storage"), selection: $storage) {
+                    Text(tr("Isolado", "Isolated")).tag(StorageScope.isolated)
                     Text("Workspace").tag(StorageScope.workspace)
                     Text("Global").tag(StorageScope.global)
                 }
@@ -140,8 +141,8 @@ struct OpenPanelSheet: View {
             if let error { Text(error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
             HStack {
                 Spacer()
-                Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Abrir", action: open).keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
+                Button(tr("Cancelar", "Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(tr("Abrir", "Open"), action: open).keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
                     .disabled(spec == nil || busy || (plugin == "device" && serial.isEmpty) || (plugin == "design" && file.isEmpty) || !target.canOpen)
             }
         }
@@ -164,9 +165,9 @@ struct OpenPanelSheet: View {
                 if o["platform"] == .string("ios") {
                     guard state == "booted" || state == "shutdown", case .string(let m)? = o["model"] else { return nil }
                     let runtime: String = if case .string(let r)? = o["product"] { " — \(r)" } else { "" }
-                    return (s, m + runtime + (state == "shutdown" ? " (desligado)" : ""), state == "shutdown", "ios")
+                    return (s, m + runtime + (state == "shutdown" ? tr(" (desligado)", " (off)") : ""), state == "shutdown", "ios")
                 }
-                if state == "off", case .string(let m)? = o["model"] { return (s, "\(m) (desligado)", true, "android") }
+                if state == "off", case .string(let m)? = o["model"] { return (s, "\(m) " + tr("(desligado)", "(off)"), true, "android") }
                 guard state == "device" else { return nil }
                 if case .string(let m)? = o["model"] { return (s, "\(m.replacingOccurrences(of: "_", with: " ")) (\(s))", false, "android") }
                 return (s, s, false, "android")
@@ -244,7 +245,7 @@ struct OpenPanelSheet: View {
                 if onCanvas, let at { canvas.setFrame(CGRect(origin: at, size: plugin == "device" ? CGSize(width: 360, height: 720) : plugin == "design" || plugin == "diagram" ? CGSize(width: 1100, height: 720) : CanvasState.defaultTerminalSize), for: id) }
                 dismiss()
             } catch {
-                self.error = (error as? ProtocolError).map(OpenPanelTarget.failureText) ?? "Não foi possível abrir o painel. Tente de novo."
+                self.error = (error as? ProtocolError).map(OpenPanelTarget.failureText) ?? tr("Não foi possível abrir o painel. Tente de novo.", "Couldn't open the panel. Try again.")
                 busy = false
             }
         }

@@ -45,7 +45,7 @@ private func verified(_ d: Daemon, _ s: RepoMemory, _ id: UUID) async throws -> 
 }
 
 /// Task 10 (spec 2026-11-17 curator provider §2.3): a limited curator proposes and asks, never decides.
-@Suite(.serialized) struct CuratorTrustTests {
+@Suite(.serialized, .curatorPT) struct CuratorTrustTests {
     @Test func limitedCreateIsProposed() async throws {
         try await withStore([]) { d, _, store, _ in
             let j = try job(store, [])

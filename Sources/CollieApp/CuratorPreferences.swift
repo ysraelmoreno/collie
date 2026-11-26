@@ -9,24 +9,27 @@ import ColliePlugins
 struct CuratorSettings: Equatable {
     struct Row: Equatable, Identifiable {
         var provider: String, installed: Bool, available: Bool, availability: String, consentNeeded: Bool, destination: String
+        /// The daemon's stable reason code (`CuratorReason`: "noLogin", "paidLogin"…); `availability` is only text to show.
+        var code: String? = nil
         var id: String { provider }
         var name: String { provider.capitalized }
         /// An installed Cursor with no curator login yet: offer "Entrar" (Collie never logs it in by itself).
-        var canLogin: Bool { provider == "cursor" && installed && availability == "cursor sem login para o curador" }
+        var canLogin: Bool { provider == "cursor" && installed && code == "noLogin" }
         /// Available now, or only a consent away (the sheet).
         var selectable: Bool { available || consentNeeded }
         var detail: String {
-            let inst = installed ? "instalado" : "não instalado"
-            if available { return "\(inst) · disponível · dados vão para \(CuratorSettings.to(destination))" }
+            let inst = installed ? tr("instalado", "installed") : tr("não instalado", "not installed")
+            if available { return tr("\(inst) · disponível · dados vão para \(CuratorSettings.to(destination))", "\(inst) · available · data goes to \(CuratorSettings.to(destination))") }
             if consentNeeded {
-                return "\(inst) · falta seu consentimento: "
-                    + (availability.contains("cobrança por uso") ? "login com cobrança por uso" : "dados vão para \(CuratorSettings.to(destination))")
+                let why = code == "paidLogin" ? tr("login com cobrança por uso", "pay-per-use login")
+                    : tr("dados vão para \(CuratorSettings.to(destination))", "data goes to \(CuratorSettings.to(destination))")
+                return tr("\(inst) · falta seu consentimento: \(why)", "\(inst) · needs your consent: \(why)")
             }
-            return "\(inst) · indisponível: \(availability)"
+            return tr("\(inst) · indisponível: \(availability)", "\(inst) · unavailable: \(availability)")
         }
     }
 
-    static let loginLabel = "Entrar no Cursor para o curador"
+    static var loginLabel: String { tr("Entrar no Cursor para o curador", "Log in to Cursor for the curator") }
 
     var info: CuratorInfo
     var rows: [Row]
@@ -35,9 +38,11 @@ struct CuratorSettings: Equatable {
     var testLine: String?
 
     /// An older daemon (no `provider`): nothing here works until it restarts.
-    var restartNote: String? { info.provider == nil ? "reinicie o serviço para usar isto" : nil }
+    var restartNote: String? { info.provider == nil ? tr("reinicie o serviço para usar isto", "restart the service to use this") : nil }
     var trustNote: String? {
-        info.trust == "limited" ? "Confiança limitada: criar vira proposta; ativar, apagar ou reescrever vira pergunta." : nil
+        info.trust == "limited"
+            ? tr("Confiança limitada: criar vira proposta; ativar, apagar ou reescrever vira pergunta.",
+                 "Limited trust: creating becomes a proposal; activating, deleting or rewriting becomes a question.") : nil
     }
     /// The model picker: Claude's list as is ("" would reach `--model`); another provider also offers its account default.
     var modelChoices: [String] { (info.provider ?? "claude") == "claude" ? models : [""] + models }
@@ -45,15 +50,20 @@ struct CuratorSettings: Equatable {
     static func from(reply: JSONValue) -> CuratorSettings? {
         guard case .object(let o) = reply, let data = try? JSONEncoder().encode(reply),
               let info = try? JSONDecoder().decode(CuratorInfo.self, from: data) else { return nil }
+        // `code` isn't in `CuratorProviderEntry` (another module): read it from the reply
+        var codes: [String: String] = [:]
+        if case .array(let ps)? = o["providers"] {
+            for case .object(let p) in ps { if case .string(let n)? = p["provider"], case .string(let c)? = p["code"] { codes[n] = c } }
+        }
         let rows = (info.providers ?? []).map {
             Row(provider: $0.provider, installed: $0.installed, available: $0.available, availability: $0.availability,
-                consentNeeded: $0.consentNeeded, destination: $0.destination)
+                consentNeeded: $0.consentNeeded, destination: $0.destination, code: codes[$0.provider])
         }
         var models: [String] = [], testLine: String?
         if case .object(let t)? = o["test"] {
             if case .array(let ms)? = t["models"] { models = ms.compactMap { if case .string(let s) = $0 { s } else { nil } } }
             if case .string(let a)? = t["availability"] {
-                testLine = "Teste: \(a)" + (models.isEmpty ? "" : " · modelos: " + models.joined(separator: ", "))
+                testLine = tr("Teste: \(a)", "Test: \(a)") + (models.isEmpty ? "" : tr(" · modelos: ", " · models: ") + models.joined(separator: ", "))
             }
         }
         return CuratorSettings(info: info, rows: rows, models: models, testLine: testLine)
@@ -69,26 +79,33 @@ struct CuratorSettings: Equatable {
     static func consentText(_ provider: String) -> String {
         switch provider {
         case "cursor":
-            "O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia ao Cursor e aos fornecedores de modelo dele, sob o Privacy Mode e o plano da sua conta. Se o seu plano cobra por uso além do incluído, os jobs do curador contam. Nada é enviado por chave de API."
+            tr("O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia ao Cursor e aos fornecedores de modelo dele, sob o Privacy Mode e o plano da sua conta. Se o seu plano cobra por uso além do incluído, os jobs do curador contam. Nada é enviado por chave de API.",
+               "The curator reads excerpts of your conversations, documents and memories on this Mac and sends them to Cursor and its model providers, under Privacy Mode and your account's plan. If your plan bills per use beyond what's included, the curator's jobs count. Nothing is sent by API key.")
         case "claude":
-            "O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia à Anthropic pelo login do claude deste Mac. Esse login não é a assinatura: ele cobra por uso (conta de API) ou não foi reconhecido, e os jobs do curador contam na cobrança, até o limite diário. Nada é enviado por chave de API do seu shell."
+            tr("O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia à Anthropic pelo login do claude deste Mac. Esse login não é a assinatura: ele cobra por uso (conta de API) ou não foi reconhecido, e os jobs do curador contam na cobrança, até o limite diário. Nada é enviado por chave de API do seu shell.",
+               "The curator reads excerpts of your conversations, documents and memories on this Mac and sends them to Anthropic through this Mac's claude login. That login isn't the subscription: it bills per use (API account) or wasn't recognized, and the curator's jobs count toward the bill, up to the daily limit. Nothing is sent by an API key from your shell.")
         default:
-            "O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia a \(provider.capitalized). Se o login cobra por uso, os jobs do curador contam."
+            tr("O curador lê trechos das suas conversas, documentos e memórias deste Mac e os envia a \(provider.capitalized). Se o login cobra por uso, os jobs do curador contam.",
+               "The curator reads excerpts of your conversations, documents and memories on this Mac and sends them to \(provider.capitalized). If the login bills per use, the curator's jobs count.")
         }
     }
 
-    /// `testCall`'s results: "Chamada de teste: ops ok · items junk · chunks ok".
+    /// `testCall`'s results: "Chamada de teste: ops ok · items junk · chunks ok" ("Test call: …").
     static func testCallLine(_ reply: JSONValue) -> String? {
         guard case .object(let o) = reply, case .array(let xs)? = o["testCall"] else { return nil }
         let parts = xs.compactMap { x -> String? in
             guard case .object(let e) = x, case .string(let f)? = e["format"], case .string(let r)? = e["result"] else { return nil }
             return "\(f) \(r)"
         }
-        return "Chamada de teste: " + parts.joined(separator: " · ")
+        return tr("Chamada de teste: ", "Test call: ") + parts.joined(separator: " · ")
     }
 
     static func to(_ destination: String) -> String {
-        switch destination { case "Anthropic": "a Anthropic"; case "Cursor": "o Cursor"; default: destination }
+        switch destination {
+        case "Anthropic": tr("a Anthropic", "Anthropic")
+        case "Cursor": tr("o Cursor", "Cursor")
+        default: destination
+        }
     }
 }
 
@@ -106,18 +123,18 @@ struct CuratorPreferences: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Curador da memória").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("Curador da memória", "Memory curator")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
             if let s, let note = s.restartNote { muted(note) } else if let s { settings(s) } else { muted(connected ? "…" : "—") }
             if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
         }
         .task(id: connected) { await load() }
-        .alert("Enviar dados ao curador?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), presenting: pending) { row in
-            Button("Confirmar") { send(CuratorSettings.choose(row, accepted: true)) }
-            Button("Cancelar", role: .cancel) {}
+        .alert(tr("Enviar dados ao curador?", "Send data to the curator?"), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), presenting: pending) { row in
+            Button(tr("Confirmar", "Confirm")) { send(CuratorSettings.choose(row, accepted: true)) }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) {}
         } message: { row in Text(CuratorSettings.consentText(row.provider)) }
-        .confirmationDialog("Fazer 3 chamadas de teste?", isPresented: $confirmCall) {
-            Button("Testar (contam 3 no limite de hoje)") { testCall() }
-        } message: { Text("Uma por formato de resposta, com dados sintéticos. Nada é gravado na memória.") }
+        .confirmationDialog(tr("Fazer 3 chamadas de teste?", "Make 3 test calls?"), isPresented: $confirmCall) {
+            Button(tr("Testar (contam 3 no limite de hoje)", "Test (counts 3 toward today's limit)")) { testCall() }
+        } message: { Text(tr("Uma por formato de resposta, com dados sintéticos. Nada é gravado na memória.", "One per answer format, with synthetic data. Nothing is written to memory.")) }
     }
 
     @ViewBuilder
@@ -134,30 +151,30 @@ struct CuratorPreferences: View {
                     Button(CuratorSettings.loginLabel) { login() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
                 }
                 if row.consentNeeded, s.info.provider == row.provider {
-                    Button("Confirmar…") { pending = row }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
+                    Button(tr("Confirmar…", "Confirm…")) { pending = row }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
                 }
             }
         }
-        if !s.info.available, let why = s.info.reason { muted("curador indisponível: \(why)") }
+        if !s.info.available, let why = s.info.reason { muted(tr("curador indisponível: \(why)", "curator unavailable: \(why)")) }
         if !s.modelChoices.isEmpty {
-            Picker("Modelo", selection: Binding(get: { s.info.model ?? "" }, set: { send(["model": .string($0), "provider": .string(s.info.provider ?? "claude")]) })) {
-                ForEach(s.modelChoices, id: \.self) { Text($0.isEmpty ? "padrão da conta" : $0).tag($0) }
+            Picker(tr("Modelo", "Model"), selection: Binding(get: { s.info.model ?? "" }, set: { send(["model": .string($0), "provider": .string(s.info.provider ?? "claude")]) })) {
+                ForEach(s.modelChoices, id: \.self) { Text($0.isEmpty ? tr("padrão da conta", "account default") : $0).tag($0) }
             }
             .frame(maxWidth: 280).disabled(!connected || working)
         }
         HStack {
-            Text("Limite").font(.collieUI(13))
+            Text(tr("Limite", "Limit")).font(.collieUI(13))
             // empty: no cap (the default)
-            TextField("sem limite", text: $cap).frame(width: 84).onSubmit {
+            TextField(tr("sem limite", "no limit"), text: $cap).frame(width: 84).onSubmit {
                 let t = cap.trimmingCharacters(in: .whitespaces)
                 if t.isEmpty { send(["noCap": .bool(true)]) } else if let n = Int(t) { send(["cap": .number(Double(max(0, n)))]) }
             }
-            Text("jobs por dia (vazio: sem limite; 0: desligado)").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+            Text(tr("jobs por dia (vazio: sem limite; 0: desligado)", "jobs per day (empty: no limit; 0: off)")).font(.collieUI(13)).foregroundStyle(Color.collieMuted)
         }
         if let t = s.trustNote { muted(t) }
         HStack {
-            Button("Testar agora") { send([:]) }.buttonStyle(CollieButtonStyle(.quiet))
-            Button("Testar com uma chamada…") { confirmCall = true }.buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Testar agora", "Test now")) { send([:]) }.buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Testar com uma chamada…", "Test with a call…")) { confirmCall = true }.buttonStyle(CollieButtonStyle(.quiet))
         }
         .disabled(!connected || working)
         if let t = s.testLine { muted(t) }
@@ -198,7 +215,7 @@ struct CuratorPreferences: View {
         Task {
             do {
                 guard case .object(let o) = try await client.adminCall("memory.curator", ["cursorLogin": .bool(true)]),
-                      case .string(let line)? = o["cursorLogin"] else { throw ProtocolError(code: .internal, message: "resposta sem comando de login") }
+                      case .string(let line)? = o["cursorLogin"] else { throw ProtocolError(code: .internal, message: tr("resposta sem comando de login", "reply without a login command")) }
                 _ = try await client.spawn(name: "cursor-login-" + UUID().uuidString.prefix(4).lowercased(), preset: .custom, command: line,
                                            cwd: NSHomeDirectory(), shepherd: false, sandbox: .free)
             } catch { self.error = (error as? ProtocolError)?.message ?? "\(error)" }

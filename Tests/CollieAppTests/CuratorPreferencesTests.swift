@@ -4,7 +4,7 @@ import CollieProtocol
 @testable import CollieApp
 
 /// Preferências › Memória › "Curador da memória" (plan 2026-11-17 curator provider, Task 13): the model alone, no UI.
-struct CuratorPreferencesTests {
+@Suite(.appCuratorPT) struct CuratorPreferencesTests {
     private func row(_ p: String, installed: Bool, available: Bool, why: String, consent: Bool = false) -> JSONValue {
         .object(["provider": .string(p), "installed": .bool(installed), "available": .bool(available), "availability": .string(why),
                  "consentNeeded": .bool(consent), "destination": .string(p == "claude" ? "Anthropic" : "Cursor")])
@@ -31,7 +31,7 @@ struct CuratorPreferencesTests {
         #expect(missing.rows[0].detail == "não instalado · indisponível: claude não encontrado")
         let metered = CuratorSettings.Row(provider: "claude", installed: true, available: false,
                                           availability: "Claude: login com cobrança por uso ou não reconhecido; consentimento necessário",
-                                          consentNeeded: true, destination: "Anthropic")
+                                          consentNeeded: true, destination: "Anthropic", code: "paidLogin")
         #expect(metered.selectable && metered.detail == "instalado · falta seu consentimento: login com cobrança por uso")
     }
 
@@ -68,7 +68,8 @@ struct CuratorPreferencesTests {
     /// "Entrar no Cursor para o curador" shows only for an installed Cursor that has no curator login yet.
     @Test func loginOfferedOnlyWhenLoggedOut() {
         func r(_ installed: Bool, _ why: String, _ p: String = "cursor") -> CuratorSettings.Row {
-            .init(provider: p, installed: installed, available: false, availability: why, consentNeeded: false, destination: "Cursor")
+            .init(provider: p, installed: installed, available: false, availability: why, consentNeeded: false, destination: "Cursor",
+                  code: why == "cursor sem login para o curador" ? "noLogin" : nil)
         }
         #expect(r(true, "cursor sem login para o curador").canLogin)
         #expect(!r(false, "cursor não encontrado").canLogin && !r(true, "falta confirmar nas Preferências").canLogin)
@@ -80,5 +81,39 @@ struct CuratorPreferencesTests {
         let r: JSONValue = .object(["testCall": .array([.object(["format": .string("ops"), "result": .string("ok")]),
                                                         .object(["format": .string("items"), "result": .string("junk")])])])
         #expect(CuratorSettings.testCallLine(r) == "Chamada de teste: ops ok · items junk")
+    }
+}
+
+/// The same rows and sheets in English; the "who acts on it" decisions follow the daemon's `code`, never its text.
+@Suite(.appCuratorEN) struct CuratorPreferencesEnglishTests {
+    private func reply(_ rows: [JSONValue]) -> JSONValue {
+        .object(["available": .bool(true), "today": .number(0), "queued": .number(0), "failed": .number(0), "inputTokens": .number(0),
+                 "outputTokens": .number(0), "costUSD": .number(0), "provider": .string("claude"), "model": .string("haiku"),
+                 "trust": .string("full"), "destination": .string("Anthropic"), "providers": .array(rows)])
+    }
+    private func row(_ p: String, why: String, code: String?, consent: Bool = false) -> JSONValue {
+        var o: [String: JSONValue] = ["provider": .string(p), "installed": .bool(true), "available": .bool(false), "availability": .string(why),
+                                      "consentNeeded": .bool(consent), "destination": .string(p == "claude" ? "Anthropic" : "Cursor")]
+        if let code { o["code"] = .string(code) }
+        return .object(o)
+    }
+
+    @Test func loginAndConsentFollowTheCodeNotTheText() throws {
+        // whatever language the daemon wrote the reason in, the code decides
+        let s = try #require(CuratorSettings.from(reply: reply([
+            row("cursor", why: "cursor has no login for the curator", code: "noLogin"),
+            row("claude", why: "Claude: pay-per-use or unrecognized login; consent required", code: "paidLogin", consent: true)])))
+        #expect(s.rows[0].canLogin && s.rows[0].detail == "installed · unavailable: cursor has no login for the curator")
+        #expect(s.rows[1].detail == "installed · needs your consent: pay-per-use login")
+        let ptText = try #require(CuratorSettings.from(reply: reply([row("cursor", why: "cursor sem login para o curador", code: nil)])))
+        #expect(!ptText.rows[0].canLogin, "no code, no button: the text is never read")
+    }
+
+    @Test func titlesAndSheets() {
+        #expect(CuratorSettings.loginLabel == "Log in to Cursor for the curator")
+        #expect(CuratorSettings.consentText("cursor").hasPrefix("The curator reads excerpts of your conversations"))
+        #expect(CuratorSettings.to("Anthropic") == "Anthropic")
+        let r: JSONValue = .object(["testCall": .array([.object(["format": .string("ops"), "result": .string("ok")])])])
+        #expect(CuratorSettings.testCallLine(r) == "Test call: ops ok")
     }
 }

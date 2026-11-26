@@ -58,7 +58,7 @@ private let nested: Comment = "already inside a sandbox: sandbox-exec can't nest
 
 private let call = CuratorCall(instructions: "be terse", input: "--dangerously-skip-permissions oi", schema: #"{"type":"object"}"#)
 
-@Suite(.serialized) struct CuratorRunnerTests {
+@Suite(.serialized, .curatorPT) struct CuratorRunnerTests {
     @Test func argumentsPinned() {
         let a = ClaudeCuratorRunner.arguments(call, model: "haiku")
         let pinned = ["-p", "--model", "--output-format", "--json-schema", "--tools", "--strict-mcp-config", "--mcp-config",
@@ -279,7 +279,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
 
             """ }
         let r = fake.runner(retryAfter: .zero)
-        #expect(await r.availability() == .unavailable("claude não respondeu"))
+        #expect(await r.availability() == .unavailable("claude não respondeu", code: .noAnswer))
         #expect(await r.availability() == .available)
         #expect(await r.availability() == .available)   // cached: no third run
         let cwds = try String(contentsOf: fake.rec, encoding: .utf8).split(separator: "\n").map(String.init)

@@ -37,7 +37,7 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
     s.connections.contains { Set([$0.a, $0.b]) == Set([a, b]) }
 }
 
-@Suite(.serialized) struct PanelCommandTests {
+@Suite(.serialized, .curatorPT) struct PanelCommandTests {
     @Test func shepherdOpensCanvasPanelWithLeash() async throws {
         try await withDaemon { d, p in
             let m = try await term(d, p, "M", shepherd: true)
@@ -57,6 +57,19 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
             #expect(o2["name"] == .string("browser-2") && o2["placement"] == .string("dock.right"))
             #expect(try await call(p, m, "panel.open", ["plugin": "nope"]).error?.code == .notFound)
             #expect(try await call(p, m, "panel.open", ["plugin": "browser", "storage": "x"]).error?.code == .invalidArgs)
+        }
+    }
+
+    /// Idiomas Task 4: the "give --file or --artifact" refusal starts with a fixed tag the app matches, in either language.
+    @Test func previewWithoutTargetIsTaggedInBothLanguages() async throws {
+        for lang in Lang.allCases {
+            try await L10n.$override.withValue(lang) {
+                try await withDaemon { d, p in
+                    let m = try await term(d, p, "M", shepherd: true)
+                    let e = try #require(try await call(p, m, "panel.open", ["plugin": "preview"]).error)
+                    #expect(e.code == .invalidArgs && e.message.hasPrefix(CommandRouter.previewUsagePrefix), "\(e)")
+                }
+            }
         }
     }
 

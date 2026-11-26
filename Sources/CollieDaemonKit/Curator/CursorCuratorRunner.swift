@@ -90,6 +90,19 @@ struct CursorCuratorRunner: CuratorRunner {
         let auth = dot.appendingPathComponent("auth.json")
         if Self.ownFile(auth) { chmod(auth.path, 0o600) }   // a linked one is left alone (its target never touched)
     }
+    /// The CAs macOS trusts (`UpstreamTrust`: system anchors plus the admin/user ones, a local proxy's or mkcert's, the
+    /// user's "never trust" honoured), for `NODE_EXTRA_CA_CERTS`. Outside a sandbox the CLI gets them from its script's
+    /// `--use-system-ca`; with the file login the script drops that flag and, sandboxed, Node can't read the Keychain
+    /// either: "self-signed certificate in certificate chain". collied reads them here, unsandboxed, into cursor-home,
+    /// so the profile still opens no Keychain, `securityd` or `/private/var/db`. nil (no variable): unreadable, empty.
+    var trustFile: URL { cursorHome.appendingPathComponent("system-ca.pem") }
+    private func writeTrustedRoots() -> URL? {
+        guard let pem = try? UpstreamTrust.bundle(UpstreamTrust.systemSnapshot()).pem, !pem.isEmpty else { return nil }
+        if Self.lstatOf(trustFile) != nil, !Self.ownFile(trustFile) { try? FileManager.default.removeItem(at: trustFile) }
+        guard (try? UpstreamTrust.write(pem, to: trustFile)) != nil, Self.ownFile(trustFile) else { return nil }
+        chmod(trustFile.path, 0o600)
+        return trustFile
+    }
     /// After a call: cursor-home, `.cursor` and the config still real and ours, the config still closed.
     private func closedAfterCall() -> Bool {
         Self.ownDir(cursorHome) && Self.ownDir(configFile.deletingLastPathComponent()) && Self.ownFile(configFile)
@@ -234,6 +247,7 @@ struct CursorCuratorRunner: CuratorRunner {
                 throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)")
             }
             var e = Self.environment(root: root, path: sandboxed ? Self.sandboxPath : p)
+            if let ca = writeTrustedRoots() { e["NODE_EXTRA_CA_CERTS"] = SignedAppCheck.realPath(ca) }
             // the sandbox allows the REAL path (`/private/var/...`); the CLI stats what it is given, so it gets that one, not the `/var` link
             let real = URL(fileURLWithPath: SignedAppCheck.realPath(cwd))
             e["TMPDIR"] = real.path

@@ -327,7 +327,8 @@ private struct Fake {
         let ch = URL(fileURLWithPath: "/Users/u/Library/Application Support/Collie/curator/cursor-home")
         let script = URL(fileURLWithPath: "/Users/u/.local/share/cursor-agent/versions/v/cursor-agent")
         let p = CuratorSandboxProfile.render(CuratorSandboxProfile.cursor(script: script, cwd: URL(fileURLWithPath: "/private/tmp/w"), cursorHome: ch))
-        for bad in ["\"\(home)/.cursor", "\"\(home)/.claude", "Library/Keychains", "\"/Users/u/.cursor", "\"/Users/u/.claude", "securityd"] {
+        for bad in ["\"\(home)/.cursor", "\"\(home)/.claude", "Library/Keychains", "\"/Users/u/.cursor", "\"/Users/u/.claude", "securityd",
+                    "SecurityServer", "\"/private/var/db\"", "/usr/bin/security", "com.apple.security"] {
             #expect(!p.contains(bad), "\(bad)")
         }
         #expect(p.contains("(allow file-write* (subpath \"\(ch.path)\"))"))
@@ -351,6 +352,23 @@ private struct Fake {
         // A3: outbound only to port 443 (DNS goes through mDNSResponder's mach service)
         #expect(p.contains("(allow network-outbound (remote ip \"*:443\"))") && !p.contains("(allow network-outbound (remote ip))"))
         #expect(p.contains("com.apple.mDNSResponder") && CursorCuratorRunner.port == 443)
+    }
+
+    /// The CAs macOS trusts reach the CLI as a PEM in its own cursor-home (`NODE_EXTRA_CA_CERTS`), not through the Keychain:
+    /// written every call, 0600, a planted link replaced (never followed).
+    @Test func trustedRootsInCursorHome() async throws {
+        let f = try Fake()
+        let pem = f.home.appendingPathComponent("system-ca.pem"), outside = f.base.appendingPathComponent("outside.pem")
+        try "keep".write(to: outside, atomically: false, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: pem, withDestinationURL: outside)
+        _ = try await f.runner().run(call, model: "", timeout: .seconds(20))
+        let env = try f.recorded()[1]
+        #expect(env.contains("NODE_EXTRA_CA_CERTS=\(SignedAppCheck.realPath(pem))\n"))
+        let text = try String(contentsOf: pem, encoding: .utf8)
+        #expect(CursorCuratorRunner.ownFile(pem) && text.hasPrefix("-----BEGIN CERTIFICATE-----\n"))
+        let mode = try FileManager.default.attributesOfItem(atPath: pem.path)[.posixPermissions] as? Int
+        let kept = try String(contentsOf: outside, encoding: .utf8)
+        #expect(mode == 0o600 && kept == "keep")
     }
 
     /// A2 (ii): sandboxed, the CLI gets a fixed system PATH (the user's only finds it): no Homebrew bash or coreutils.

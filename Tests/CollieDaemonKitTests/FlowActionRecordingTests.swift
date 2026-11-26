@@ -154,3 +154,98 @@ extension DeviceCommandTests {
         }
     }
 }
+
+/// b1: a password never reaches the flow log. iOS marks SecureTextField as a password, and the typed text is written in
+/// clear only when a fresh read (no action since) proves no password field; anything else is masked.
+private let plainField = """
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node index="0" text="" resource-id="com.example:id/name" class="android.widget.EditText" content-desc="Nome" clickable="true" focused="true" password="false" bounds="[100,500][900,600]" />
+  </node>
+</hierarchy>
+"""
+
+extension DeviceCommandTests {
+    @Suite struct FlowSecureTests {
+        private static let axe = """
+        [{"type":"Application","AXLabel":"App","frame":{"x":0,"y":0,"width":390,"height":844},"children":[
+          {"type":"TextField","AXLabel":"E-mail","AXValue":"ana@x.com","enabled":true,"frame":{"x":20,"y":100,"width":350,"height":40}},
+          {"type":"SecureTextField","AXLabel":"Senha","AXValue":"hunter2","enabled":true,"frame":{"x":20,"y":160,"width":350,"height":40}}
+        ]}]
+        """
+
+        @Test func iosSecureTextFieldIsAPasswordWithoutItsValue() throws {
+            let nodes = AXeTree.parse(Data(Self.axe.utf8)).nodes
+            let pw = try #require(nodes.first { $0.cls == "SecureTextField" })
+            #expect(pw.password && pw.text == "Senha" && pw.desc.isEmpty)
+            #expect(!nodes.contains { $0.text.contains("hunter2") || $0.desc.contains("hunter2") })
+            let mail = try #require(nodes.first { $0.cls == "TextField" })
+            #expect(!mail.password && mail.desc == "ana@x.com")
+        }
+
+        @Test func iosTypedTextIsMaskedInTheLog() throws {
+            let nodes = AXeTree.parse(Data(Self.axe.utf8)).nodes
+            let secure = DeviceService.flowSecure(nodes, fresh: true)
+            #expect(secure)
+            let line = String(decoding: try FlowActionLog.line(FlowAction(origin: "agent:A", action: "text", text: "hunter2", secure: secure),
+                                                              at: Date(timeIntervalSince1970: 0)), as: UTF8.self)
+            #expect(!line.contains("hunter2") && line.contains(FlowActionLog.mask), "\(line)")
+        }
+
+        @Test func decisionFailsClosed() {
+            let plain = [UINode(ref: "e1", cls: "EditText", text: "Nome", desc: "", id: "", bounds: .zero, clickable: true, depth: 0)]
+            #expect(!DeviceService.flowSecure(plain, fresh: true))
+            #expect(DeviceService.flowSecure(plain, fresh: false))   // stale read
+            #expect(DeviceService.flowSecure([], fresh: true))       // no refs
+            var pw = plain; pw[0].password = true
+            #expect(DeviceService.flowSecure(pw, fresh: true))
+        }
+
+        @Test func noReadMasks() async throws {
+            let fx = try Fx(ui: plainField); defer { fx.cleanup() }
+            try await withPaddockDevice(fx) { d, p, a async throws in
+                #expect(try await call(p, a, "device.text", ["text": "segredo1"]).ok)   // as after a daemon restart: no read
+                await d.router.devices.flowFlushed()
+                #expect(fx.lines.last?["action"] == "text" && fx.lines.last?["text"] == FlowActionLog.mask, "\(fx.lines)")
+            }
+        }
+
+        @Test func freshPlainReadWritesTextCappedAt80() async throws {
+            let fx = try Fx(ui: plainField); defer { fx.cleanup() }
+            try await withPaddockDevice(fx) { d, p, a async throws in
+                #expect(try await call(p, a, "device.screen").ok)
+                #expect(try await call(p, a, "device.text", ["text": "ana"]).ok)
+                #expect(try await call(p, a, "device.screen").ok)
+                let long = String(repeating: "x", count: 100)
+                #expect(try await call(p, a, "device.text", ["text": long]).ok)
+                await d.router.devices.flowFlushed()
+                #expect(fx.lines.map { $0["text"] } == ["ana", String(repeating: "x", count: 80)], "\(fx.lines)")
+            }
+        }
+
+        @Test func staleReadMasks() async throws {
+            let fx = try Fx(ui: plainField); defer { fx.cleanup() }
+            try await withPaddockDevice(fx) { d, p, a async throws in
+                #expect(try await call(p, a, "device.screen").ok)
+                #expect(try await call(p, a, "device.tap", ["x": "3", "y": "4"]).ok)   // the screen may be another one now
+                #expect(try await call(p, a, "device.text", ["text": "segredo2"]).ok)
+                #expect(try await call(p, a, "device.text", ["text": "segredo3"]).ok)   // a text is an action too
+                await d.router.devices.flowFlushed()
+                let raw = (try? String(contentsOf: fx.actions, encoding: .utf8)) ?? ""
+                #expect(!raw.contains("segredo"), "\(raw)")
+                #expect(fx.lines.filter { $0["action"] == "text" }.map { $0["text"] } == [FlowActionLog.mask, FlowActionLog.mask])
+            }
+        }
+
+        @Test func thenScreenMakesTheReadFresh() async throws {
+            let fx = try Fx(ui: plainField); defer { fx.cleanup() }
+            try await withPaddockDevice(fx) { d, p, a async throws in
+                #expect(try await call(p, a, "device.tap", ["x": "3", "y": "4", "then": "screen", "settle": "0"]).ok)
+                #expect(try await call(p, a, "device.text", ["text": "ana"]).ok)
+                await d.router.devices.flowFlushed()
+                #expect(fx.lines.last?["text"] == "ana", "\(fx.lines)")
+            }
+        }
+    }
+}

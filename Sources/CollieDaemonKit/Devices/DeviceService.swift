@@ -29,6 +29,9 @@ actor DeviceService {
     var refs: [UUID: [UINode]] = [:]
     /// The last `device.screen` per panel, for its `changed`.
     var lastScreen: [UUID: Screen] = [:]
+    /// b1: panels whose `refs` come from a read made after their last action (agent or viewer); the typed text of a
+    /// `device.text` is written in clear only for these (`flowSecure`).
+    var flowFresh: Set<UUID> = []
     /// The last queued flow log write (d5): the next one waits for it.
     private var flowWrite: Task<Void, Never>?
     /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
@@ -172,18 +175,25 @@ actor DeviceService {
 
     /// `flow`: who acts and the paddock's `FlowActionLog` (d5); an action that succeeds is recorded when the log is on.
     func run(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?, flow: FlowRecorder? = nil) async throws(ProtocolError) -> JSONValue {
-        guard let flow, let panel, let action = Self.flowActions[command], flow.log.enabled else { return try await perform(command, panel: panel, args: args, cwd: cwd) }
+        guard let flow, let panel, let action = Self.flowActions[command], flow.log.enabled else { return try await tracked(command, panel: panel, args: args, cwd: cwd) }
         let before = flowSig(panel.id)   // read before the action: `--then screen` updates it
         let nodes = refs[panel.id] ?? []
-        let r = try await perform(command, panel: panel, args: args, cwd: cwd)
-        var sigAfter = ""
-        if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sigAfter = sig }
+        let secure = Self.flowSecure(nodes, fresh: flowFresh.contains(panel.id))
+        let r = try await tracked(command, panel: panel, args: args, cwd: cwd)
         record(FlowAction(origin: flow.origin, action: action, target: Self.flowTarget(command, args, nodes),
                           text: command == "device.text" ? { if case .string(let t)? = args["text"] { t } else { nil } }() : nil,
-                          // ponytail: any password field on the last read masks the typed text; over-masks a screen with a
-                          // password field and another one, never leaks
-                          secure: nodes.contains(where: \.password) || (refs[panel.id] ?? []).contains(where: \.password),
-                          sigBefore: before, sigAfter: sigAfter), to: flow.log)
+                          secure: secure || (refs[panel.id] ?? []).contains(where: \.password),
+                          sigBefore: before, sigAfter: Self.screenSig(r)), to: flow.log)
+        return r
+    }
+
+    /// `perform`, keeping `flowFresh`: an action makes the last read stale (before it runs: one that fails midway stays
+    /// stale) unless it returns its own screen (`--then screen` reads after it); a read makes it fresh.
+    private func tracked(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+        guard let id = panel?.id else { return try await perform(command, panel: panel, args: args, cwd: cwd) }
+        if Self.flowActions[command] != nil { flowFresh.remove(id) }
+        let r = try await perform(command, panel: panel, args: args, cwd: cwd)
+        if !closed.contains(id), Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty { flowFresh.insert(id) }
         return r
     }
 
@@ -579,6 +589,19 @@ actor DeviceService {
 
     static let flowActions = ["device.tap": "tap", "device.text": "text", "device.swipe": "swipe", "device.key": "key", "device.launch": "launch"]
 
+    /// The commands that read the whole tree into `refs` (b1).
+    static let flowReads: Set<String> = ["device.ui", "device.screen", "device.find"]
+
+    /// b1, fails closed: the typed text is masked unless the last read is fresh (no action since), has nodes and none of
+    /// them is a password field. ponytail: any password field masks; over-masks a screen with a password field and
+    /// another one, never leaks.
+    static func flowSecure(_ nodes: [UINode], fresh: Bool) -> Bool { !fresh || nodes.isEmpty || nodes.contains(where: \.password) }
+
+    /// The `sig` of the screen an action returned (`--then screen`); "" when none.
+    static func screenSig(_ r: JSONValue) -> String {
+        if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
+    }
+
     /// The signature of the panel's last `device.screen`; "" before any.
     func flowSig(_ panel: UUID) -> String { lastScreen[panel].map(ScreenSignature.compute) ?? "" }
 
@@ -663,6 +686,9 @@ actor DeviceService {
         conn.open(ok, onFrame: { [unowned conn, weak s] f in
                       guard case .in(let d) = f else { return }
                       s?.input(d, from: conn)
+                      // b1: the viewer may have changed the screen; ponytail: one Task per input, unordered with reads
+                      // (a late one only over-masks)
+                      Task { await self.flowStale(id) }
                       guard let flowLog, let t = down.withLock({ Self.panelTap(d, ios: ios, down: &$0) }), flowLog.enabled else { return }
                       Task { await self.recordPanelTap(panel: id, target: t, log: flowLog) }
                   },
@@ -671,6 +697,8 @@ actor DeviceService {
             conn.send(.deviceStatus(state: "ended", message: nil)); conn.closeAfterFlush()
         }
     }
+
+    func flowStale(_ panel: UUID) { flowFresh.remove(panel) }
 
     /// The last viewer gone: the session ends after `grace` unless one comes back.
     private func left(_ s: any ViewerSession, _ c: StreamConn) {
@@ -699,6 +727,7 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
+        flowFresh.remove(id)
         lastScreen[id] = nil
         simPoints[id] = nil
         idle.removeValue(forKey: id)?.cancel()
@@ -875,7 +904,7 @@ actor DeviceService {
     /// Daemon stop: ends every session and watcher and waits (≤ 1.5 s) for their groups, so the delayed KILL is not lost
     /// with the process; and for the sessions' `forward --remove` (≤ its 5 s adb timeout).
     func stop() async {
-        refs = [:]
+        refs = [:]; flowFresh = []
         watched = [:]; online = [:]; watchedIOS = [:]; booted = [:]
         poller?.cancel(); poller = nil
         let live = Array(sessions.values); sessions = [:]

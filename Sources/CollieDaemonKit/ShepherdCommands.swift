@@ -26,8 +26,11 @@ extension CommandRouter {
             let t = try peer("target")
             // a sub-Shepherd only by the one that summoned it; its own summoned go first (the app's Shepherd never)
             guard !t.isShepherd || t.summonedBy == me.id else { throw ProtocolError(code: .invalidArgs, message: "cannot dismiss Shepherd '\(t.name)'") }
-            for d in summonedTree(of: t.id) { try await remove(d) }
+            // the asks it still owed fail with the reason (`detach`); the reply names them, so the caller can ask the replacement
+            var owed = await asks.pendingAskIds(t.id)
+            for d in summonedTree(of: t.id) { owed += await asks.pendingAskIds(d.id); try await remove(d) }
             try await remove(t)
+            if !owed.isEmpty { return .object(["failedAsks": .array(owed.map { .string($0) })]) }
         case "leash":
             // both ends already within reach: the Shepherd itself doesn't count, leashing it to a stranger would widen its reach
             if let (t, p) = try panelPair(r, terminal: { try ConnectionGraph.resolve(name: $0, from: me.id, in: ws) },

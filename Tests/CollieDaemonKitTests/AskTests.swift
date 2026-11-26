@@ -1057,11 +1057,26 @@ extension AskTests {
         #expect(!(await asks.isBusy(b)))
     }
 
+    /// A dismissed terminal's asks fail saying so (not a bare "exited"), and `pendingAskIds` names them first.
+    @Test func dismissedTerminalFailsItsAsksWithTheReason() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "audite a rede", raw: false, timeout: .seconds(10), askId: "e6a0b939") }
+        #expect(await inFlight(asks, b))
+        let owed = await asks.pendingAskIds(b), none = await asks.pendingAskIds(a)
+        #expect(owed == ["e6a0b939"] && none.isEmpty)
+        await asks.detach(b)
+        do { _ = try await t.value; Issue.record("answered") }
+        catch let e as ProtocolError { #expect(e.message.contains("was dismissed before answering") && !e.message.hasSuffix("exited"), "\(e)") }
+        let left = await asks.pendingAskIds(b)
+        #expect(left.isEmpty)
+    }
+
     @Test func replyWithoutInflightIsNotFound() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 15)
         let b = try await cursorTarget(asks, "B")
         do { try await asks.reply(terminal: b, message: "oi"); Issue.record("replied") }
-        catch { #expect(error.code == .notFound && error.message == "no ask is waiting for your reply", "\(error)") }
+        catch { #expect(error.code == .notFound && error.message.hasPrefix("no ask is waiting for your reply"), "\(error)") }
     }
 
     /// Another terminal's in-flight ask is not this caller's to answer.

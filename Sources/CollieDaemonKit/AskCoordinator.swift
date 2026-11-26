@@ -466,7 +466,7 @@ public actor AskCoordinator {
             throw ProtocolError(code: .invalidArgs, message: "reply: 1 to \(Self.replyMax) bytes")
         }
         guard let id = targets[terminal]?.inflight?.id, let w = waiters[id], !w.inject, !w.user, !w.held, w.from != terminal else {
-            throw ProtocolError(code: .notFound, message: "no ask is waiting for your reply")
+            throw ProtocolError(code: .notFound, message: "no ask is waiting for your reply: `collie reply` answers an ask addressed to you; to report on your own, use `collie notify \"<text>\"`")
         }
         finish(id, .success(AskResult(output: message, source: .hook, truncated: false)))
     }
@@ -662,17 +662,26 @@ public actor AskCoordinator {
         pump(terminal)
     }
 
+    /// The ids (as the asker saw them) of the asks `terminal` still owes an answer: queued and in flight, agents' only.
+    func pendingAskIds(_ terminal: UUID) -> [String] {
+        guard let t = targets[terminal] else { return [] }
+        return (t.queue + [t.inflight?.id].compactMap { $0 }).compactMap { id in
+            guard let w = waiters[id], !w.inject, !w.user, w.from != w.to else { return nil }
+            return w.askId ?? String(id.uuidString.prefix(8)).lowercased()
+        }
+    }
+
     /// Fails the in-flight ask and every queued ask for this terminal.
-    public func processExited(_ terminal: UUID) {
+    public func processExited(_ terminal: UUID, _ why: String = "exited") {
         guard let t = targets[terminal] else { return }
-        let err = ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' exited")
+        let err = ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' \(why)")
         // queued first: finishing the in-flight one would otherwise pump the next prompt into a dead terminal
         for id in t.queue + [t.inflight?.id].compactMap({ $0 }) { finish(id, .failure(err)) }
     }
 
     /// Kill/replace: fails the terminal's asks, then forgets it.
     public func detach(_ terminal: UUID) {
-        processExited(terminal)
+        processExited(terminal, "was dismissed before answering this ask: ask its replacement (`collie ask result` lists your asks)")
         targets[terminal] = nil
     }
     /// The readiness that holds a fresh terminal's first prompt: true once latched; false if the process is gone or

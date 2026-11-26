@@ -367,7 +367,7 @@ extension CommandRouter {
         func verified(_ r: MemoryRecord) -> Bool { memory.provenance.isVerified(r) }
         func ask(_ what: String, _ reason: String, _ recs: [MemoryRecord], _ s: RepoMemory) {
             let t = MemoryLearning.oneLine(recs.first?.title ?? "", max: 60)
-            let verb = ["substituir": "replace", "aposentar": "retire", "ativar": "activate", "descartar": "discard"][what] ?? what
+            let verb = ["substituir": "replace", "aposentar": "retire", "ativar": "activate", "descartar": "discard", "mesclar em": "merge into"][what] ?? what
             entry("ask", tr("O curador quer \(what) \"\(t)\"", "The curator wants to \(verb) \"\(t)\"") + (reason.isEmpty ? "" : ": \(reason)"),
                   reason, s, before: recs)
         }

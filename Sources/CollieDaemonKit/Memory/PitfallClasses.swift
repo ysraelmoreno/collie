@@ -184,7 +184,7 @@ extension CommandRouter {
         guard var c = await record(into, store), c.status == .active, c.kind == .pitfall, c.hits != nil else { return nil }
         var inst: MemoryRecord?
         if let instance { inst = await record(instance, store).flatMap { Self.clusterable($0) ? $0 : nil } }
-        if let i = inst, Self.users(i) { return ask(i, "juntar à classe \"\(MemoryLearning.oneLine(c.title, max: 60))\"", store: store) }
+        if let i = inst, Self.users(i) { return ask(i, tr("juntar à classe \"\(MemoryLearning.oneLine(c.title, max: 60))\"", "join the class \"\(MemoryLearning.oneLine(c.title, max: 60))\""), store: store) }
         var before = [c]
         let now = Date()
         if Self.users(c) { c.hits = (c.hits ?? 1) + 1; c.updatedAt = now } else { PitfallClasses.bump(&c, example: example, now: now) }

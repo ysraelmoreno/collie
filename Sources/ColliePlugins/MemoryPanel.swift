@@ -216,7 +216,7 @@ public enum MemoryDigestNotice {
     public func setCap(_ n: Int?) async { await change("memory.curator", n.map { ["cap": .number(Double(max(0, $0)))] } ?? ["noCap": .bool(true)]) }
     /// An ask from a lot's job that suggests the project: its memory and lot, for "Promover ao projeto".
     public func promoteSuggestion(_ e: DigestRow) -> (id: UUID, lot: String)? {
-        guard e.isAsk, let lot = lotNames[e.store], e.title.localizedCaseInsensitiveContains("projeto"), let id = e.before.first?.id else { return nil }
+        guard e.isAsk, let lot = lotNames[e.store], (e.title.localizedCaseInsensitiveContains("projeto") || e.title.localizedCaseInsensitiveContains("project")), let id = e.before.first?.id else { return nil }
         return (id, lot)
     }
     public func promoteSuggested(_ e: DigestRow) async {

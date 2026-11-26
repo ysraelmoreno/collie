@@ -210,7 +210,7 @@ extension CommandRouter {
         res["files"] = try isoJSON(files)
         let what = target.map { "\($0.name) v\($0.version)" } ?? "none"
         let follows = res["inherits"] != nil ? " (following the workspace)" : ""
-        let subject = paddock.map { tr("design system ativo (cercado \($0.name))", "active design system (paddock \($0.name))") } ?? tr("design system ativo", "active design system")
+        let subject = paddock.map { "design system ativo (cercado \($0.name))" } ?? "design system ativo"   // fixed: supersede matches by subject, whatever the language
         if let e = await decide(subject: subject, title: tr("Design system ativo\(paddock.map { " (cercado \($0.name))" } ?? ""): \(what)\(follows)", "Active design system\(paddock.map { " (paddock \($0.name))" } ?? ""): \(what)\(follows)"),
                                 body: "Reason: \(reason)\nSystem: \(what)\(follows)" + Self.filesLine(files), by: Self.origin(caller), paddock: paddock) {
             res["memoryError"] = .string(e)
@@ -269,7 +269,7 @@ extension CommandRouter {
                                  "scope": .string("workspace")])
             var o: [String: JSONValue] = ["system": .string(ds.name), "files": try isoJSON(out)]
             if let historyError { o["historyError"] = .string(historyError) }
-            if let e = await decide(subject: tr("design system ativo", "active design system"), title: "Design system ativo: \(ds.name) v\(ds.version)",
+            if let e = await decide(subject: "design system ativo", title: tr("Design system ativo: \(ds.name) v\(ds.version)", "Active design system: \(ds.name) v\(ds.version)"),
                                     body: "Reason: paddock '\(f.name)' was deleted: its files follow the workspace\nSystem: \(ds.name) v\(ds.version)"
                                         + Self.filesLine(out), by: Self.origin(caller)) { o["memoryError"] = .string(e) }
             return .object(o)

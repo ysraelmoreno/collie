@@ -786,10 +786,11 @@ actor WorkLoop {
             let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
             let limit = Duration.seconds(Swift.min(task.acceptTimeout ?? WorkTask.acceptTimeoutDefault, WorkTask.acceptTimeoutMax))
             let ran: AttemptMachine.Event, line: String
+            var passed = false   // from the exit status, never from the (translated) line
             do {
                 let res = try await host.check(task.accept ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted, limit))
                 r.acceptOutput = Self.acceptOutput(res.stdout + res.stderr, secrets: await host.secrets())
-                ran = .acceptDone(status: res.status, broken: nil); line = res.status == 0 ? tr("passou (exit 0)", "passed (exit 0)") : tr("falhou (exit \(res.status))", "failed (exit \(res.status))")
+                ran = .acceptDone(status: res.status, broken: nil); passed = res.status == 0; line = res.status == 0 ? tr("passou (exit 0)", "passed (exit 0)") : tr("falhou (exit \(res.status))", "failed (exit \(res.status))")
             } catch where error.code == .timeout {
                 r.acceptOutput = ""
                 ran = .acceptDone(status: nil, broken: nil); line = tr("falhou (timeout)", "failed (timeout)")
@@ -798,7 +799,7 @@ actor WorkLoop {
                 ran = .acceptDone(status: nil, broken: "accept could not run: \(error.message)"); line = tr("não rodou: \(error.message)", "did not run: \(error.message)")
             }
             r.output = r.acceptOutput ?? ""
-            let ok = line.hasPrefix("passou"), said = LotBoards.scrub(String(line.prefix(200)))
+            let ok = passed, said = LotBoards.scrub(String(line.prefix(200)))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = ok; x.tasks[i].acceptResult = said }
             }

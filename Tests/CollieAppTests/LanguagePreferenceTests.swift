@@ -4,10 +4,10 @@ import CollieProtocol
 @testable import CollieApp
 
 @Test func restartOnlyWhenResolvedLanguageChanges() {
-    #expect(!LanguagePreference.needsRestart(old: .system, new: .pt, preferred: ["pt-BR"]))
-    #expect(LanguagePreference.needsRestart(old: .pt, new: .en, preferred: ["pt-BR"]))
-    #expect(LanguagePreference.needsRestart(old: .system, new: .pt, preferred: ["en-US"]))
-    #expect(!LanguagePreference.needsRestart(old: .en, new: .system, preferred: ["fr"]))
+    #expect(!LanguagePreference.needsRestart(running: .pt, new: .system, preferred: ["pt-BR"]))
+    #expect(LanguagePreference.needsRestart(running: .pt, new: .en, preferred: ["pt-BR"]))
+    #expect(!LanguagePreference.needsRestart(running: .pt, new: .pt, preferred: ["en-US"]))   // pt → en → pt: back to the one running
+    #expect(LanguagePreference.needsRestart(running: .en, new: .system, preferred: ["pt-PT"]))
 }
 
 @Test func languageReplyDecodes() {

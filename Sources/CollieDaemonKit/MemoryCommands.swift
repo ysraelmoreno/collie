@@ -820,7 +820,7 @@ extension CommandRouter {
         add(ret)
         await refreshSkills(me.id, force: !ret.isEmpty)   // a retracted procedure leaves its dir; a new lot, its set
         // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
-        if ret.contains("\n… e mais ") { left = 0 }
+        if ret.contains("\n… e mais ") || ret.contains("\n… and ") { left = 0 }   // both languages: the header may be written in either
         add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, limit: left))
         if pull, left > 0 { add(await memory.newRules(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, limit: left)) }
         if let myLot, left > 0 { add(await boards.inject(to: me.id, lot: myLot, limit: left)) }

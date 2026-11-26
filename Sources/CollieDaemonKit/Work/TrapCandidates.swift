@@ -32,7 +32,7 @@ enum TrapCandidates {
     static func signatures(_ note: String) -> (task: String, sigs: [String])? {
         let lines = note.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard let head = lines.first, head.hasPrefix("[loop "), let close = head.range(of: "] "),
-              let m = head.firstMatch(of: /, tentativa \d+\/\d+: (.*) \(agente [^()]*\)$/) else { return nil }
+              let m = head.firstMatch(of: /, (?:tentativa|attempt) \d+\/\d+: (.*) \((?:agente|agent) [^()]*\)$/) else { return nil }
         let task = String(head[head.index(head.startIndex, offsetBy: 6)..<close.lowerBound])
         let reason = String(m.1)
         var sigs: [String] = []

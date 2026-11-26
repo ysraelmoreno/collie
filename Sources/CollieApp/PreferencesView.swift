@@ -34,9 +34,23 @@ enum LanguagePreference {
         guard case .object(let o) = reply, case .string(let v)? = o["language"] else { return nil }
         return LanguageSetting(rawValue: v)
     }
-    /// The app reads its language once, at launch: a change only shows after a restart when the resolved language changes.
-    static func needsRestart(old: LanguageSetting, new: LanguageSetting, preferred: [String] = Locale.preferredLanguages) -> Bool {
-        Lang.resolve(old, preferred: preferred) != Lang.resolve(new, preferred: preferred)
+    /// The app reads its language once, at launch: a choice needs a restart when it resolves to another language than the
+    /// one running (pt → en → pt again needs none).
+    static func needsRestart(running: Lang, new: LanguageSetting, preferred: [String] = Locale.preferredLanguages) -> Bool {
+        Lang.resolve(new, preferred: preferred) != running
+    }
+    /// On every connection (app level, not only with Preferences open): the app's stored value wins over the daemon's;
+    /// with none stored yet, the daemon's is adopted and stored. Returns the value the app now holds; nil: no answer.
+    @MainActor static func sync(_ client: DaemonClient) async -> LanguageSetting? {
+        guard client.state == .connected, let r = try? await client.adminCall("admin.language", [:]),
+              let remote = from(reply: r) else { return nil }
+        guard let stored = UserDefaults.standard.string(forKey: AppearanceKeys.language) else {
+            UserDefaults.standard.set(remote.rawValue, forKey: AppearanceKeys.language)
+            return remote
+        }
+        let local = LanguageSetting.parse(stored)
+        if local != remote { _ = try? await client.adminCall("admin.language", ["language": .string(local.rawValue)]) }
+        return local
     }
     /// Opens a new instance of this bundle and quits this one; unbundled (`swift run`) it only quits.
     @MainActor static func relaunch() {
@@ -246,20 +260,17 @@ struct PreferencesView: View {
     /// Stores the choice here (the app reads it at launch) and in the daemon (agents, CLI, new terminals). No daemon:
     /// local only; `syncLanguage` sends it on the next connection.
     private func setLanguage(_ v: LanguageSetting) {
-        let old = LanguageSetting.parse(language)
         language = v.rawValue
-        if LanguagePreference.needsRestart(old: old, new: v) { restartNotice = true }
+        restartNotice = LanguagePreference.needsRestart(running: L10n.current, new: v)
         guard client.state == .connected else { return }
         Task { _ = try? await client.adminCall("admin.language", ["language": .string(v.rawValue)]) }
     }
 
-    /// Connected: the app's own value wins over the daemon's; with none stored here yet, the daemon's is adopted.
+    /// `LanguagePreference.sync`, plus the restart notice when an adopted daemon value isn't the language running.
     private func syncLanguage() async {
-        guard client.state == .connected, let r = try? await client.adminCall("admin.language", [:]),
-              let remote = LanguagePreference.from(reply: r) else { return }
-        guard UserDefaults.standard.string(forKey: AppearanceKeys.language) != nil else { language = remote.rawValue; return }
-        let local = LanguageSetting.parse(language)
-        if local != remote { _ = try? await client.adminCall("admin.language", ["language": .string(local.rawValue)]) }
+        guard let now = await LanguagePreference.sync(client) else { return }
+        language = now.rawValue
+        if LanguagePreference.needsRestart(running: L10n.current, new: now) { restartNotice = true }
     }
 
     private var terminalSection: some View {

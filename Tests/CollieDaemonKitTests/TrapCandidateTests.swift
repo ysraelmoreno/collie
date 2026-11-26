@@ -16,6 +16,13 @@ import CollieCore
         return w
     }
 
+    @Test func englishNotesHaveSignatures() {
+        let pt = TrapCandidates.signatures("[loop a] Task a, tentativa 1/3: check falhou (agente w-a-t1)\ncheck: boom")
+        let en = TrapCandidates.signatures("[loop a] Task a, attempt 1/3: check failed (agent w-a-t1)\ncheck: boom")
+        #expect(pt != nil && en != nil)
+        #expect(pt?.task == en?.task)
+    }
+
     @Test func signatureNormalizesNumbersAndPaths() {
         let a = TrapCandidates.normalize("/Users/x/.collie/paddocks/p1/Sources/A.swift:12:5: error: oops in 3.2s")
         let b = TrapCandidates.normalize("/tmp/other/Sources/A.swift:99:1: error: oops in 10.7s")

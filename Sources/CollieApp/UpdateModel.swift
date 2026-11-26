@@ -125,7 +125,7 @@ enum UpdateModel {
                        tr("Atualizar e reiniciar o serviço — fecha \(open == 1 ? "o terminal" : "os \(open) terminais").",
                           "Update and restart the service — closes \(open == 1 ? "the terminal" : "all \(open) terminals").")]
             notes = [tr("O serviço antigo segue até você reiniciá-lo. Os hooks e o MCP dos agentes já passam a ser os da versão nova; um comando novo responde \"\(RestartHint.text)\".",
-                        "The old service keeps running until you restart it. The agents' hooks and MCP already become the new version's; a new command answers \"\(RestartHint.text)\"."),
+                        "The old service keeps running until you restart it. The agents' hooks and MCP already become the new version's; a new command answers \"\(RestartHint.textEn)\"."),
                      tr("Agentes voltam pelo resume.", "Agents come back through resume.")]
         }
         let wait = restart && !busy.isEmpty

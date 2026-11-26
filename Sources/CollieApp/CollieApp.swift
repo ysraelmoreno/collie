@@ -446,6 +446,7 @@ struct ContentView: View {
         .sheet(isPresented: $paletteOpen, onDismiss: { paletteRun?.run(); paletteRun = nil }) {
             CommandPalette(commands: paletteCommands) { paletteRun = $0; paletteOpen = false }
         }
+        .task(id: client.state == .connected) { if client.state == .connected { _ = await LanguagePreference.sync(client) } }
         .task(id: client.state == .connected) { if client.state == .connected { await usage.poll(client) } }
         .task { bundledBuild = await Task.detached { BuildID.of(URL(fileURLWithPath: Config.collied)) }.value }
         .task(id: client.state == .connected) { if client.state == .connected { await dailyDigestLoop() } }

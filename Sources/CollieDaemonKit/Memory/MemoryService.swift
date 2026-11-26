@@ -649,7 +649,7 @@ actor MemoryService {
             out += line; said.append(r.id)
         }
         guard !said.isEmpty else { return "" }
-        if said.count < gone.count { out += "\n… e mais \(gone.count - said.count)" }
+        if said.count < gone.count { out += tr("\n… e mais \(gone.count - said.count)", "\n… and \(gone.count - said.count) more") }
         for id in said { injected[terminal]?.ids[id] = nil }
         retracted[terminal, default: []].formUnion(said)
         note(terminal, "retraction", gone.filter { said.contains($0.id) }, bytes: out.utf8.count, work: nil, lot: lot, project: nil)
@@ -1116,7 +1116,7 @@ actor MemoryService {
         }
         var started = false
         for r in index.sorted(by: { key($0) > key($1) }) {
-            let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .procedure ? "[procedimento] " : "") + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
+            let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .procedure ? tr("[procedimento] ", "[procedure] ") : "") + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
                 + (unverified.contains(r.id) ? unverifiedMark : pinned.contains(r.id) ? pinnedOverflowMark : "")
             guard out.utf8.count + add.utf8.count <= limit else { continue }
             out += add; started = true

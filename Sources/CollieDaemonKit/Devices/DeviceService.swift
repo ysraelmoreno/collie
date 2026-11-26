@@ -68,8 +68,10 @@ actor DeviceService {
     private var crash: [String: CrashWatch] = [:]
     /// Crash lines per device since its last `device screen` (d2), fed by the crash watchers above.
     var screenErrors = ScreenErrors()
-    /// Android pixels per dp per serial (`wm density`, d3); nil inside: unreadable, so target sizes are not judged.
-    var densities: [String: Double?] = [:]
+    /// Android pixels per dp per serial (`wm density`, d3); only reads that worked (b5: a failed one is tried again).
+    var densities: [String: Double] = [:]
+    /// b5: the `wm density` read in flight per serial; concurrent callers share it.
+    private var densityReads: [String: Task<Double?, Never>] = [:]
 
     private let scrcpyServer: URL?
     /// How long a session outlives its last viewer.
@@ -108,12 +110,18 @@ actor DeviceService {
     /// The session's one `adb start-server` (shared by concurrent first callers; retried after a failure).
     private var server: Task<Bool, Never>?
 
-    /// Pixels per dp of an Android serial, read once (`wm density`); nil: unreadable.
+    /// Pixels per dp of an Android serial (`wm density`), kept once read; nil: unreadable now (booting, timeout), so
+    /// the next call reads again (b5). One read in flight per serial.
     func density(_ serial: String) async -> Double? {
         if let d = densities[serial] { return d }
-        let out = try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
-        let d = out.flatMap(ScreenAccessibility.density(wm:))
-        densities[serial] = .some(d)
+        let t = densityReads[serial] ?? Task {
+            let out = try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
+            return out.flatMap(ScreenAccessibility.density(wm:))
+        }
+        densityReads[serial] = t
+        let d = await t.value
+        if densityReads[serial] == t { densityReads[serial] = nil }
+        if let d { densities[serial] = d }
         return d
     }
 
@@ -642,9 +650,10 @@ actor DeviceService {
 
     /// A tap from the panel's viewer: on iOS a `SimInput.tap` (points), on Android a scrcpy touch up within 16 px of its
     /// down (frame pixels; farther is a drag, not recorded). `down`: the viewer's last touch down. Returns "x,y".
-    static func panelTap(_ d: Data, ios: Bool, down: inout (x: Int32, y: Int32)?) -> String? {
+    static func panelTap(_ d: Data, ios: Bool, down: inout (x: Int32, y: Int32)?,
+                         decode: @Sendable (Data) -> SimInput? = decodeSim) -> String? {
         if ios {
-            guard case .tap(let x, let y)? = try? JSONDecoder().decode(SimInput.self, from: d) else { return nil }
+            guard case .tap(let x, let y)? = decode(d) else { return nil }
             return "\(Int(x)),\(Int(y))"
         }
         let b = [UInt8](d)
@@ -655,6 +664,17 @@ actor DeviceService {
         defer { down = nil }
         guard let s = down, abs(s.x - p.x) <= 16, abs(s.y - p.y) <= 16 else { return nil }
         return "\(p.x),\(p.y)"
+    }
+
+    @Sendable static func decodeSim(_ d: Data) -> SimInput? { try? JSONDecoder().decode(SimInput.self, from: d) }
+
+    /// The viewer tap of frame `d` to record, nil when none or the log is off. b5: iOS asks `logOn` before decoding
+    /// (every frame is JSON); Android decodes first (a byte check that also keeps `down` across the toggle).
+    static func viewerTap(_ d: Data, ios: Bool, logOn: () -> Bool, down: OSAllocatedUnfairLock<(x: Int32, y: Int32)?>,
+                          decode: @escaping @Sendable (Data) -> SimInput? = decodeSim) -> String? {
+        if ios, !logOn() { return nil }
+        guard let t = down.withLock({ panelTap(d, ios: ios, down: &$0, decode: decode) }), logOn() else { return nil }
+        return t
     }
 
     /// Records a panel tap (origin `panel`); no screen comes back, so `sigAfter` is empty.
@@ -695,7 +715,7 @@ actor DeviceService {
                       // b1: the viewer may have changed the screen; ponytail: one Task per input, unordered with reads
                       // (a late one only over-masks)
                       Task { await self.flowStale(id) }
-                      guard let flowLog, let t = down.withLock({ Self.panelTap(d, ios: ios, down: &$0) }), flowLog.enabled else { return }
+                      guard let flowLog, let t = Self.viewerTap(d, ios: ios, logOn: { flowLog.enabled }, down: down) else { return }
                       Task { await self.recordPanelTap(panel: id, target: t, log: flowLog) }
                   },
                   onClose: { [weak s] in Task { if let s { await self.left(s, conn) } } })

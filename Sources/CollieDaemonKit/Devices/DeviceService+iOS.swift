@@ -85,6 +85,7 @@ extension DeviceService {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
+                try FlowClassifier.checkPin(args, n)   // we1: here, after every await: the node touched is the one checked
                 return try await input(["tap", "-x", "\(n.center.x)", "-y", "\(n.center.y)"])
             }
             guard let x = try Self.int(args, "x"), let y = try Self.int(args, "y") else {

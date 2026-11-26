@@ -668,11 +668,12 @@ actor DeviceService {
     }
 
     /// c1/wd1: whether plan step `s` acts on a destructive node of `panel`, and the step to run (`FlowClassifier.resolve`:
-    /// a tap pinned to the ref classified, in these refs), the screen read again (the `device.ui` path, refs updated) for a
-    /// point or when an action came after the last read; a text the tree misses read by the OCR as `device.tap` does.
+    /// a tap pinned to the ref classified, in these refs), the screen read again (the `device.ui` path, refs updated) for
+    /// every tap and swipe but a `ref:` (we1: one read per step, the tap reads none); a text the tree misses read by the OCR
+    /// as `device.tap` does.
     func flowDestructive(_ s: FlowPlan.Step, panel: Panel, cwd: String?) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
         let serial = { if case .string(let v)? = panel.state["serial"] { v } else { "" } }()
-        return try await FlowClassifier.resolve(s, fresh: flowFresh(panel.id), nodes: refs[panel.id] ?? [], dump: { () async throws(ProtocolError) -> [UINode] in
+        return try await FlowClassifier.resolve(s, nodes: refs[panel.id] ?? [], dump: { () async throws(ProtocolError) -> [UINode] in
             _ = try await tracked("device.ui", panel: panel, args: [:], cwd: cwd)
             return refs[panel.id] ?? []
         }, ocr: { nodes in

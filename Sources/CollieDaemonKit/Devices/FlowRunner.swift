@@ -13,6 +13,8 @@ struct FlowPlan: Codable, Sendable, Equatable {
         var text: String? = nil
         var expectSig: String? = nil
         var destructive: Bool? = nil   // d7: runs only with the user's confirmation (FlowRunner.confirmed)
+        /// we1: the node a `ref:` tap was classified on (`FlowClassifier.resolve`), sent to the tap as `pin`; never in a plan file.
+        var pin: UINode? = nil
         enum CodingKeys: String, CodingKey, CaseIterable { case action, target, text, expectSig, destructive }
     }
     var steps: [Step]
@@ -114,11 +116,11 @@ enum FlowClassifier {
     static func destructive(_ s: FlowPlan.Step, nodes: [UINode]) -> Bool { labels(s, nodes: nodes).contains(where: destructive) }
 
     /// c1: `s` classified against the screen its command will act on. `nodes` is the last read; `dump` reads the screen
-    /// again (the `device.ui` path). A `ref:` keeps `nodes` (a new read renumbers the refs the tap will use); a point
-    /// (`x,y`, a swipe) or a read that is not `fresh` (an action since) reads first.
-    static func classify(_ s: FlowPlan.Step, fresh: Bool, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
+    /// again (the `device.ui` path). A `ref:` keeps `nodes` (a new read renumbers the refs the tap will use); any other tap
+    /// or swipe reads first (we1: even a read "fresh" by generation, since a screen changes by itself, a timer or a load).
+    static func classify(_ s: FlowPlan.Step, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
                          dump: () async throws(ProtocolError) -> [UINode]) async throws(ProtocolError) -> Bool {
-        try await resolve(s, fresh: fresh, nodes: nodes, dump: dump).destructive
+        try await resolve(s, nodes: nodes, dump: dump).destructive
     }
 
     /// wd1: `classify`, plus the step to run in its place. A tap by text or `id:` is pinned to the `ref:` of the node it
@@ -126,27 +128,48 @@ enum FlowClassifier {
     /// what was classified and reads no second dump. A text the tree misses goes to `ocr` (the OCR fallback: its nodes,
     /// joined to the refs, or nil); then the OCR's own label is classified, and no OCR hit with a label is refused (fail-closed:
     /// an unpinned tap would read and OCR again, unclassified). An `id:` the tree misses is the tap's notFound.
-    static func resolve(_ s: FlowPlan.Step, fresh: Bool, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
+    /// we1: every pinned tap (a plan's `ref:` too) carries the node classified in `pin`; the tap refuses a ref that resolves
+    /// to another node by then (`checkPin`: a concurrent `device screen` renumbered the refs). A `ref:` with no node in
+    /// `nodes` is refused (fail-closed: nothing was classified).
+    static func resolve(_ s: FlowPlan.Step, nodes: [UINode], isolation: isolated (any Actor)? = #isolation,
                         dump: () async throws(ProtocolError) -> [UINode],
                         ocr: ([UINode]) async -> [UINode]? = { _ in nil }) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
         guard s.action == "tap" || s.action == "swipe" else { return (false, s) }
-        let ref = s.action == "tap" && s.target.hasPrefix("ref:")
-        let read = ref || (fresh && point(s) == nil) ? nodes : try await dump()
-        guard s.action == "tap", !ref, point(s) == nil else { return (destructive(s, nodes: read), s) }
+        var pinned = s
+        if s.action == "tap", s.target.hasPrefix("ref:") {
+            guard let n = nodes.first(where: { "ref:" + $0.ref == s.target }) else { return (true, s) }
+            pinned.pin = n
+            return (destructive(s, nodes: nodes), pinned)
+        }
+        let read = try await dump()
+        guard s.action == "tap", point(s) == nil else { return (destructive(s, nodes: read), s) }
         let id = s.target.hasPrefix("id:") ? String(s.target.dropFirst(3)) : nil
         let text = id == nil ? s.target : nil
-        var pinned = s
         do {
-            pinned.target = "ref:" + (try UITree.target(read, text: text, id: id, nth: nil).ref)
+            let n = try UITree.target(read, text: text, id: id, nth: nil)
+            pinned.target = "ref:" + n.ref; pinned.pin = n
             return (destructive(s, nodes: read), pinned)
         } catch where error.code == .notFound {
             guard let text else { throw error }
             let all = read + (await ocr(read) ?? [])
             // the tap could not be pinned to a node classified: refused, never left to the tap's own read
             guard let n = try? UITree.target(all, text: text, id: nil, nth: nil), !(n.text + n.desc).isEmpty else { return (true, s) }
-            pinned.target = "ref:" + n.ref
+            pinned.target = "ref:" + n.ref; pinned.pin = n
             return (destructive(s, nodes: all), pinned)
         }
+    }
+
+    /// we1: what a pinned tap names of the node classified: class, text, description, id and bounds.
+    static func identity(_ n: UINode) -> JSONValue {
+        .object(["cls": .string(n.cls), "text": .string(n.text), "desc": .string(n.desc), "id": .string(n.id),
+                 "bounds": .array([n.bounds.minX, n.bounds.minY, n.bounds.width, n.bounds.height].map { .number(Double($0)) })])
+    }
+
+    /// we1: called by `device.tap --ref` on the node it is about to touch; a `pin` (the plan runner's) naming another node is
+    /// refused, never tapped. No `pin` (an agent's own `--ref`): unchecked, as before.
+    static func checkPin(_ args: [String: JSONValue], _ n: UINode) throws(ProtocolError) {
+        guard let p = args["pin"], p != .null, p != identity(n) else { return }
+        throw ProtocolError(code: .conflict, message: "ref \(n.ref) is no longer the node classified (the screen was read again meanwhile); tap refused")
     }
 
     /// The point a tap `x,y` or a swipe `x1,y1,…` starts at; nil for other targets.
@@ -201,7 +224,13 @@ enum FlowClassifier {
             let id = String(t.dropFirst(3))
             return [humanizeId(id)] + hits(text: nil, id: id)
         }
-        if t.hasPrefix("ref:") { return nodes.indices.filter { nodes[$0].ref == String(t.dropFirst(4)) }.flatMap { subtree($0) } }
+        // we1: as a hit (clickable ancestor; not clickable: all descendants and what lies under its centre, where the tap touches)
+        if t.hasPrefix("ref:") {
+            return nodes.indices.filter { nodes[$0].ref == String(t.dropFirst(4)) }.flatMap { i in
+                let c = clickable(i) ?? i
+                return subtree(c, all: !nodes[c].clickable) + at(CGPoint(x: nodes[i].bounds.midX, y: nodes[i].bounds.midY))
+            }
+        }
         return [t] + hits(text: t, id: nil)
     }
 }
@@ -302,7 +331,11 @@ struct FlowRunner: Sendable {
         switch s.action {
         case "tap":
             if t.hasPrefix("id:"), t.count > 3 { return ("device.tap", ["id": .string(String(t.dropFirst(3)))]) }
-            if t.hasPrefix("ref:"), t.count > 4 { return ("device.tap", ["ref": .string(String(t.dropFirst(4)))]) }   // b3
+            if t.hasPrefix("ref:"), t.count > 4 {   // b3; we1: with the node classified, checked by the tap
+                var a: [String: JSONValue] = ["ref": .string(String(t.dropFirst(4)))]
+                if let n = s.pin { a["pin"] = FlowClassifier.identity(n) }
+                return ("device.tap", a)
+            }
             if let xy = ints(2) { return ("device.tap", ["x": .string(xy[0]), "y": .string(xy[1])]) }
             guard !t.isEmpty else { throw bad("tap needs a target (a label, id:<id>, ref:<ref> or x,y)") }
             return ("device.tap", ["text": .string(t)])

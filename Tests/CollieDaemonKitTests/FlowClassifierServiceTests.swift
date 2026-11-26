@@ -28,7 +28,7 @@ private actor Device {
     func setFailDump() { failDump = true }
     /// `DeviceService.flowDestructive` over this device.
     func classify(_ s: FlowPlan.Step) async throws(ProtocolError) -> Bool {
-        try await FlowClassifier.classify(s, fresh: fresh, nodes: nodes) { () throws(ProtocolError) -> [UINode] in try dump() }
+        try await FlowClassifier.classify(s, nodes: nodes) { () throws(ProtocolError) -> [UINode] in try dump() }
     }
 }
 private func node(_ ref: String, text: String = "", id: String = "", _ r: CGRect, clickable: Bool = false, depth: Int = 1) -> UINode {
@@ -57,7 +57,7 @@ struct FlowClassifierServiceTests {
         let d = Device([[root] + row("e2", id: "com.shop:id/x7", child: "Pagar", y: 1700)])
         #expect(try await run(#"{"steps":[{"action":"tap","target":"agar"}]}"#, d) == refused(at: 1))
         #expect(await d.commands.isEmpty)
-        #expect(await d.dumps == 0)   // the read is fresh
+        #expect(await d.dumps == 1)   // we1: read again even when fresh (one read per step)
     }
 
     @Test func aCoordinateAfterAnUncheckedTapIsClassifiedOnAFreshDump() async throws {
@@ -122,7 +122,7 @@ struct FlowClassifierServiceTests {
         // the first tap moves the screen to "Pagar"; "ar" is only "contained" there, and only a new read sees it
         let r = try await run(#"{"steps":[{"action":"tap","target":"Início"},{"action":"tap","target":"ar"}]}"#, d)
         #expect(r == refused(at: 2))
-        #expect(await d.dumps == 1)
+        #expect(await d.dumps == 2)
     }
 
     @Test func aBlankPointOnAScreenWithADestructiveButtonElsewhereRuns() async throws {

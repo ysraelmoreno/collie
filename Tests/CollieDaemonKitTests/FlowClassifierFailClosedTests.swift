@@ -26,7 +26,7 @@ private actor Device {
     func dump() -> [UINode] { dumps += 1; nodes = screens[shown]; fresh = true; return nodes }
     /// `DeviceService.flowDestructive` over this device.
     func resolve(_ s: FlowPlan.Step) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step) {
-        try await FlowClassifier.resolve(s, fresh: fresh, nodes: nodes, dump: { () throws(ProtocolError) -> [UINode] in dump() },
+        try await FlowClassifier.resolve(s, nodes: nodes, dump: { () throws(ProtocolError) -> [UINode] in dump() },
                                          ocr: { _ in ocr })
     }
 }
@@ -97,16 +97,7 @@ struct FlowClassifierFailClosedTests {
         #expect(await d.taps.isEmpty)
     }
 
-    @Test func aScreenThatChangesByItselfIsTappedOnTheRefClassified() async throws {
-        let home = [node("e1", full, depth: 0), node("e2", text: "Voltar", CGRect(x: 0, y: 0, width: 200, height: 100), clickable: true, depth: 1)]
-        let pay = [node("e1", full, depth: 0), node("e2", text: "Pagar", CGRect(x: 0, y: 0, width: 200, height: 100), clickable: true, depth: 1),
-                   node("e3", text: "Voltar", CGRect(x: 0, y: 900, width: 200, height: 100), clickable: true, depth: 1)]
-        let d = Device([home, pay])
-        await d.drift()   // a timer: the screen is "pay" now, the read (still fresh) is "home"
-        #expect(try await run(#"{"steps":[{"action":"tap","target":"Voltar"}]}"#, d) == ran(1))
-        #expect(await d.dumps == 0)   // no second read
-        #expect(await d.taps == [["ref": .string("e2")]])   // the node classified, from that same read; not a text the tap reads again
-    }
+    // aScreenThatChangesByItselfIsTappedOnTheRefClassified: rewritten in FlowTapPinTests (we1: a new read every step)
 
     @Test func aStaleReadIsReadOnceAndTheTapTouchesTheRefOfThatRead() async throws {
         let a = [node("e1", full, depth: 0), node("e2", text: "Início", CGRect(x: 0, y: 0, width: 200, height: 100), clickable: true, depth: 1)]
@@ -114,8 +105,8 @@ struct FlowClassifierFailClosedTests {
                  node("e3", text: "Perfil", CGRect(x: 0, y: 500, width: 200, height: 100), clickable: true, depth: 1)]
         let d = Device([a, b])
         #expect(try await run(#"{"steps":[{"action":"tap","target":"Início"},{"action":"tap","target":"Perfil"}]}"#, d) == ran(2))
-        #expect(await d.dumps == 1)
-        #expect(await d.taps == [["ref": .string("e2")], ["ref": .string("e3")]])
+        #expect(await d.dumps == 2)   // we1: one read per step, the tap reads none
+        #expect(await d.taps.map { $0["ref"] } == [.string("e2"), .string("e3")])
     }
 
     @Test func anOCROnlyTextIsClassifiedByTheOCRsLabelAndPinnedToIt() async throws {
@@ -125,7 +116,7 @@ struct FlowClassifierFailClosedTests {
         var voltar = pagar; voltar.text = "Voltar"
         let d = Device([tree], ocr: [voltar])
         #expect(try await run(#"{"steps":[{"action":"tap","target":"oltar"}]}"#, d) == ran(1))
-        #expect(await d.taps == [["ref": .string("o1")]])
+        #expect(await d.taps.map { $0["ref"] } == [.string("o1")])
     }
 
     @Test func aTextNeitherTheTreeNorTheOCRFindsIsRefused() async throws {

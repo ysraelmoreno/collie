@@ -32,7 +32,7 @@ enum Config {
         #endif
         let home = NSHomeDirectory()
         guard ["Documents", "Desktop", "Downloads"].contains(where: { Bundle.main.bundlePath.hasPrefix("\(home)/\($0)/") }) else { return nil }
-        return "Mova o Collie.app para /Applications: em ~/Documents, ~/Desktop ou ~/Downloads o serviço (collied) trava na permissão de pastas do macOS."
+        return tr("Mova o Collie.app para /Applications: em ~/Documents, ~/Desktop ou ~/Downloads o serviço (collied) trava na permissão de pastas do macOS.", "Move Collie.app to /Applications: in ~/Documents, ~/Desktop or ~/Downloads the service (collied) hangs on the macOS folder permission.")
     }
     static let consentKey = "daemonConsent"
 }
@@ -53,6 +53,7 @@ enum Config {
     @State private var themeRevision = 0
 
     init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard); Self.renameDefaults(in: .standard)
+             L10n.set(Lang.resolve(.parse(UserDefaults.standard.string(forKey: AppearanceKeys.language))))   // before any view
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
              PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
@@ -110,19 +111,19 @@ enum Config {
             CommandGroup(replacing: .appSettings) { PreferencesMenuItem(mainView: $mainView) }
             CommandGroup(after: .newItem) {
                 Divider()
-                Button("Exportar dados do Collie…") { DataBackupMenu.export(client) }
-                Button("Importar dados do Collie…") { DataBackupMenu.import(client) }
+                Button(tr("Exportar dados do Collie…", "Export Collie data…")) { DataBackupMenu.export(client) }
+                Button(tr("Importar dados do Collie…", "Import Collie data…")) { DataBackupMenu.import(client) }
             }
             CommandGroup(before: .toolbar) {   // ⌘K: no other menu item, nor the terminal (it takes no ⌘ keys), uses it
                 // over any sheet or dialog (consent, panels' own, alerts) ⌘K is dropped: it would pop up once that one closes
-                Button("Comandos…") { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { paletteOpen = true } }.keyboardShortcut("k")
+                Button(tr("Comandos…", "Commands…")) { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { paletteOpen = true } }.keyboardShortcut("k")
                 Divider()
             }
             CommandMenu("Canvas") {
-                Button("Rebanhos…") { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { herdsOpen = true } }
+                Button(tr("Rebanhos…", "Herds…")) { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { herdsOpen = true } }
             }
             CommandGroup(after: .appTermination) {
-                Button("Parar serviço") { stopService() }
+                Button(tr("Parar serviço", "Stop service")) { stopService() }
             }
         }
         // the window's size lives here, not in the view: the same view also fills Completa's main area (`Shell`)
@@ -165,11 +166,11 @@ enum Config {
 
     private var consentSheet: some View {
         VStack(spacing: 16) {
-            Text("O Collie vai instalar um serviço em segundo plano (collied) que mantém seus terminais vivos mesmo com o app fechado.")
+            Text(tr("O Collie vai instalar um serviço em segundo plano (collied) que mantém seus terminais vivos mesmo com o app fechado.", "Collie will install a background service (collied) that keeps your terminals alive even with the app closed."))
                 .font(.collieUI(14)).foregroundStyle(Color.collieText).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                Button("Sair") { NSApplication.shared.terminate(nil) }.buttonStyle(CollieButtonStyle(.secondary))
-                Button("Continuar") {
+                Button(tr("Sair", "Quit")) { NSApplication.shared.terminate(nil) }.buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Continuar", "Continue")) {
                     UserDefaults.standard.set(true, forKey: Config.consentKey)
                     consented = true
                 }.keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
@@ -183,9 +184,9 @@ enum Config {
         Task {
             let err = await Task.detached { () -> String? in
                 if let w = Config.tccWarning { return w }
-                guard FileManager.default.isExecutableFile(atPath: Config.collied) else { return "collied não encontrado em \(Config.collied)" }
+                guard FileManager.default.isExecutableFile(atPath: Config.collied) else { return tr("collied não encontrado em \(Config.collied)", "collied not found at \(Config.collied)") }
                 do { try DaemonLauncher.ensureRunning(colliedPath: Config.collied, root: Config.root, label: Config.label); return nil }
-                catch { return "Falha ao iniciar o serviço: \(error)" }
+                catch { return tr("Falha ao iniciar o serviço: \(error)", "Failed to start the service: \(error)") }
             }.value
             error = err
             client.start()   // also reconnects to an already-running daemon when install failed
@@ -196,7 +197,7 @@ enum Config {
         Task {
             error = await Task.detached { () -> String? in
                 do { try DaemonLauncher.stop(label: Config.label); return nil }
-                catch { return "Falha ao parar o serviço: \(error)" }
+                catch { return tr("Falha ao parar o serviço: \(error)", "Failed to stop the service: \(error)") }
             }.value
         }
     }
@@ -208,7 +209,7 @@ private struct PreferencesMenuItem: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button("Preferências…") { ContentView.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
+        Button(tr("Preferências…", "Preferences…")) { ContentView.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
             .keyboardShortcut(",")
     }
 }
@@ -295,18 +296,18 @@ struct ContentView: View {
 
     private var staleBanner: some View {
         HStack(spacing: 10) {
-            Text("O serviço do Collie está desatualizado (versão anterior ainda rodando). Reiniciar agora? Os terminais abertos serão encerrados.")
+            Text(tr("O serviço do Collie está desatualizado (versão anterior ainda rodando). Reiniciar agora? Os terminais abertos serão encerrados.", "Collie's service is out of date (a previous version is still running). Restart now? Open terminals will be closed."))
                 .font(.collieUI(13)).foregroundStyle(Color.collieText).fixedSize(horizontal: false, vertical: true)
-            Button("Reiniciar serviço") {
+            Button(tr("Reiniciar serviço", "Restart service")) {
                 Task {
                     error = await Task.detached { () -> String? in
                         do { try DaemonLauncher.restart(label: Config.label); return nil }
-                        catch { return "Falha ao reiniciar o serviço: \(error)" }
+                        catch { return tr("Falha ao reiniciar o serviço: \(error)", "Failed to restart the service: \(error)") }
                     }.value
                 }
             }
             .buttonStyle(CollieButtonStyle(.attention))
-            Button("Depois") { staleDismissed = true }.buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Depois", "Later")) { staleDismissed = true }.buttonStyle(CollieButtonStyle(.quiet))
         }.banner(Color.collieAttention, fill: Color.collieAttentionTint)
     }
 
@@ -332,7 +333,7 @@ struct ContentView: View {
                     let last = d.object(forKey: MemoryDigestNotice.lastPostedKey) as? Date
                     if let dg = try? dec.decode(Digest.self, from: data),
                        let text = MemoryDigestNotice.message(enabled: true, items: MemoryDigestNotice.items(dg.entries), now: Date(), lastPosted: last) {
-                        notifier.notify(UUID(), title: "Memória", body: text)
+                        notifier.notify(UUID(), title: tr("Memória", "Memory"), body: text)
                         d.set(Date(), forKey: MemoryDigestNotice.lastPostedKey)
                     }
                 }
@@ -401,17 +402,17 @@ struct ContentView: View {
     /// Each command runs the same closure as its button.
     private var paletteCommands: [PaletteCommand] {
         let s = shell
-        return [PaletteCommand(id: "terminal", title: "Novo terminal", run: s.newTerminal),
-                PaletteCommand(id: "panel", title: "Abrir painel…", run: s.openPanel),
-                PaletteCommand(id: "herd.apply", title: "Aplicar rebanho…", run: { s.openHerds(nil) }),
-                PaletteCommand(id: "herd.save", title: "Salvar canvas como rebanho…", run: { sheet = .saveHerd }),
-                PaletteCommand(id: "paddock.new", title: "Novo cercado…", run: paddocks.newPaddock),
-                PaletteCommand(id: "paddock.pasture", title: "Ir para o Pasto", run: { paddocks.select(nil) })]
-            + client.paddocks.map { f in PaletteCommand(id: "paddock.\(f.id)", title: "Ir para o cercado \(f.name)", run: { paddocks.select(f.id) }) }
+        return [PaletteCommand(id: "terminal", title: tr("Novo terminal", "New terminal"), run: s.newTerminal),
+                PaletteCommand(id: "panel", title: tr("Abrir painel…", "Open panel…"), run: s.openPanel),
+                PaletteCommand(id: "herd.apply", title: tr("Aplicar rebanho…", "Apply herd…"), run: { s.openHerds(nil) }),
+                PaletteCommand(id: "herd.save", title: tr("Salvar canvas como rebanho…", "Save canvas as herd…"), run: { sheet = .saveHerd }),
+                PaletteCommand(id: "paddock.new", title: tr("Novo cercado…", "New paddock…"), run: paddocks.newPaddock),
+                PaletteCommand(id: "paddock.pasture", title: tr("Ir para o Pasto", "Go to the Pasture"), run: { paddocks.select(nil) })]
+            + client.paddocks.map { f in PaletteCommand(id: "paddock.\(f.id)", title: tr("Ir para o cercado \(f.name)", "Go to paddock \(f.name)"), run: { paddocks.select(f.id) }) }
             + (client.paddocks.first { $0.id == client.currentPaddock }.map(paddocks.commands) ?? [])
-            + [PaletteCommand(id: "fit", title: "Ajustar à tela", run: s.fit),
-               PaletteCommand(id: "usage", title: "Uso dos agentes", run: { usageOpen = true }),
-               PaletteCommand(id: "settings", title: "Preferências…", run: openPreferences)]
+            + [PaletteCommand(id: "fit", title: tr("Ajustar à tela", "Fit to screen"), run: s.fit),
+               PaletteCommand(id: "usage", title: tr("Uso dos agentes", "Agent usage"), run: { usageOpen = true }),
+               PaletteCommand(id: "settings", title: tr("Preferências…", "Preferences…"), run: openPreferences)]
     }
 
     @ViewBuilder private var banners: some View {
@@ -567,7 +568,7 @@ struct PanelMeter: View {
         TimelineView(.periodic(from: .now, by: 5)) { _ in
             let counts = Dictionary(grouping: client.panels, by: \.pluginId).map { "\($0.key) \($0.value.count)" }.sorted()
             Text(([Self.rss()] + counts).joined(separator: " · ")).monospacedDigit()
-                .help("RSS do app e painéis abertos por plug-in. A RAM de cada webview não tem API pública (processo WebContent do WebKit).")
+                .help(tr("RSS do app e painéis abertos por plug-in. A RAM de cada webview não tem API pública (processo WebContent do WebKit).", "App RSS and open panels per plug-in. Each webview's RAM has no public API (WebKit's WebContent process)."))
         }
     }
 
@@ -591,10 +592,10 @@ struct PanelMeter: View {
     private static let timeout: Double = 900
 
     static func export(_ client: DaemonClient) {
-        guard confirm("Exportar os dados do Collie?",
-                      "Designs, design systems, artifacts, memória global, workspaces e o registro de trabalho vão para um único arquivo. "
-                      + "Os painéis Design vão reconectar. O arquivo contém os links secretos dos seus arquivos de design: guarde como guardaria uma senha.",
-                      "Exportar") else { return }
+        guard confirm(tr("Exportar os dados do Collie?", "Export Collie data?"),
+                      tr("Designs, design systems, artifacts, memória global, workspaces e o registro de trabalho vão para um único arquivo. Os painéis Design vão reconectar. O arquivo contém os links secretos dos seus arquivos de design: guarde como guardaria uma senha.",
+                         "Designs, design systems, artifacts, global memory, workspaces and the work log go into a single file. Design panels will reconnect. The file contains the secret links to your design files: keep it as you would a password."),
+                      tr("Exportar", "Export")) else { return }
         let p = NSSavePanel()
         p.allowedContentTypes = [type]
         let day = Date().formatted(.iso8601.year().month().day())
@@ -603,8 +604,8 @@ struct PanelMeter: View {
         Task {
             do {
                 _ = try await client.adminCall("admin.data.export", ["out": .string(url.path)], timeout: timeout)
-                tell("Dados exportados", url.path)
-            } catch { tell("Falha ao exportar", (error as? ProtocolError)?.message ?? "\(error)") }
+                tell(tr("Dados exportados", "Data exported"), url.path)
+            } catch { tell(tr("Falha ao exportar", "Export failed"), (error as? ProtocolError)?.message ?? "\(error)") }
         }
     }
 
@@ -616,22 +617,23 @@ struct PanelMeter: View {
             do {
                 let r = try await client.adminCall("admin.data.import", ["from": .string(url.path), "dryRun": .bool(true)], timeout: timeout)
                 func n(_ k: String) -> Int { if case .object(let o) = r, case .number(let v)? = o[k] { return Int(v) }; return 0 }
-                guard confirm("Importar \(n("designs")) arquivos de design, \(n("systems")) design systems e \(n("artifacts")) artifacts?",
-                              "Os dados atuais do Collie vão para uma pasta .replaced-… (nada é apagado) e os do backup tomam o lugar. "
-                              + "O serviço vai reiniciar e os terminais abertos vão fechar.",
-                              "Importar e reiniciar") else { return }
+                guard confirm(tr("Importar \(n("designs")) arquivos de design, \(n("systems")) design systems e \(n("artifacts")) artifacts?",
+                                 "Import \(n("designs")) design files, \(n("systems")) design systems and \(n("artifacts")) artifacts?"),
+                              tr("Os dados atuais do Collie vão para uma pasta .replaced-… (nada é apagado) e os do backup tomam o lugar. O serviço vai reiniciar e os terminais abertos vão fechar.",
+                                 "Collie's current data goes to a .replaced-… folder (nothing is deleted) and the backup's takes its place. The service will restart and open terminals will close."),
+                              tr("Importar e reiniciar", "Import and restart")) else { return }
                 _ = try await client.adminCall("admin.data.import", ["from": .string(url.path)], timeout: timeout)
                 let err = await Task.detached { () -> String? in
                     do { try DaemonLauncher.restart(label: Config.label); return nil } catch { return "\(error)" }
                 }.value
-                if let err { tell("Importado; reinicie o serviço para aplicar", err) }
-            } catch { tell("Falha ao importar", (error as? ProtocolError)?.message ?? "\(error)") }
+                if let err { tell(tr("Importado; reinicie o serviço para aplicar", "Imported; restart the service to apply"), err) }
+            } catch { tell(tr("Falha ao importar", "Import failed"), (error as? ProtocolError)?.message ?? "\(error)") }
         }
     }
 
     private static func confirm(_ title: String, _ text: String, _ ok: String) -> Bool {
         let a = NSAlert(); a.messageText = title; a.informativeText = text
-        a.addButton(withTitle: ok); a.addButton(withTitle: "Cancelar")
+        a.addButton(withTitle: ok); a.addButton(withTitle: tr("Cancelar", "Cancel"))
         return a.runModal() == .alertFirstButtonReturn
     }
     private static func tell(_ title: String, _ text: String) {

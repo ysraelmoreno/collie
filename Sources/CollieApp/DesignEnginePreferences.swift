@@ -1,5 +1,6 @@
 import SwiftUI
 import CollieTheme
+import CollieCore
 import CollieClient
 import CollieProtocol
 
@@ -16,8 +17,8 @@ struct DesignEnginePreferences: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Motor de design (FigCraft)").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
-            if let s = status { content(s, DesignEngineStatus.row(s)) } else { note(connected ? "Lendo o estado do motor…" : "—") }
+            Text(tr("Motor de design (FigCraft)", "Design engine (FigCraft)")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            if let s = status { content(s, DesignEngineStatus.row(s)) } else { note(connected ? tr("Lendo o estado do motor…", "Reading the engine state…") : "—") }
             if let loadError { Text(loadError).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
         }
@@ -27,10 +28,10 @@ struct DesignEnginePreferences: View {
                 try? await Task.sleep(for: DesignEngineStatus.pollInterval(status))
             }
         }
-        .confirmationDialog("Remover o motor de design?", isPresented: $confirmRemove) {
-            Button("Remover", role: .destructive) { run("design.engine.remove") }
+        .confirmationDialog(tr("Remover o motor de design?", "Remove the design engine?"), isPresented: $confirmRemove) {
+            Button(tr("Remover", "Remove"), role: .destructive) { run("design.engine.remove") }
         } message: {
-            Text("Os arquivos de design continuam; o painel Design fica indisponível até baixar de novo.")
+            Text(tr("Os arquivos de design continuam; o painel Design fica indisponível até baixar de novo.", "Design files stay; the Design panel is unavailable until you download again."))
         }
     }
 
@@ -48,26 +49,26 @@ struct DesignEnginePreferences: View {
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             Spacer()
             if s.running {
-                Button { run("design.engine.cancel") } label: { Text("Cancelar").foregroundStyle(Color.collieDanger) }
+                Button { run("design.engine.cancel") } label: { Text(tr("Cancelar", "Cancel")).foregroundStyle(Color.collieDanger) }
                     .buttonStyle(CollieButtonStyle(.quiet)).disabled(!enabled)
             }
             if let b = row.button {
                 Button(b) { run("design.engine.install") }.buttonStyle(CollieButtonStyle(.primary)).disabled(!enabled)
             }
             if row.canRemove {
-                Button { confirmRemove = true } label: { Text("Remover").foregroundStyle(Color.collieDanger) }
+                Button { confirmRemove = true } label: { Text(tr("Remover", "Remove")).foregroundStyle(Color.collieDanger) }
                     .buttonStyle(CollieButtonStyle(.quiet)).disabled(!enabled)
             }
         }
         // installing over or removing a running engine closes its clients
-        if row.canRemove { note("Os painéis Design abertos vão reconectar.") }
+        if row.canRemove { note(tr("Os painéis Design abertos vão reconectar.", "Open Design panels will reconnect.")) }
     }
 
     private func load() async {
         guard connected else { return }
         do {
             guard let s = DesignEngineStatus.from(try await client.adminCall("design.engine.status", [:])) else {
-                loadError = "design.engine.status: resposta inesperada"; return
+                loadError = tr("design.engine.status: resposta inesperada", "design.engine.status: unexpected reply"); return
             }
             status = s; loadError = nil
         } catch { loadError = error.message }

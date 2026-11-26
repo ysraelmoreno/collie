@@ -1,41 +1,42 @@
 import Testing
+import CollieCore
 import CollieProtocol
 @testable import CollieApp
 
 /// Preferências option B: the sidebar's pages, groups and search.
-@Test func emptyQueryListsAllPagesInSidebarOrder() {
+@Test(.appPT) func emptyQueryListsAllPagesInSidebarOrder() {
     #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .desenho, .lacos, .memoria, .plugins, .celular, .android])
     #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
 }
 
 /// Spec 2026-11-17 §3: Atualizações in the Interface group, found by its words.
-@Test func atualizacoesInInterfaceGroup() {
+@Test(.appPT) func atualizacoesInInterfaceGroup() {
     #expect(PreferencePage.atualizacoes.title == "Atualizações" && PreferencePage.atualizacoes.group == "Interface")
     #expect(PreferencePage.atualizacoes.icon == "↻")
     #expect(PreferencePage.matching("versão").contains(.atualizacoes))
     #expect(PreferencePage.matching("atualizacao").contains(.atualizacoes))
 }
 
-@Test func searchMatchesTitleOrKeywords() {
+@Test(.appPT) func searchMatchesTitleOrKeywords() {
     #expect(PreferencePage.matching("licença").contains(.android))
     #expect(PreferencePage.matching("java").contains(.android))
     #expect(PreferencePage.matching("fonte").contains(.terminal))
     #expect(PreferencePage.matching("zzz").isEmpty)
 }
 
-@Test func searchIgnoresCaseAndDiacritics() {
+@Test(.appPT) func searchIgnoresCaseAndDiacritics() {
     #expect(PreferencePage.matching("LICENCA").contains(.android))
     #expect(PreferencePage.matching("memoria") == [.memoria])
     #expect(PreferencePage.matching("  Aparência ").contains(.aparencia))
 }
 
-@Test func motorFindsDesenho() {
+@Test(.appPT) func motorFindsDesenho() {
     #expect(PreferencePage.matching("motor") == [.desenho])
     #expect(PreferencePage.matching("reinstalar") == [.desenho])
 }
 
 /// Desenho e sandbox's badge from `design.engine.status`: `↓` while a job runs, `!` after a failed one or when the engine is stale.
-@Test func designBadgeStates() {
+@Test(.appPT) func designBadgeStates() {
     func s(_ state: String, _ phase: String? = nil) -> DesignEngineStatus {
         var o: [String: JSONValue] = ["state": .string(state)]
         if let phase { o["job"] = .object(["phase": .string(phase)]) }
@@ -54,7 +55,7 @@ import CollieProtocol
 }
 
 /// The Android item's badge comes from `android.status` alone: `↓` while a job runs, `!` after a failed one or while licenses wait.
-@Test func androidBadgeFromStatus() {
+@Test(.appPT) func androidBadgeFromStatus() {
     func s(_ phase: String?, needs: String = "needsPrepare") -> AndroidSetupStatus {
         AndroidSetupStatus(sdk: .init(path: "/x", source: "collie"), items: [], needs: needs,
                            job: phase.map { .init(phase: $0) }, lite: false)
@@ -73,7 +74,7 @@ import CollieProtocol
 }
 
 /// `collieOpenPreferences` (posted by the Design panel's Abrir Preferências): its object names the page.
-@Test func openRequestNamesPage() {
+@Test(.appPT) func openRequestNamesPage() {
     #expect(PreferencePage.requested("desenho") == .desenho)
     #expect(PreferencePage.requested("android") == .android)
     #expect(PreferencePage.requested("lacos") == .lacos)
@@ -82,12 +83,12 @@ import CollieProtocol
     #expect(PreferencePage.requested(3) == nil)
 }
 
-@Test func preferencePageListsCurator() {
+@Test(.appPT) func preferencePageListsCurator() {
     for q in ["curador", "provedor", "consentimento", "Cursor"] { #expect(PreferencePage.matching(q).contains(.memoria), "\(q)") }
 }
 
 /// B6.3: "Laços sem cartão" left Desenho e sandbox for its own page, Laços, in the Agentes group.
-@Test func lacosPageOwnsLoopTrustWords() {
+@Test(.appPT) func lacosPageOwnsLoopTrustWords() {
     #expect(PreferencePage(rawValue: "lacos") == .lacos)
     #expect(PreferencePage.lacos.title == "Laços" && PreferencePage.lacos.group == "Agentes")
     for q in ["laço", "lacos", "revogar", "cartão", "loop", "work run"] {
@@ -97,7 +98,7 @@ import CollieProtocol
     #expect(PreferencePage.matching("sandbox") == [.desenho])
 }
 
-@Test func everyPageHasTitleGroupIconAndKeywords() {
+@Test(.appPT) func everyPageHasTitleGroupIconAndKeywords() {
     for p in PreferencePage.allCases {
         #expect(!p.title.isEmpty && !p.group.isEmpty && !p.icon.isEmpty && !p.keywords.isEmpty, "\(p)")
     }

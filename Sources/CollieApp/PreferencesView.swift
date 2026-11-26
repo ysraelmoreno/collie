@@ -7,7 +7,7 @@ import ColliePlugins
 
 /// Nine pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
 extension DesignFirst {
-    var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
+    var label: String { switch self { case .artifact: tr("Página (Prévia)", "Page (Preview)"); case .figcraft: "FigCraft"; case .ask: tr("Perguntar", "Ask") } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
     static func from(reply: JSONValue) -> DesignFirst? {
         guard case .object(let o) = reply, case .string(let v)? = o["designFirst"] else { return nil }
@@ -16,11 +16,37 @@ extension DesignFirst {
 }
 
 extension SandboxMode {
-    var label: String { switch self { case .open: "Aberto (padrão)"; case .strict: "Estrito" } }
+    var label: String { switch self { case .open: tr("Aberto (padrão)", "Open (default)"); case .strict: tr("Estrito", "Strict") } }
     /// The `admin.sandbox` reply (`{mode}`); nil when it is anything else.
     static func from(reply: JSONValue) -> SandboxMode? {
         guard case .object(let o) = reply, case .string(let v)? = o["mode"] else { return nil }
         return SandboxMode(rawValue: v)
+    }
+}
+
+/// Preferences › Interface › "Idioma": what is stored (`system|pt|en`) and whether a change needs the app restarted.
+enum LanguagePreference {
+    static func label(_ l: LanguageSetting) -> String {
+        switch l { case .system: tr("Sistema", "System"); case .pt: "Português"; case .en: "English" }
+    }
+    /// The `admin.language` reply (`{language, active}`); nil when it is anything else.
+    static func from(reply: JSONValue) -> LanguageSetting? {
+        guard case .object(let o) = reply, case .string(let v)? = o["language"] else { return nil }
+        return LanguageSetting(rawValue: v)
+    }
+    /// The app reads its language once, at launch: a change only shows after a restart when the resolved language changes.
+    static func needsRestart(old: LanguageSetting, new: LanguageSetting, preferred: [String] = Locale.preferredLanguages) -> Bool {
+        Lang.resolve(old, preferred: preferred) != Lang.resolve(new, preferred: preferred)
+    }
+    /// Opens a new instance of this bundle and quits this one; unbundled (`swift run`) it only quits.
+    @MainActor static func relaunch() {
+        if Bundle.main.bundleIdentifier != nil {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            p.arguments = ["-n", Bundle.main.bundlePath]
+            try? p.run()
+        }
+        NSApplication.shared.terminate(nil)
     }
 }
 
@@ -68,13 +94,16 @@ struct PreferencesView: View {
     /// Read in `body`: a theme swap evaluates this root again and the dynamic colors below resolve anew.
     @Environment(\.collieThemeRevision) private var themeRevision
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
+    @AppStorage(AppearanceKeys.language) private var language = LanguageSetting.system.rawValue
+    @State private var restartNotice = false
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
     @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
     @AppStorage(Notifier.confirmKey) private var confirmNotification = Notifier.confirmDefaultOn
 
-    private let structures: [(WindowStructure, String, String)] = [
-        (.compact, "Compacta", "canvas + cabeçalho flutuante"), (.full, "Completa", "barra lateral, cercados e status")]
+    private var structures: [(WindowStructure, String, String)] { [
+        (.compact, tr("Compacta", "Compact"), tr("canvas + cabeçalho flutuante", "canvas + floating header")),
+        (.full, tr("Completa", "Full"), tr("barra lateral, cercados e status", "sidebar, paddocks and status"))] }
 
     var body: some View {
         let _ = themeRevision
@@ -82,7 +111,7 @@ struct PreferencesView: View {
             sidebar
             Rectangle().fill(Color.collieBorder).frame(width: 1)
             VStack(spacing: 0) {
-                PanelHeader(page.title, subtitle: "Preferências")
+                PanelHeader(page.title, subtitle: tr("Preferências", "Preferences"))
                 ScrollView { pageContent.padding(20).frame(maxWidth: .infinity, alignment: .leading) }
             }
             .frame(maxWidth: .infinity)
@@ -96,7 +125,7 @@ struct PreferencesView: View {
         }   // a stale or hand-edited value would leave a picker blank
         .onChange(of: requestedPage) { showRequestedPage() }
         .onChange(of: page) { remembered?.wrappedValue = page }
-        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts() }   // no workspace event: read when shown
+        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts(); await syncLanguage() }   // no workspace event: read when shown
         // ponytail: one `android.status` and one `design.engine.status` read every 5 s, only while this window is shown and connected (the task dies with it)
         .task(id: client.state == .connected) {
             while client.state == .connected, !Task.isCancelled {
@@ -126,15 +155,15 @@ struct PreferencesView: View {
     private var sidebar: some View {
         let pages = PreferencePage.matching(query)
         return VStack(alignment: .leading, spacing: 2) {
-            TextField("Buscar", text: $query).textFieldStyle(.roundedBorder).padding(.bottom, 8)
+            TextField(tr("Buscar", "Search"), text: $query).textFieldStyle(.roundedBorder).padding(.bottom, 8)
             ForEach(["Interface", "Agentes", "Dispositivos"], id: \.self) { g in
                 let items = pages.filter { $0.group == g }
                 if !items.isEmpty {
-                    Text(g.uppercased()).font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.top, 10).padding(.horizontal, 8)
+                    Text(PreferencePage.groupTitle(g).uppercased()).font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.top, 10).padding(.horizontal, 8)
                     ForEach(items, id: \.self) { p in sidebarItem(p) }
                 }
             }
-            if pages.isEmpty { Text("Nada encontrado.").font(.collieMono(12)).foregroundStyle(Color.collieMuted).padding(8) }
+            if pages.isEmpty { Text(tr("Nada encontrado.", "Nothing found.")).font(.collieMono(12)).foregroundStyle(Color.collieMuted).padding(8) }
             Spacer()
         }
         .padding(12)
@@ -164,7 +193,7 @@ struct PreferencesView: View {
     @ViewBuilder
     private var pageContent: some View {
         switch page {
-        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
+        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection; languageSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
@@ -177,11 +206,11 @@ struct PreferencesView: View {
     }
 
     private var themeSection: some View {
-        section("Tema") { ThemeGallery() }
+        section(tr("Tema", "Theme")) { ThemeGallery() }
     }
 
     private var structureSection: some View {
-        section("Estrutura") {
+        section(tr("Estrutura", "Layout")) {
             HStack(spacing: 12) {
                 ForEach(structures, id: \.0) { s in
                     ChoiceCard(s.1, subtitle: s.2, selected: structure == s.0.rawValue, action: { structure = s.0.rawValue }) {
@@ -189,18 +218,57 @@ struct PreferencesView: View {
                     }
                 }
             }
-            Text("Muda só a moldura. Terminais, guias e painéis ficam onde estão.")
+            Text(tr("Muda só a moldura. Terminais, guias e painéis ficam onde estão.", "Only changes the frame. Terminals, tabs and panels stay where they are."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
         }
     }
 
+    private var languageSection: some View {
+        section(tr("Idioma", "Language")) {
+            Picker(tr("Idioma", "Language"), selection: Binding(get: { LanguageSetting.parse(language) }, set: { setLanguage($0) })) {
+                ForEach(LanguageSetting.allCases, id: \.self) { Text(LanguagePreference.label($0)).tag($0) }
+            }
+            .labelsHidden().pickerStyle(.segmented).fixedSize()
+            Text(tr("Vale para o app, a CLI e os agentes. Terminais já abertos mantêm o idioma anterior.",
+                    "Applies to the app, the CLI and the agents. Terminals already open keep the previous language."))
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            if restartNotice {
+                Text(tr("O idioma muda depois de reiniciar o Collie.", "The language changes after Collie restarts."))
+                    .font(.collieMono(12)).foregroundStyle(Color.collieAttention)
+                HStack {
+                    Button(tr("Reiniciar agora", "Restart now")) { LanguagePreference.relaunch() }
+                    Button(tr("Depois", "Later")) { restartNotice = false }
+                }
+            }
+        }
+    }
+
+    /// Stores the choice here (the app reads it at launch) and in the daemon (agents, CLI, new terminals). No daemon:
+    /// local only; `syncLanguage` sends it on the next connection.
+    private func setLanguage(_ v: LanguageSetting) {
+        let old = LanguageSetting.parse(language)
+        language = v.rawValue
+        if LanguagePreference.needsRestart(old: old, new: v) { restartNotice = true }
+        guard client.state == .connected else { return }
+        Task { _ = try? await client.adminCall("admin.language", ["language": .string(v.rawValue)]) }
+    }
+
+    /// Connected: the app's own value wins over the daemon's; with none stored here yet, the daemon's is adopted.
+    private func syncLanguage() async {
+        guard client.state == .connected, let r = try? await client.adminCall("admin.language", [:]),
+              let remote = LanguagePreference.from(reply: r) else { return }
+        guard UserDefaults.standard.string(forKey: AppearanceKeys.language) != nil else { language = remote.rawValue; return }
+        let local = LanguageSetting.parse(language)
+        if local != remote { _ = try? await client.adminCall("admin.language", ["language": .string(local.rawValue)]) }
+    }
+
     private var terminalSection: some View {
-        section("Terminal") {
+        section(tr("Terminal", "Terminal")) {
             HStack(spacing: 16) {
-                Picker("Fonte", selection: $family) {
+                Picker(tr("Fonte", "Font"), selection: $family) {
                     ForEach(TerminalFontChoice.families, id: \.self) { Text($0).tag($0) }
                 }
-                Picker("Tamanho", selection: $size) {
+                Picker(tr("Tamanho", "Size"), selection: $size) {
                     ForEach(Int(TerminalFontChoice.sizes.lowerBound)...Int(TerminalFontChoice.sizes.upperBound), id: \.self) {
                         Text("\($0) pt").tag(Double($0))
                     }
@@ -211,27 +279,30 @@ struct PreferencesView: View {
     }
 
     private var designSection: some View {
-        section("Onde desenhar") {
-            Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
+        section(tr("Onde desenhar", "Where to design")) {
+            Picker(tr("Onde desenhar", "Where to design"), selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
                 ForEach(DesignFirst.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
             }
             .labelsHidden().pickerStyle(.segmented).fixedSize()
             .disabled(client.state != .connected)
-            Text("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.")
+            Text(tr("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.",
+                    "On interface work, the Shepherd designs first: in a page in the Preview (fonts, animation, offline libraries), in FigCraft, or asks. Applies to the workspace and to the Feature herd with design."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
         }
     }
 
     private var sandboxSection: some View {
-        section("Modo do sandbox") {
-            Picker("Modo do sandbox", selection: Binding(get: { sandboxMode.rawValue }, set: { setSandboxMode(SandboxMode(rawValue: $0) ?? .strict) })) {
+        section(tr("Modo do sandbox", "Sandbox mode")) {
+            Picker(tr("Modo do sandbox", "Sandbox mode"), selection: Binding(get: { sandboxMode.rawValue }, set: { setSandboxMode(SandboxMode(rawValue: $0) ?? .strict) })) {
                 ForEach(SandboxMode.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
             }
             .labelsHidden().pickerStyle(.segmented).fixedSize()
             .disabled(client.state != .connected)
             Text(sandboxMode == .open
-                 ? "Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois."
-                 : "Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.")
+                 ? tr("Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois.",
+                      "Open: the agent reads and writes everything in your account (keys and tokens included); only Collie's data and app stay closed. Applies to terminals opened afterwards.")
+                 : tr("Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.",
+                      "Strict: writes only in the project, secrets closed, cards to release them. Applies to terminals opened afterwards."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
             if client.detection == false, client.detectionReason == SandboxDetection.notAdmin {   // neutral, for who wants to know
                 Text(AccessCopy.detection(reason: SandboxDetection.notAdmin).help).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
@@ -240,21 +311,22 @@ struct PreferencesView: View {
         }
     }
 
-    /// The paddocks trusted for loops (the loop card's "Sempre neste cercado"), each with **Revogar**; `client.paddocks`
+    /// The paddocks trusted for loops (the loop card's "Sempre neste cercado"), each with **Revogar** ("Revoke"); `client.paddocks`
     /// follows the daemon, so a revoked one leaves the list by itself.
     private var loopTrustSection: some View {
         let trusted = client.paddocks.filter { $0.trustLoops == true }
-        return section("Laços sem cartão") {
-            Text("Quando você escolhe \"Sempre neste cercado\" no cartão de um laço, os próximos laços desse cercado começam sem cartão. Você recebe o aviso e pode parar com collie work stop.")
+        return section(tr("Laços sem cartão", "Loops without a card")) {
+            Text(tr("Quando você escolhe \"Sempre neste cercado\" no cartão de um laço, os próximos laços desse cercado começam sem cartão. Você recebe o aviso e pode parar com collie work stop.",
+                    "When you choose \"Always in this paddock\" on a loop's card, the next loops in that paddock start without a card. You get the notice and can stop with collie work stop."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             if trusted.isEmpty {
-                Text("Nenhum cercado. Todo laço pede o cartão antes de começar.").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                Text(tr("Nenhum cercado. Todo laço pede o cartão antes de começar.", "No paddock. Every loop asks for the card before it starts.")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
             }
             ForEach(trusted) { f in
                 HStack {
                     Text(verbatim: f.name).font(.collieUI(13)).foregroundStyle(Color.collieText)
                     Spacer(minLength: 12)
-                    Button("Revogar") {
+                    Button(tr("Revogar", "Revoke")) {
                         Task { loopTrustError = await call("admin.paddock.trust-loops", ["paddock": .string(f.id.uuidString)]) }
                     }
                     .buttonStyle(CollieButtonStyle(.secondary)).controlSize(.small).disabled(client.state != .connected)
@@ -263,7 +335,7 @@ struct PreferencesView: View {
             }
             if let loopTrustError { Text(loopTrustError).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
             if !trusted.isEmpty {
-                Text("Revogar traz o cartão de volta.")
+                Text(tr("Revogar traz o cartão de volta.", "Revoking brings the card back."))
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -271,12 +343,13 @@ struct PreferencesView: View {
 
     /// M5.6: `admin.loop-model`, what `work run` uses when given no --model (Claude agents); empty: the Shepherd's.
     private var loopModelSection: some View {
-        section("Modelo dos agentes") {
-            Text("O modelo dos agentes de um laço quando collie work run não traz --model (só agentes Claude). Vazio: o modelo do Pastor.")
+        section(tr("Modelo dos agentes", "Agents' model")) {
+            Text(tr("O modelo dos agentes de um laço quando collie work run não traz --model (só agentes Claude). Vazio: o modelo do Pastor.",
+                    "The model of a loop's agents when collie work run has no --model (Claude agents only). Empty: the Shepherd's model."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             HStack {
-                TextField("ex.: claude-sonnet-5-5", text: $loopModel).frame(width: 220).onSubmit(saveLoopModel)
-                Button("Salvar", action: saveLoopModel).disabled(client.state != .connected)
+                TextField(tr("ex.: claude-sonnet-5-5", "e.g. claude-sonnet-5-5"), text: $loopModel).frame(width: 220).onSubmit(saveLoopModel)
+                Button(tr("Salvar", "Save"), action: saveLoopModel).disabled(client.state != .connected)
             }
             if let loopModelError { Text(loopModelError).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
         }
@@ -291,34 +364,35 @@ struct PreferencesView: View {
     }
 
     private var fontsSection: some View {
-        section("Fontes") {
-            Toggle("Baixar fontes do Google Fonts", isOn: Binding(get: { googleFonts }, set: { setGoogleFonts($0) }))
+        section(tr("Fontes", "Fonts")) {
+            Toggle(tr("Baixar fontes do Google Fonts", "Download fonts from Google Fonts"), isOn: Binding(get: { googleFonts }, set: { setGoogleFonts($0) }))
                 .disabled(client.state != .connected)
-            Text("Para as páginas da Prévia, offline: o daemon baixa cada família uma vez (só o nome da fonte e o download vão ao Google); as páginas nunca acessam a rede. Os agentes pedem com collie font add.")
+            Text(tr("Para as páginas da Prévia, offline: o daemon baixa cada família uma vez (só o nome da fonte e o download vão ao Google); as páginas nunca acessam a rede. Os agentes pedem com collie font add.",
+                    "For Preview pages, offline: the daemon downloads each family once (only the font name and the download go to Google); the pages never touch the network. Agents ask with collie font add."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
             HStack {
-                TextField("Família (ex.: Inter)", text: $newFont).frame(width: 220).onSubmit(addFont)
-                Button(fontBusy ? "Baixando…" : "Baixar", action: addFont)
+                TextField(tr("Família (ex.: Inter)", "Family (e.g. Inter)"), text: $newFont).frame(width: 220).onSubmit(addFont)
+                Button(fontBusy ? tr("Baixando…", "Downloading…") : tr("Baixar", "Download"), action: addFont)
                     .disabled(!googleFonts || fontBusy || newFont.trimmingCharacters(in: .whitespaces).isEmpty || client.state != .connected)
             }
             if let fontError { Text(fontError).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
             ForEach(fonts) { f in
                 HStack {
                     Text(f.family).font(.collieUI(13))
-                    Text(f.downloaded ? "Google Fonts" : "vem com o Collie").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                    Text(f.downloaded ? "Google Fonts" : tr("vem com o Collie", "ships with Collie")).font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                     Spacer()
-                    if f.downloaded { Button("Remover") { removeFont(f.family) }.disabled(client.state != .connected) }
+                    if f.downloaded { Button(tr("Remover", "Remove")) { removeFont(f.family) }.disabled(client.state != .connected) }
                 }
             }
         }
     }
 
     private var memorySection: some View {
-        section("Memória") {
-            Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
-            Text("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.")
+        section(tr("Memória", "Memory")) {
+            Toggle(tr("Avisar uma vez por dia o que o Collie aprendeu", "Notify once a day about what Collie learned"), isOn: $dailyNotification)
+            Text(tr("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.", "At 6 pm, if there is anything in today's Learning. The summary always stays in the Memory panel."))
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-            Toggle("Avisar quando uma correção precisar de confirmação", isOn: $confirmNotification)
+            Toggle(tr("Avisar quando uma correção precisar de confirmação", "Notify when a correction needs confirmation"), isOn: $confirmNotification)
         }
     }
 

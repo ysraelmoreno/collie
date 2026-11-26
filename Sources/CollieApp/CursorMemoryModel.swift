@@ -9,9 +9,9 @@ enum CursorMemoryChoice: String, CaseIterable, Equatable {
 
     var label: String {
         switch self {
-        case .full: "Início + consulta por tarefa"
-        case .start: "Só início"
-        case .off: "Desligada"
+        case .full: tr("Início + consulta por tarefa", "Start + per-task lookup")
+        case .start: tr("Só início", "Start only")
+        case .off: tr("Desligada", "Off")
         }
     }
 
@@ -19,15 +19,20 @@ enum CursorMemoryChoice: String, CaseIterable, Equatable {
     /// of the conversation.
     var detail: String {
         switch self {
-        case .full: "A memória do projeto vai para o Cursor no início de cada sessão e, quando o agente chama memory_task no começo de uma tarefa, a memória daquela tarefa. Ela sai do Collie para o cursor-agent e, com a conversa, para a nuvem do Cursor."
-        case .start: "A memória do projeto vai para o Cursor só no início de cada sessão, como hoje. Ela sai do Collie para o cursor-agent e, com a conversa, para a nuvem do Cursor."
-        case .off: "Nenhuma memória do projeto vai para o Cursor; ele recebe só as instruções do Collie."
+        case .full: tr("A memória do projeto vai para o Cursor no início de cada sessão e, quando o agente chama memory_task no começo de uma tarefa, a memória daquela tarefa. Ela sai do Collie para o cursor-agent e, com a conversa, para a nuvem do Cursor.",
+                       "The project memory goes to Cursor at the start of each session and, when the agent calls memory_task at the start of a task, that task's memory. It leaves Collie for cursor-agent and, with the conversation, goes to Cursor's cloud.")
+        case .start: tr("A memória do projeto vai para o Cursor só no início de cada sessão, como hoje. Ela sai do Collie para o cursor-agent e, com a conversa, para a nuvem do Cursor.",
+                        "The project memory goes to Cursor only at the start of each session, as today. It leaves Collie for cursor-agent and, with the conversation, goes to Cursor's cloud.")
+        case .off: tr("Nenhuma memória do projeto vai para o Cursor; ele recebe só as instruções do Collie.", "No project memory goes to Cursor; it only receives Collie's instructions.")
         }
     }
 
-    static let sessionsNote = "Vale para sessões novas."
-    static let allowlistNote = "Na primeira chamada, escolha *Add to allowlist*."
-    static let honest = "No Cursor a memória chega no início da sessão e quando o agente consulta no começo de cada tarefa. Ela não chega a cada mensagem sua: o cursor-agent não oferece isso sem mexer nos seus arquivos de configuração."
+    static var sessionsNote: String { tr("Vale para sessões novas.", "Applies to new sessions.") }
+    static var allowlistNote: String { tr("Na primeira chamada, escolha *Add to allowlist*.", "On the first call, choose *Add to allowlist*.") }
+    static var honest: String {
+        tr("No Cursor a memória chega no início da sessão e quando o agente consulta no começo de cada tarefa. Ela não chega a cada mensagem sua: o cursor-agent não oferece isso sem mexer nos seus arquivos de configuração.",
+           "In Cursor, memory arrives at the start of the session and when the agent looks it up at the start of each task. It does not arrive with each message you send: cursor-agent does not offer that without touching your configuration files.")
+    }
 
     /// The `memory.cursor-mode` reply (`{mode}`); nil when it is anything else.
     static func from(reply: JSONValue) -> CursorMemoryChoice? {
@@ -49,10 +54,10 @@ struct UntrustedMemory: Equatable, Identifiable {
     var before: String?
     var after: String
 
-    var `where`: String { lot.map { "lote \($0)" } ?? repo ?? "" }
+    var `where`: String { lot.map { tr("lote \($0)", "lot \($0)") } ?? repo ?? "" }
     var summary: String {
-        before == nil ? "Arquivo que o Collie nunca gravou (criado à mão, por um agente ou por git)."
-            : "Editado fora do Collie depois da última gravação dele."
+        before == nil ? tr("Arquivo que o Collie nunca gravou (criado à mão, por um agente ou por git).", "File Collie never wrote (created by hand, by an agent or by git).")
+            : tr("Editado fora do Collie depois da última gravação dele.", "Edited outside Collie after its last write.")
     }
     /// `memory.trust`'s arguments: the store it lives in (a repo path or a lot name).
     var trustArgs: [String: JSONValue] {
@@ -95,12 +100,12 @@ struct UntrustedMemory: Equatable, Identifiable {
     static func ledgerNote(_ reply: JSONValue) -> String? {
         guard case .object(let o) = reply else { return nil }
         if o["restarted"] == .bool(true) {
-            return "O registro de quem gravou cada memória estava danificado e recomeçou: as memórias que existiam antes ficam como editadas fora do Collie até você confiar em cada uma."
+            return tr("O registro de quem gravou cada memória estava danificado e recomeçou: as memórias que existiam antes ficam como editadas fora do Collie até você confiar em cada uma.", "The record of who wrote each memory was damaged and restarted: memories that existed before stay as edited outside Collie until you trust each one.")
         }
         guard case .number(let n)? = o["adopted"], n >= 1 else { return nil }
         let k = Int(n)
-        return k == 1 ? "1 memória que já existia foi aceita como do Collie na primeira leitura."
-            : "\(k) memórias que já existiam foram aceitas como do Collie na primeira leitura."
+        return k == 1 ? tr("1 memória que já existia foi aceita como do Collie na primeira leitura.", "1 memory that already existed was accepted as Collie's on the first read.")
+            : tr("\(k) memórias que já existiam foram aceitas como do Collie na primeira leitura.", "\(k) memories that already existed were accepted as Collie's on the first read.")
     }
 }
 
@@ -108,7 +113,7 @@ struct UntrustedMemory: Equatable, Identifiable {
 /// The obedience it hints at covers Collie's asks only (spec 2026-11-17 cursor memory §6).
 enum CursorMemoryBadge {
     struct State: Equatable { var text: String; var help: String; var warn: Bool }
-    static let scope = "cobre só pedidos feitos pelo Collie; o que você digita no Cursor não é visto"
+    static var scope: String { tr("cobre só pedidos feitos pelo Collie; o que você digita no Cursor não é visto", "covers only requests made by Collie; what you type in Cursor is not seen") }
 
     /// A Cursor terminal: the preset, or a custom command whose program (past `env` and `VAR=…`) is `cursor-agent`.
     static func isCursor(preset: Preset, command: String?) -> Bool {
@@ -124,10 +129,12 @@ enum CursorMemoryBadge {
         guard case .object(let o) = stats, case .object(let by)? = o["byAgent"], case .object(let c)? = by["cursor"] else { return nil }
         func n(_ k: String) -> Int { if case .number(let x)? = c[k] { Int(x) } else { 0 } }
         let pulls = n("pulls"), asks = n("asksDelivered")
-        let text = "Memória: " + (n("sessionsWithStart") > 0 ? "início ✓" : "sem início") + " · \(pulls) " + (pulls == 1 ? "consulta" : "consultas")
+        let started = n("sessionsWithStart") > 0
+        let text = tr("Memória: \(started ? "início ✓" : "sem início") · \(pulls) \(pulls == 1 ? "consulta" : "consultas")",
+                      "Memory: \(started ? "start ✓" : "no start") · \(pulls) \(pulls == 1 ? "lookup" : "lookups")")
         let warn = asks >= 2 && pulls == 0
-        let help = (warn ? "o agente não está consultando a memória (\(asks) pedidos do Collie sem memory_task). " : "")
-            + "Consultas memory_task nas últimas 24 h; " + scope + "."
+        let help = (warn ? tr("o agente não está consultando a memória (\(asks) pedidos do Collie sem memory_task). ", "the agent is not looking up memory (\(asks) Collie requests without memory_task). ") : "")
+            + tr("Consultas memory_task nas últimas 24 h; \(scope).", "memory_task lookups in the last 24 h; \(scope).")
         return State(text: text, help: help, warn: warn)
     }
 }

@@ -26,40 +26,40 @@ struct CelularPreferences: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            section("Acesso pelo iPhone") {
-                Toggle("Permitir que iPhones pareados vejam e respondam os agentes", isOn: Binding(get: { status?.enabled ?? false }, set: { set(["action": .string($0 ? "on" : "off")]) }))
+            section(tr("Acesso pelo iPhone", "iPhone access")) {
+                Toggle(tr("Permitir que iPhones pareados vejam e respondam os agentes", "Allow paired iPhones to see and answer the agents"), isOn: Binding(get: { status?.enabled ?? false }, set: { set(["action": .string($0 ? "on" : "off")]) }))
                     .toggleStyle(.switch).disabled(!connected || busy)
                 HStack(spacing: 8) {
                     Circle().fill(status?.listening == true ? Color.collieAccent : Color.collieBorder).frame(width: 8, height: 8)
                     Text(statusLine).font(.collieMono(12)).foregroundStyle(status?.error == nil ? Color.collieTextSecondary : Color.collieDanger)
                 }
-                note("Desligado, nada escuta na rede. Ligado, só aceita redes locais e Tailscale, e só aparelhos pareados aqui.")
+                note(tr("Desligado, nada escuta na rede. Ligado, só aceita redes locais e Tailscale, e só aparelhos pareados aqui.", "Off, nothing listens on the network. On, it only accepts local networks and Tailscale, and only devices paired here."))
             }
-            section("Rede") {
+            section(tr("Rede", "Network")) {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
-                        label("Porta")
+                        label(tr("Porta", "Port"))
                         TextField("47820", text: $portText).frame(width: 90).onSubmit(setPort).disabled(!connected || busy)
                     }
                     GridRow {
-                        label("Só Tailscale")
-                        Toggle("recusa a rede local (Wi-Fi)", isOn: Binding(get: { status?.tailscaleOnly ?? false }, set: { set(["tailscale-only": .string($0 ? "on" : "off")]) }))
+                        label(tr("Só Tailscale", "Tailscale only"))
+                        Toggle(tr("recusa a rede local (Wi-Fi)", "refuses the local network (Wi-Fi)"), isOn: Binding(get: { status?.tailscaleOnly ?? false }, set: { set(["tailscale-only": .string($0 ? "on" : "off")]) }))
                             .toggleStyle(.switch).disabled(!connected || busy)
                     }
                     GridRow {
-                        label("Alcançável por")
-                        Text(status.map { $0.addresses.isEmpty ? "nenhum endereço de rede" : $0.addresses.map(RemoteCopy.address).joined(separator: " · ") } ?? "—")
+                        label(tr("Alcançável por", "Reachable at"))
+                        Text(status.map { $0.addresses.isEmpty ? tr("nenhum endereço de rede", "no network address") : $0.addresses.map(RemoteCopy.address).joined(separator: " · ") } ?? "—")
                             .font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
                     }
                     GridRow {
-                        label("Certificado")
+                        label(tr("Certificado", "Certificate"))
                         Text(RemoteCopy.fingerprint(status?.fingerprint)).font(.collieMono(12)).foregroundStyle(Color.collieText)
                             .help(status?.fingerprint ?? "").textSelection(.enabled)
                     }
                 }
             }
-            section("Aparelhos") {
-                if devices.isEmpty { note("Nenhum iPhone pareado.") }
+            section(tr("Aparelhos", "Devices")) {
+                if devices.isEmpty { note(tr("Nenhum iPhone pareado.", "No paired iPhone.")) }
                 VStack(spacing: 0) {
                     ForEach(devices) { d in
                         deviceRow(d)
@@ -69,11 +69,11 @@ struct CelularPreferences: View {
                 .background(Color.collieSurface, in: .rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(devices.isEmpty ? .clear : Color.collieBorder))
                 HStack {
-                    Button("Trocar certificado…") { rotating = true }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || busy || status?.fingerprint == nil)
+                    Button(tr("Trocar certificado…", "Rotate certificate…")) { rotating = true }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || busy || status?.fingerprint == nil)
                     Spacer()
-                    Button("Parear iPhone…", action: beginPairing).buttonStyle(CollieButtonStyle(.primary)).disabled(!connected || busy)
+                    Button(tr("Parear iPhone…", "Pair iPhone…"), action: beginPairing).buttonStyle(CollieButtonStyle(.primary)).disabled(!connected || busy)
                 }
-                note("Leitura: vê terminais, aprovações e Prévias, sem responder nada. Trocar certificado desconecta e exige parear de novo todos os aparelhos.")
+                note(tr("Leitura: vê terminais, aprovações e Prévias, sem responder nada. Trocar certificado desconecta e exige parear de novo todos os aparelhos.", "Read: sees terminals, approvals and Previews, answers nothing. Rotating the certificate disconnects and requires pairing every device again."))
                 if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
             }
         }
@@ -84,25 +84,27 @@ struct CelularPreferences: View {
             }
         }
         .sheet(item: $pairing) { offer in PairSheet(offer: offer, status: status) { pairing = nil } }
-        .alert("Revogar \(revoking?.name ?? "")?", isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } })) {
-            Button("Revogar", role: .destructive) { if let d = revoking { run("admin.remote.devices.revoke", ["id": .string(d.id)]) } }
-            Button("Cancelar", role: .cancel) {}
-        } message: { Text("Ele desconecta agora e precisa ser pareado de novo.") }
-        .alert("Trocar o certificado do Mac?", isPresented: $rotating) {
-            Button("Trocar", role: .destructive) { run("admin.remote.identity.rotate", [:]) }
-            Button("Cancelar", role: .cancel) {}
-        } message: { Text("Todos os aparelhos desconectam e precisam ser pareados de novo.") }
+        .alert(tr("Revogar \(revoking?.name ?? "")?", "Revoke \(revoking?.name ?? "")?"), isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } })) {
+            Button(tr("Revogar", "Revoke"), role: .destructive) { if let d = revoking { run("admin.remote.devices.revoke", ["id": .string(d.id)]) } }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) {}
+        } message: { Text(tr("Ele desconecta agora e precisa ser pareado de novo.", "It disconnects now and must be paired again.")) }
+        .alert(tr("Trocar o certificado do Mac?", "Rotate the Mac's certificate?"), isPresented: $rotating) {
+            Button(tr("Trocar", "Rotate"), role: .destructive) { run("admin.remote.identity.rotate", [:]) }
+            Button(tr("Cancelar", "Cancel"), role: .cancel) {}
+        } message: { Text(tr("Todos os aparelhos desconectam e precisam ser pareados de novo.", "All devices disconnect and must be paired again.")) }
     }
 
     private var connected: Bool { client.state == .connected }
 
     private var statusLine: String {
         guard let s = status else { return "—" }
-        if let e = s.error { return "Não escuta: \(e)" }
-        guard s.enabled else { return "Desligado" }
-        guard s.listening else { return "Ligando…" }
-        let n = s.connected
-        return "Escutando na porta \(s.port) · " + (n == 0 ? "nenhum aparelho conectado" : n == 1 ? "1 aparelho conectado" : "\(n) aparelhos conectados")
+        if let e = s.error { return tr("Não escuta: \(e)", "Not listening: \(e)") }
+        guard s.enabled else { return tr("Desligado", "Off") }
+        guard s.listening else { return tr("Ligando…", "Starting…") }
+        let n = s.connected, p = s.port
+        return n == 0 ? tr("Escutando na porta \(p) · nenhum aparelho conectado", "Listening on port \(p) · no device connected")
+            : n == 1 ? tr("Escutando na porta \(p) · 1 aparelho conectado", "Listening on port \(p) · 1 device connected")
+            : tr("Escutando na porta \(p) · \(n) aparelhos conectados", "Listening on port \(p) · \(n) devices connected")
     }
 
     private func deviceRow(_ d: RemoteDeviceRow) -> some View {
@@ -112,16 +114,16 @@ struct CelularPreferences: View {
                     Circle().fill(d.live ? Color.collieAccent : Color.collieBorder).frame(width: 8, height: 8)
                     Text(d.name).font(.collieUI(13.5, .semibold)).foregroundStyle(Color.collieText)
                 }
-                Text([d.model, d.pairedAt.map { "pareado " + $0.formatted(.dateTime.day().month(.abbreviated)) }, RemoteCopy.seen(d)]
+                Text([d.model, d.pairedAt.map { let day = $0.formatted(.dateTime.day().month(.abbreviated)); return tr("pareado \(day)", "paired \(day)") }, RemoteCopy.seen(d)]
                         .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.collieMono(11.5)).foregroundStyle(Color.collieMuted)
             }
             Spacer()
-            Picker("Escopo", selection: Binding(get: { d.readOnly }, set: { run("admin.remote.devices.scope", ["id": .string(d.id), "scope": .string($0 ? "read" : "full")]) })) {
-                Text("Leitura").tag(true); Text("Completo").tag(false)
+            Picker(tr("Escopo", "Scope"), selection: Binding(get: { d.readOnly }, set: { run("admin.remote.devices.scope", ["id": .string(d.id), "scope": .string($0 ? "read" : "full")]) })) {
+                Text(tr("Leitura", "Read")).tag(true); Text(tr("Completo", "Full")).tag(false)
             }
             .labelsHidden().pickerStyle(.segmented).fixedSize().disabled(!connected || busy)
-            Button { revoking = d } label: { Text("Revogar").foregroundStyle(Color.collieDanger) }
+            Button { revoking = d } label: { Text(tr("Revogar", "Revoke")).foregroundStyle(Color.collieDanger) }
                 .buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || busy)
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
@@ -214,22 +216,22 @@ struct PairSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Parear iPhone").font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
-            Text("No iPhone, abra o Collie e escaneie. O código vale uma vez.").font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary)
+            Text(tr("Parear iPhone", "Pair iPhone")).font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("No iPhone, abra o Collie e escaneie. O código vale uma vez.", "On the iPhone, open Collie and scan. The code works once.")).font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary)
             if let img = QRCode.image(offer.qr) {
                 Image(nsImage: img).interpolation(.none).resizable().frame(width: 196, height: 196)
                     .padding(12).background(.white, in: .rect(cornerRadius: 10))
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .accessibilityLabel("Código QR para parear")
+                    .accessibilityLabel(tr("Código QR para parear", "QR code to pair"))
             }
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let left = max(0, Int(offer.expiresAt.timeIntervalSince(ctx.date)))
-                Text((left > 0 ? String(format: "Expira em %d:%02d", left / 60, left % 60) : "Expirou: gere outro")
+                Text((left > 0 ? String(format: tr("Expira em %d:%02d", "Expires in %d:%02d"), left / 60, left % 60) : tr("Expirou: gere outro", "Expired: generate another"))
                      + (status?.addresses.isEmpty == false ? " · " + status!.addresses.map(RemoteCopy.address).joined(separator: " · ") : ""))
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                     .onChange(of: left == 0) { _, gone in if gone { close() } }
             }
-            HStack { Spacer(); Button("Cancelar", action: close).buttonStyle(CollieButtonStyle(.secondary)).keyboardShortcut(.cancelAction) }
+            HStack { Spacer(); Button(tr("Cancelar", "Cancel"), action: close).buttonStyle(CollieButtonStyle(.secondary)).keyboardShortcut(.cancelAction) }
                 .padding(.top, 14)
         }
         .padding(22).frame(width: 400).background(Color.collieBackground)
@@ -244,12 +246,12 @@ struct PairingConfirmSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Parear “\(request.name)”?").font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("Parear “\(request.name)”?", "Pair “\(request.name)”?")).font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
             Text("\(request.model) · \(RemoteCopy.via(request.via)) \(request.address)").font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary)
             Text(RemoteCopy.code(request.code)).font(.collieMono(34, .medium)).tracking(4).foregroundStyle(Color.collieAccent)
                 .frame(maxWidth: .infinity).padding(.top, 16).padding(.bottom, 6)
-                .accessibilityLabel("Código \(request.code.map(String.init).joined(separator: " "))")
-            Text("Confira se o iPhone mostra o mesmo código.").font(.collieMono(12)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity)
+                .accessibilityLabel(tr("Código \(request.code.map(String.init).joined(separator: " "))", "Code \(request.code.map(String.init).joined(separator: " "))"))
+            Text(tr("Confira se o iPhone mostra o mesmo código.", "Check that the iPhone shows the same code.")).font(.collieMono(12)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity)
             TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
                 let left = max(0, request.deadline.timeIntervalSince(ctx.date))
                 GeometryReader { g in   // the 60 s running out
@@ -261,8 +263,8 @@ struct PairingConfirmSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Recusar") { answer(false) }.buttonStyle(CollieButtonStyle(.secondary)).keyboardShortcut(.cancelAction)
-                Button("Parear") { answer(true) }.buttonStyle(CollieButtonStyle(.primary))
+                Button(tr("Recusar", "Decline")) { answer(false) }.buttonStyle(CollieButtonStyle(.secondary)).keyboardShortcut(.cancelAction)
+                Button(tr("Parear", "Pair")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary))
             }
             .padding(.top, 14)
         }

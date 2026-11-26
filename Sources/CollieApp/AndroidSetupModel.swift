@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
 /// `android.status`, decoded tolerantly (like `RemoteStatus.from`): nil only when `sdk`/`items` are missing.
@@ -78,20 +79,20 @@ enum AndroidCopy {
     static func needsFree(_ s: AndroidSetupStatus) -> Int64 { 2 * totalPending(s) }
 
     /// The fixed notice beside Instalar (owner's decision), linked to `termsURL`.
-    static let notice = "Ao instalar, você aceita os termos do Android SDK"
+    static var notice: String { tr("Ao instalar, você aceita os termos do Android SDK", "By installing, you accept the Android SDK terms") }
 
     /// Headline and primary button per state, from `docs/pages/preferencias-b/index.html` (`STATES` and `android(...)`).
     static func label(for s: AndroidScreenState) -> (title: String, button: String) {
         switch s {
-        case .nada: ("Nada instalado", "Instalar")
-        case .parcial: ("Parcial", "Instalar o que falta")
-        case .preparando: ("Preparando (fase 1)", "Cancelar")
-        case .licenca: ("Licenças do SDK do Android", "Aceitar e baixar")
-        case .instalando: ("Instalando (fase 2)", "Cancelar")
-        case .pronto: ("Tudo pronto", "Criar emulador leve")
-        case .erro: ("Erro", "Tentar de novo")
-        case .recusou: ("Licenças recusadas.", "Rever licenças")
-        case .ocupado: ("Outro processo está usando o SDK.", "Tentar de novo")
+        case .nada: (tr("Nada instalado", "Nothing installed"), tr("Instalar", "Install"))
+        case .parcial: (tr("Parcial", "Partial"), tr("Instalar o que falta", "Install what is missing"))
+        case .preparando: (tr("Preparando (fase 1)", "Preparing (phase 1)"), tr("Cancelar", "Cancel"))
+        case .licenca: (tr("Licenças do SDK do Android", "Android SDK licenses"), tr("Aceitar e baixar", "Accept and download"))
+        case .instalando: (tr("Instalando (fase 2)", "Installing (phase 2)"), tr("Cancelar", "Cancel"))
+        case .pronto: (tr("Tudo pronto", "All set"), tr("Criar emulador leve", "Create lightweight emulator"))
+        case .erro: (tr("Erro", "Error"), tr("Tentar de novo", "Try again"))
+        case .recusou: (tr("Licenças recusadas.", "Licenses declined."), tr("Rever licenças", "Review licenses"))
+        case .ocupado: (tr("Outro processo está usando o SDK.", "Another process is using the SDK."), tr("Tentar de novo", "Try again"))
         }
     }
 

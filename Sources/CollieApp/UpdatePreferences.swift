@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CollieTheme
+import CollieCore
 import CollieClient
 import CollieProtocol
 
@@ -32,7 +33,7 @@ struct UpdatePreferences: View {
             } else if refusalRead {
                 content
             } else {
-                note("Lendo…")
+                note(tr("Lendo…", "Reading…"))
             }
             if let loadError { Text(loadError).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
@@ -49,11 +50,11 @@ struct UpdatePreferences: View {
             if let status { UpdateInstallSheet(client: client, status: status, engine: engine) { sheetOpen = false } }
         }
         .confirmationDialog(UpdateModel.rollbackLabel(previous: UpdateInstaller.previousVersion).map { $0 + "?" } ?? "", isPresented: $confirmRollback) {
-            Button("Voltar e reabrir", role: .destructive) {
+            Button(tr("Voltar e reabrir", "Roll back and reopen"), role: .destructive) {
                 do throws(AppUpdateSwap.Refusal) { try UpdateInstaller.rollback() } catch { self.error = UpdateModel.text(error) }
             }
         } message: {
-            Text("O Collie fecha e reabre na versão anterior. O serviço continua rodando; os terminais não fecham.")
+            Text(tr("O Collie fecha e reabre na versão anterior. O serviço continua rodando; os terminais não fecham.", "Collie closes and reopens on the previous version. The service keeps running; terminals do not close."))
         }
     }
 
@@ -61,12 +62,12 @@ struct UpdatePreferences: View {
         Text(UpdateModel.stateLine(installed: UpdateInstaller.installedVersion, status: status))
             .font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary)
         if let n = UpdateModel.sourceNote(status) { note(n) }
-        Toggle("Procurar atualizações automaticamente", isOn: Binding(get: { auto }, set: { auto = $0; save("auto", $0) }))
+        Toggle(tr("Procurar atualizações automaticamente", "Check for updates automatically"), isOn: Binding(get: { auto }, set: { auto = $0; save("auto", $0) }))
             .disabled(!connected)
-        Toggle("Baixar em segundo plano", isOn: Binding(get: { background }, set: { background = $0; save("download", $0) }))
+        Toggle(tr("Baixar em segundo plano", "Download in the background"), isOn: Binding(get: { background }, set: { background = $0; save("download", $0) }))
             .disabled(!connected)
         HStack {
-            Button("Procurar agora") { check() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
+            Button(tr("Procurar agora", "Check now")) { check() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
             Spacer()
             if let label = UpdateModel.rollbackLabel(previous: UpdateInstaller.previousVersion) {
                 Button(label) { confirmRollback = true }.buttonStyle(CollieButtonStyle(.quiet))
@@ -80,7 +81,7 @@ struct UpdatePreferences: View {
             Text(c.title).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
             if let page = c.page { Button(c.link) { NSWorkspace.shared.open(page) }.buttonStyle(.link) }
             if let e = UpdateModel.engineChange(manifest: s.available?.figcraftEngine, installed: engine) {
-                note("Esta versão usa o motor de design \(e): o desenho fica indisponível até baixá-lo, depois de reiniciar o serviço.")
+                note(tr("Esta versão usa o motor de design \(e): o desenho fica indisponível até baixá-lo, depois de reiniciar o serviço.", "This version uses design engine \(e): design stays unavailable until you download it, after restarting the service."))
             }
             if let j = s.job, s.running, j.total > 0 {
                 ProgressView(value: Double(min(j.bytes, j.total)), total: Double(j.total)).tint(Color.collieAttention)
@@ -90,14 +91,14 @@ struct UpdatePreferences: View {
             HStack(spacing: 10) {
                 Spacer()
                 if s.running {
-                    Button { call("app.update.cancel") } label: { Text("Cancelar").foregroundStyle(Color.collieDanger) }
+                    Button { call("app.update.cancel") } label: { Text(tr("Cancelar", "Cancel")).foregroundStyle(Color.collieDanger) }
                         .buttonStyle(CollieButtonStyle(.quiet))
                 }
                 if let skip = c.skip, let v = s.available?.version {
                     Button(skip) { call("app.update.skip", ["version": .string(v)]) }.buttonStyle(CollieButtonStyle(.quiet)).disabled(working)
                 }
                 if let r = refusal, UpdateModel.offersDownloadPage(r) {
-                    Button("Baixar o dmg") { if let page = c.page { NSWorkspace.shared.open(page) } }.buttonStyle(CollieButtonStyle(.primary))
+                    Button(tr("Baixar o dmg", "Download the dmg")) { if let page = c.page { NSWorkspace.shared.open(page) } }.buttonStyle(CollieButtonStyle(.primary))
                 } else if let primary = c.primary {
                     Button(primary) { primaryAction(s) }.buttonStyle(CollieButtonStyle(.primary)).disabled(working || !connected)
                 }
@@ -118,7 +119,7 @@ struct UpdatePreferences: View {
         guard connected else { return }
         do {
             guard let s = UpdateStatus.from(try await client.adminCall("app.update.status", [:])) else {
-                loadError = "app.update.status: resposta inesperada"; return
+                loadError = tr("app.update.status: resposta inesperada", "app.update.status: unexpected reply"); return
             }
             status = s; loadError = nil
             if installWhenReady, s.state == "ready", s.staged != nil { installWhenReady = false; sheetOpen = true }

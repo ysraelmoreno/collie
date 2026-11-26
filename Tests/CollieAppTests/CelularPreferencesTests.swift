@@ -1,4 +1,5 @@
 import Testing
+import CollieCore
 import Foundation
 import CoreImage
 import AppKit
@@ -6,14 +7,14 @@ import CollieProtocol
 @testable import CollieApp
 
 /// Remote API slice 10: the pairing sheet's data and its QR.
-@Test func pairOfferFromBegin() {
+@Test(.appPT) func pairOfferFromBegin() {
     let o = PairOffer.from(.object(["pairingId": .string("p1"), "qr": .string("collie://pair?v=1&s=x"), "expiresAt": .string("2026-11-05T15:05:00Z")]))
     #expect(o?.id == "p1" && o?.qr == "collie://pair?v=1&s=x" && o?.expiresAt == ISO8601DateFormatter().date(from: "2026-11-05T15:05:00Z"))
     #expect(PairOffer.from(.object(["pairingId": .string("p1")])) == nil)
 }
 
 /// The QR reads back as the exact pairing URL (secret, hosts and fingerprint included).
-@Test func qrReadsBackAsThePairingURL() throws {
+@Test(.appPT) func qrReadsBackAsThePairingURL() throws {
     let url = "collie://pair?v=1&id=6F1C2A90-0000-4000-8000-000000000001&n=Mac%20de%20Ana&h=192.168.1.10,100.101.22.7&p=47820"
         + "&fp=kJ3vAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9Qe2&s=Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmE"
     let img = try #require(QRCode.image(url))

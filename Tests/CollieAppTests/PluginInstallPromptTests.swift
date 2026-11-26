@@ -9,7 +9,7 @@ private let notas = URL(fileURLWithPath: #filePath).deletingLastPathComponent().
     .deletingLastPathComponent().appendingPathComponent("Examples/plugins/notas")
 
 /// Task 1 review: installing over an installed id says what it replaces (old and new author and version) before anything happens.
-@Test func pluginInstallPromptNamesWhatItReplaces() throws {
+@Test(.appPT) func pluginInstallPromptNamesWhatItReplaces() throws {
     let fresh = try PluginInstallPrompt.make(folder: notas, installed: [PluginRow(id: "kanban", name: "Kanban", version: "1.0.0")])
     #expect(fresh.replacing == nil && fresh.title == "Instalar Notas 0.1.0?" && fresh.confirm == "Instalar")
     #expect(fresh.details == ["Autor: Collie · Licença: MIT", "3 comandos"])
@@ -26,7 +26,7 @@ private let notas = URL(fileURLWithPath: #filePath).deletingLastPathComponent().
 }
 
 /// G6: the confirmation lists what a hooks plug-in may do, and marks what a replacement adds to the installed one.
-@Test func pluginInstallPromptShowsPermissions() throws {
+@Test(.appPT) func pluginInstallPromptShowsPermissions() throws {
     let fresh = try PluginInstallPrompt.make(folder: notas, installed: [])
     #expect(fresh.permissions.isEmpty && fresh.newPermissions.isEmpty)
     let edit = "Roda um programa a cada arquivo que um agente edita", read = "Pode ler os arquivos do projeto"
@@ -36,7 +36,7 @@ private let notas = URL(fileURLWithPath: #filePath).deletingLastPathComponent().
     #expect(first.newPermissions.isEmpty && first.permissions == [edit, read])
 }
 /// M5: a catalog install says where it comes from, who published it and its size; an update marks what's new.
-@Test func pluginInstallPromptFromCatalog() {
+@Test(.appPT) func pluginInstallPromptFromCatalog() {
     let item = PluginCatalogView.Item(id: "vizinho", name: "Vizinho", publisherName: "Collie")
     let latest = PluginCatalogView.Latest(version: "0.2.0", size: 812_345, permissions: ["project": .string("read")], hooks: ["edit"])
     let fresh = PluginInstallPrompt(catalog: item, latest: latest, replacing: nil)

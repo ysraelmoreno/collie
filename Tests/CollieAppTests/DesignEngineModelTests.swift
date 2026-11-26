@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import CollieCore
 import CollieProtocol
 @testable import CollieApp
 
@@ -16,14 +17,14 @@ private func status(_ state: String, installed: [String: JSONValue]? = nil, rein
     return DesignEngineStatus.from(.object(o))!
 }
 
-@Test func rowAbsentShowsDownloadSize() {
+@Test(.appPT) func rowAbsentShowsDownloadSize() {
     let s = status("absent", pinned: ("0.7.0-c1", 51_400_000))
     #expect(DesignEngineStatus.row(s, locale: br) == .absent(download: "51,4 MB"))
     #expect(DesignEngineStatus.row(s, locale: br).button == "Baixar (51,4 MB)")
     #expect(DesignEngineStatus.from(.string("x")) == nil)
 }
 
-@Test func rowDownloadingProgress() {
+@Test(.appPT) func rowDownloadingProgress() {
     let s = status("absent", job: ["phase": .string("downloading"), "bytes": .number(33_100_000), "total": .number(51_400_000)])
     #expect(DesignEngineStatus.row(s, locale: br) == .downloading(done: "33,1 MB", total: "51,4 MB"))
     #expect(DesignEngineStatus.row(status("absent", job: ["phase": .string("verifying")]), locale: br) == .verifying)
@@ -32,7 +33,7 @@ private func status(_ state: String, installed: [String: JSONValue]? = nil, rein
     #expect(DesignEngineStatus.row(status("absent", job: ["phase": .string("cancelled")]), locale: br) == .absent(download: "53,2 MB"))
 }
 
-@Test func rowBundledHasNoRemove() {
+@Test(.appPT) func rowBundledHasNoRemove() {
     let bundle = DesignEngineStatus.row(status("installed", installed: ["version": .string("0.7.0"), "source": .string("bundle")]), locale: br)
     #expect(bundle == .installed(version: "0.7.0", bundled: true))
     #expect(bundle.text == "v0.7.0 · embutido no app")
@@ -43,32 +44,32 @@ private func status(_ state: String, installed: [String: JSONValue]? = nil, rein
     #expect(app.canRemove)
 }
 
-@Test func rowNeedsUpdate() {
+@Test(.appPT) func rowNeedsUpdate() {
     let r = DesignEngineStatus.row(status("needsUpdate", installed: ["version": .string("0.7.0-c1"), "source": .string("appSupport")], reinstall: false), locale: br)
     #expect(r == .needsUpdate(installed: "0.7.0-c1", pinned: "0.8.0-c1", download: "53,2 MB", reinstall: false))
     #expect(r.button == "Atualizar (53,2 MB)")
     #expect(r.text == "Motor v0.7.0-c1 desatualizado: este Collie usa v0.8.0-c1. O painel Design fica indisponível até atualizar.")
 }
 
-@Test func rowReinstall() {
+@Test(.appPT) func rowReinstall() {
     let r = DesignEngineStatus.row(status("needsUpdate", installed: ["version": .string("0.9.0-c1"), "source": .string("appSupport")], reinstall: true), locale: br)
     #expect(r.button == "Reinstalar (53,2 MB)")
     #expect(r.text == "Motor v0.9.0-c1 não é o deste Collie (v0.8.0-c1).")
 }
 
-@Test func needsUpdateAllowsRemove() {
+@Test(.appPT) func needsUpdateAllowsRemove() {
     #expect(DesignEngineStatus.row(status("needsUpdate", installed: ["source": .string("appSupport")], reinstall: true), locale: br).canRemove)
     #expect(!DesignEngineStatus.row(status("absent"), locale: br).canRemove)
 }
 
-@Test func rowFailedCarriesMessage() {
+@Test(.appPT) func rowFailedCarriesMessage() {
     let r = DesignEngineStatus.row(status("absent", job: ["phase": .string("failed"), "error": .string("Espaço insuficiente")]), locale: br)
     #expect(r == .failed("Espaço insuficiente"))
     #expect(r.text == "Falhou: Espaço insuficiente")
     #expect(r.button == "Tentar de novo")
 }
 
-@Test func pollIsOneSecondWithJobThreeWithout() {
+@Test(.appPT) func pollIsOneSecondWithJobThreeWithout() {
     #expect(DesignEngineStatus.pollInterval(nil) == .seconds(3))
     #expect(DesignEngineStatus.pollInterval(status("absent")) == .seconds(3))
     #expect(DesignEngineStatus.pollInterval(status("absent", job: ["phase": .string("downloading")])) == .seconds(1))

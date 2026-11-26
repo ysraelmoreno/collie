@@ -67,6 +67,8 @@ public struct TerminalFontChoice: Sendable, Equatable {
 public enum AppearanceKeys {
     public static let theme = "appearance.theme", structure = "appearance.structure",
                       terminalFamily = "appearance.terminalFamily", terminalSize = "appearance.terminalSize"
+    /// `system|pt|en`: the app's own copy of Preferences › Interface › "Idioma", read in `CollieApp.init` before any view.
+    public static let language = "collie.language"
 }
 
 public struct AppearanceSettings: Equatable {

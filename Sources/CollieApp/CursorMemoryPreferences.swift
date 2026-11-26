@@ -1,5 +1,6 @@
 import SwiftUI
 import CollieTheme
+import CollieCore
 import CollieClient
 import CollieProtocol
 
@@ -17,7 +18,7 @@ struct CursorMemoryPreferences: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Memória no Cursor").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("Memória no Cursor", "Memory in Cursor")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
             Picker("", selection: Binding(get: { choice ?? .full }, set: { set($0) })) {
                 ForEach(CursorMemoryChoice.allCases, id: \.self) { Text($0.label).tag($0) }
             }
@@ -26,10 +27,10 @@ struct CursorMemoryPreferences: View {
             muted(CursorMemoryChoice.sessionsNote + (choice == .full ? " " + CursorMemoryChoice.allowlistNote : ""))
             muted(CursorMemoryChoice.honest)
 
-            Text("Editadas fora do Collie").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText).padding(.top, 8)
-            muted("Memórias que não foram gravadas pelo Collie (editadas à mão, por um agente ou por git) aparecem para os agentes só pelo título até você confiar em cada uma.")
+            Text(tr("Editadas fora do Collie", "Edited outside Collie")).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText).padding(.top, 8)
+            muted(tr("Memórias que não foram gravadas pelo Collie (editadas à mão, por um agente ou por git) aparecem para os agentes só pelo título até você confiar em cada uma.", "Memories not written by Collie (edited by hand, by an agent or by git) show up to agents by title only until you trust each one."))
             if let note { Text(note).font(.collieMono(12)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true) }
-            if untrusted.isEmpty { muted(connected ? "Nenhuma." : "—") }
+            if untrusted.isEmpty { muted(connected ? tr("Nenhuma.", "None.") : "—") }
             ForEach(untrusted) { m in row(m) }
             if let error { Text(error).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
         }
@@ -45,7 +46,7 @@ struct CursorMemoryPreferences: View {
                 Text(m.title).font(.collieUI(13))
                 Text("\(m.kind) · \(m.where)").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                 Spacer()
-                Button(open == m.id ? "Fechar" : "Ver diferença") { open = open == m.id ? nil : m.id }.buttonStyle(CollieButtonStyle(.quiet))
+                Button(open == m.id ? tr("Fechar", "Close") : tr("Ver diferença", "See difference")) { open = open == m.id ? nil : m.id }.buttonStyle(CollieButtonStyle(.quiet))
             }
             muted(m.summary)
             if open == m.id {
@@ -59,7 +60,7 @@ struct CursorMemoryPreferences: View {
                     Text(m.file).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle)
                     Spacer()
                     // only after the difference was shown (C7: never in bulk, never unseen)
-                    Button("Confiar") { trust(m) }.buttonStyle(CollieButtonStyle(.primary)).disabled(!connected || working)
+                    Button(tr("Confiar", "Trust")) { trust(m) }.buttonStyle(CollieButtonStyle(.primary)).disabled(!connected || working)
                 }
             }
         }

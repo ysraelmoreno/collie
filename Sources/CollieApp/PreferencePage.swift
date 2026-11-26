@@ -1,22 +1,29 @@
 import Foundation
+import CollieCore
 
 /// Preferências option B: the sidebar's pages, in group order, with the search keywords of
 /// `docs/pages/preferencias-b/index.html` (`NAV`/`PG`).
 enum PreferencePage: String, CaseIterable {
     case aparencia, terminal, atualizacoes, desenho, lacos, memoria, plugins, celular, android
 
-    var title: String {
+    private var titles: (pt: String, en: String) {
         switch self {
-        case .aparencia: "Aparência"
-        case .terminal: "Terminal e fontes"
-        case .atualizacoes: "Atualizações"
-        case .desenho: "Desenho e sandbox"
-        case .lacos: "Laços"
-        case .memoria: "Memória"
-        case .plugins: "Plug-ins"
-        case .celular: "Celular"
-        case .android: "Android"
+        case .aparencia: ("Aparência", "Appearance")
+        case .terminal: ("Terminal e fontes", "Terminal and fonts")
+        case .atualizacoes: ("Atualizações", "Updates")
+        case .desenho: ("Desenho e sandbox", "Design and sandbox")
+        case .lacos: ("Laços", "Loops")
+        case .memoria: ("Memória", "Memory")
+        case .plugins: ("Plug-ins", "Plug-ins")
+        case .celular: ("Celular", "Phone")
+        case .android: ("Android", "Android")
         }
+    }
+    var title: String { tr(titles.pt, titles.en) }
+
+    /// The sidebar's group ids (`group`) are fixed; this is what the header shows.
+    static func groupTitle(_ g: String) -> String {
+        switch g { case "Agentes": tr("Agentes", "Agents"); case "Dispositivos": tr("Dispositivos", "Devices"); default: g }
     }
 
     var group: String {
@@ -41,24 +48,25 @@ enum PreferencePage: String, CaseIterable {
         }
     }
 
+    /// Portuguese and English together: the search finds a page by either language's words.
     var keywords: String {
         switch self {
-        case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra"
-        case .terminal: "terminal fonte tamanho google fonts baixar família"
-        case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior"
-        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar"
-        case .lacos: "laço laços loop cartão aprovar aprovação confiar cercado revogar autônomo work run"
-        case .memoria: "memória aprendizado aviso notificação correção cursor consulta início confiar editada fora curador provedor claude modelo limite consentimento testar"
-        case .plugins: "plug-ins extensões"
-        case .celular: "celular iphone acesso remoto qr pareamento aparelhos leitura completo"
-        case .android: "android java sdk emulador adb imagem licença licenças avd collie-lite platform-tools command-line cmdline"
+        case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra idioma língua theme palette dark light system structure frame full compact sidebar language"
+        case .terminal: "terminal fonte tamanho google fonts baixar família font size download family"
+        case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior update upgrade version new install skip rollback previous"
+        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar where to draw preview ask open strict shepherd engine download install remove update reinstall"
+        case .lacos: "laço laços loop cartão aprovar aprovação confiar cercado revogar autônomo work run loops card approve approval trust paddock revoke autonomous"
+        case .memoria: "memória aprendizado aviso notificação correção cursor consulta início confiar editada fora curador provedor claude modelo limite consentimento testar memory learning notice notification correction lookup start trust edited outside curator provider model limit consent test"
+        case .plugins: "plug-ins extensões extensions"
+        case .celular: "celular iphone acesso remoto qr pareamento aparelhos leitura completo phone remote access pairing devices read full"
+        case .android: "android java sdk emulador adb imagem licença licenças avd collie-lite platform-tools command-line cmdline emulator image license licenses"
         }
     }
 
     /// Pages whose title or keywords contain `query`, ignoring case and accents; all of them for an empty query.
     static func matching(_ query: String) -> [PreferencePage] {
         let q = fold(query.trimmingCharacters(in: .whitespaces))
-        return q.isEmpty ? allCases : allCases.filter { fold($0.title + " " + $0.keywords).contains(q) }
+        return q.isEmpty ? allCases : allCases.filter { fold($0.titles.pt + " " + $0.titles.en + " " + $0.keywords).contains(q) }
     }
 
     /// The Android item's badge from `android.status`: `↓` while a job runs, `!` after a failed one or while licenses wait.

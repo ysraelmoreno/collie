@@ -4,7 +4,7 @@ import CollieProtocol
 @testable import CollieApp
 
 /// Preferências › Memória (spec 2026-11-17 cursor memory §7, plan task 9): the model alone, no UI.
-struct CursorMemoryModelTests {
+@Suite(.appPT) struct CursorMemoryModelTests {
     @Test func choicesAndLabels() {
         #expect(CursorMemoryChoice.allCases == [.full, .start, .off])
         #expect(CursorMemoryChoice.full.label == "Início + consulta por tarefa")
@@ -57,7 +57,7 @@ struct CursorMemoryModelTests {
 }
 
 /// The terminal card's memory badge for a Cursor (C6), from `memory.stats --terminal` (`byAgent.cursor`).
-struct CursorMemoryBadgeTests {
+@Suite(.appPT) struct CursorMemoryBadgeTests {
     private func stats(_ cursor: [String: JSONValue]?) -> JSONValue {
         .object(["byAgent": .object(cursor.map { ["cursor": .object($0)] } ?? [:])])
     }

@@ -1,4 +1,5 @@
 import Testing
+import CollieCore
 import Foundation
 import CollieProtocol
 @testable import CollieApp
@@ -25,7 +26,7 @@ private let allMissing = ["missing", "missing", "missing", "missing", "missing"]
 private let someOk = ["ok", "missing", "missing", "missing", "missing"]
 private let allOk = ["ok", "ok", "ok", "ok", "ok"]
 
-@Test func statusDecodesTheDaemonReply() {
+@Test(.appPT) func statusDecodesTheDaemonReply() {
     let v: JSONValue = .object([
         "sdk": .object(["path": .string("/sdk"), "source": .string("env")]),
         "items": .array([item("java", "ok", "17"), item("image", "installing")]),
@@ -40,7 +41,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(AndroidSetupStatus.from(.object(["sdk": .object(["path": .string("/s"), "source": .string("x")]), "needs": .string("ready")])) == nil)
 }
 
-@Test func licensesListDecodesAndEmptyIsEmpty() {
+@Test(.appPT) func licensesListDecodesAndEmptyIsEmpty() {
     let o: (String) -> JSONValue = { .object(["id": .string($0), "title": .string("T\($0)"), "text": .string("x"), "accepted": .bool($0 == "b")]) }
     #expect(AndroidLicense.list(.array([o("a"), o("b")])).map(\.id) == ["a", "b"])
     #expect(AndroidLicense.list(.array([o("a"), o("b")]))[1].accepted)
@@ -48,7 +49,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(AndroidLicense.list(.string("nope")).isEmpty)
 }
 
-@Test func deriveMatrix() {
+@Test(.appPT) func deriveMatrix() {
     func d(_ s: AndroidSetupStatus, _ l: [AndroidLicense]? = nil, refused: Bool = false, busy: String? = nil) -> AndroidScreenState {
         AndroidScreenState.derive(status: s, licenses: l, refused: refused, busy: busy)
     }
@@ -73,7 +74,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(d(status(allOk, needs: "ready")) == .pronto)
 }
 
-@Test func deriveWithoutLicenseListNeverAsksForAccept() {
+@Test(.appPT) func deriveWithoutLicenseListNeverAsksForAccept() {
     func d(_ s: AndroidSetupStatus, refused: Bool = false) -> AndroidScreenState {
         AndroidScreenState.derive(status: s, licenses: [], refused: refused, busy: nil)
     }
@@ -82,7 +83,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(d(status(allOk, needs: "ready")) == .pronto)
 }
 
-@Test func copyFormatsSizesWithTilde() {
+@Test(.appPT) func copyFormatsSizesWithTilde() {
     #expect(AndroidCopy.bytes(15 << 20) == "~15 MB")
     #expect(AndroidCopy.bytes(6 << 30) == "~6 GB")
     let s = status(["ok", "ok", "ok", "missing", "missing"], needs: "needsLicense")
@@ -91,7 +92,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(AndroidCopy.totalPending(status(allOk, needs: "ready")) == 0)
 }
 
-@Test func deriveAsksOnlyForPendingLicenses() {
+@Test(.appPT) func deriveAsksOnlyForPendingLicenses() {
     let done = [AndroidLicense(id: "a", title: "A", text: "t", accepted: true)]
     let st = status(someOk, needs: "needsLicense")
     #expect(AndroidScreenState.derive(status: st, licenses: done, refused: false, busy: nil) == .parcial)
@@ -99,7 +100,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(AndroidScreenState.derive(status: st, licenses: done + lic, refused: false, busy: nil) == .licenca)
 }
 
-@Test func deriveDoneJobAndUnloadedLicenses() {
+@Test(.appPT) func deriveDoneJobAndUnloadedLicenses() {
     func d(_ s: AndroidSetupStatus, _ l: [AndroidLicense]? = nil) -> AndroidScreenState {
         AndroidScreenState.derive(status: s, licenses: l, refused: false, busy: nil)
     }
@@ -109,13 +110,13 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(d(status(allOk, needs: "needsLicense"), nil) == .parcial)
 }
 
-@Test func statusDecodeToleratesNonFiniteNumbers() {
+@Test(.appPT) func statusDecodeToleratesNonFiniteNumbers() {
     let j: JSONValue = .object(["phase": .string("install"), "percent": .number(.nan), "bytes": .number(1e30), "total": .number(.infinity)])
     let s = status(allMissing, needs: "ready", job: j)
     #expect(s.job?.percent == nil && s.job?.bytes == nil && s.job?.total == nil)
 }
 
-@Test func labelsPerStateCopyThePreview() {
+@Test(.appPT) func labelsPerStateCopyThePreview() {
     let cases: [(AndroidScreenState, String, String)] = [
         (.nada, "Nada instalado", "Instalar"), (.parcial, "Parcial", "Instalar o que falta"),
         (.preparando, "Preparando (fase 1)", "Cancelar"), (.licenca, "Licenças do SDK do Android", "Aceitar e baixar"),
@@ -130,7 +131,7 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     #expect(AndroidCopy.notice == "Ao instalar, você aceita os termos do Android SDK")
 }
 
-@Test func acceptIdsSendsOnlyCheckedPending() {
+@Test(.appPT) func acceptIdsSendsOnlyCheckedPending() {
     let two = [AndroidLicense(id: "a", title: "", text: "", accepted: false), AndroidLicense(id: "b", title: "", text: "", accepted: true),
                AndroidLicense(id: "c", title: "", text: "", accepted: false)]
     #expect(AndroidCopy.acceptIds(licenses: two, checked: false) == [])

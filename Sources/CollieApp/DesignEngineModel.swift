@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
 /// `design.engine.status`, decoded tolerantly (like `AndroidSetupStatus.from`): nil only when `state` is missing.
@@ -60,14 +61,16 @@ enum DesignEngineRow: Equatable {
 
     var text: String {
         switch self {
-        case .absent: "Necessário para o painel Design e collie design."
-        case .downloading(let done, let total): "\(done) de \(total)"
-        case .verifying: "Conferindo assinatura…"
-        case .installed(let v, let bundled): (v.isEmpty ? "" : "v\(v) · ") + (bundled ? "embutido no app" : "Application Support")
+        case .absent: tr("Necessário para o painel Design e collie design.", "Needed for the Design panel and collie design.")
+        case .downloading(let done, let total): tr("\(done) de \(total)", "\(done) of \(total)")
+        case .verifying: tr("Conferindo assinatura…", "Checking signature…")
+        case .installed(let v, let bundled): (v.isEmpty ? "" : "v\(v) · ") + (bundled ? tr("embutido no app", "built into the app") : "Application Support")
         case .needsUpdate(let i, let p, _, false):
-            "Motor \(i.map { "v" + $0 } ?? "instalado") desatualizado: este Collie usa v\(p). O painel Design fica indisponível até atualizar."
-        case .needsUpdate(let i, let p, _, true): "Motor \(i.map { "v" + $0 } ?? "instalado") não é o deste Collie (v\(p))."
-        case .failed(let m): "Falhou: \(m)"
+            tr("Motor \(i.map { "v" + $0 } ?? "instalado") desatualizado: este Collie usa v\(p). O painel Design fica indisponível até atualizar.",
+               "Engine \(i.map { "v" + $0 } ?? "installed") is out of date: this Collie uses v\(p). The Design panel stays unavailable until you update.")
+        case .needsUpdate(let i, let p, _, true):
+            tr("Motor \(i.map { "v" + $0 } ?? "instalado") não é o deste Collie (v\(p)).", "Engine \(i.map { "v" + $0 } ?? "installed") is not this Collie's (v\(p)).")
+        case .failed(let m): tr("Falhou: \(m)", "Failed: \(m)")
         }
     }
 
@@ -75,9 +78,9 @@ enum DesignEngineRow: Equatable {
     var button: String? {
         func sized(_ b: String, _ d: String) -> String { d.isEmpty ? b : "\(b) (\(d))" }
         switch self {
-        case .absent(let d): return sized("Baixar", d)
-        case .needsUpdate(_, _, let d, let reinstall): return sized(reinstall ? "Reinstalar" : "Atualizar", d)
-        case .failed: return "Tentar de novo"
+        case .absent(let d): return sized(tr("Baixar", "Download"), d)
+        case .needsUpdate(_, _, let d, let reinstall): return sized(reinstall ? tr("Reinstalar", "Reinstall") : tr("Atualizar", "Update"), d)
+        case .failed: return tr("Tentar de novo", "Try again")
         case .downloading, .verifying, .installed: return nil
         }
     }

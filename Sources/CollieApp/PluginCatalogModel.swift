@@ -5,7 +5,7 @@ import CollieCore
 /// Descobrir's filter chips, by catalog kind.
 enum CatalogFilter: CaseIterable {
     case all, panel, agent, engine
-    var title: String { switch self { case .all: "Todos"; case .panel: "Painéis"; case .agent: "Agentes"; case .engine: "Motores" } }
+    var title: String { switch self { case .all: tr("Todos", "All"); case .panel: tr("Painéis", "Panels"); case .agent: tr("Agentes", "Agents"); case .engine: tr("Motores", "Engines") } }
     var kind: PluginCatalog.Kind? { switch self { case .all: nil; case .panel: .panel; case .agent: .agent; case .engine: .engine } }
 }
 
@@ -42,14 +42,15 @@ enum PluginCatalogModel {
 
     /// "0,8 MB" (pt-BR decimal comma).
     static func size(_ bytes: Int) -> String {
-        String(format: "%.1f MB", Double(bytes) / 1_000_000).replacingOccurrences(of: ".", with: ",")
+        let s = String(format: "%.1f MB", Double(bytes) / 1_000_000)
+        return L10n.current == .pt ? s.replacingOccurrences(of: ".", with: ",") : s
     }
 
     /// The line above the list for a catalog that isn't plainly fresh; nil: none.
     static func banner(_ v: PluginCatalogView) -> String? {
         switch v.state {
-        case "unavailable": "O catálogo não carregou. Os plug-ins instalados seguem funcionando."
-        case "stale": "Catálogo desatualizado: a lista pode não ter as versões e os recolhimentos mais novos."
+        case "unavailable": tr("O catálogo não carregou. Os plug-ins instalados seguem funcionando.", "The catalog did not load. Installed plug-ins keep working.")
+        case "stale": tr("Catálogo desatualizado: a lista pode não ter as versões e os recolhimentos mais novos.", "Catalog out of date: the list may lack the newest versions and recalls.")
         default: nil
         }
     }

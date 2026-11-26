@@ -15,7 +15,7 @@ private func item(_ id: String, kind: PluginCatalog.Kind = .agent, latest: Strin
 }
 
 /// M5: the kind chips filter the cards; an item nothing here can install, and not installed, is hidden.
-@Test func catalogRowsFilterByKind() {
+@Test(.appPT) func catalogRowsFilterByKind() {
     let v = PluginCatalogView(items: [item("vizinho"), item("notas", kind: .panel), item("figcraft", kind: .engine),
                                       item("futuro", latest: nil)])
     #expect(PluginCatalogModel.rows(v, filter: .all).map(\.id) == ["vizinho", "notas", "figcraft"])
@@ -26,7 +26,7 @@ private func item(_ id: String, kind: PluginCatalog.Kind = .agent, latest: Strin
 }
 
 /// M5: the button of each card (owner's rules of 2026-11-24): an update asks again only for a new permission line.
-@Test func catalogActionPerState() {
+@Test(.appPT) func catalogActionPerState() {
     #expect(PluginCatalogModel.action(item("vizinho")) == .install)
     #expect(PluginCatalogModel.action(item("vizinho", installed: "0.2.0"), installed: PluginRow(id: "vizinho", name: "Vizinho", version: "0.2.0")) == .installed)
     // same lines as installed: one click, no confirmation
@@ -45,7 +45,7 @@ private func item(_ id: String, kind: PluginCatalog.Kind = .agent, latest: Strin
 }
 
 /// M5: unavailable and stale say so above the list; size in pt-BR.
-@Test func catalogBannerAndSize() {
+@Test(.appPT) func catalogBannerAndSize() {
     #expect(PluginCatalogModel.banner(PluginCatalogView(state: "unavailable", items: [])) == "O catálogo não carregou. Os plug-ins instalados seguem funcionando.")
     #expect(PluginCatalogModel.banner(PluginCatalogView(state: "stale", items: []))?.hasPrefix("Catálogo desatualizado") == true)
     #expect(PluginCatalogModel.banner(PluginCatalogView(items: [])) == nil)
@@ -53,7 +53,7 @@ private func item(_ id: String, kind: PluginCatalog.Kind = .agent, latest: Strin
 }
 
 /// M5: the client decodes M3's `plugin.catalog` reply as the daemon writes it.
-@Test func catalogViewDecodesDaemonReply() throws {
+@Test(.appPT) func catalogViewDecodesDaemonReply() throws {
     let json = #"{"state":"stale","reason":"sem rede","generatedAt":"2026-11-01T12:00:00Z","items":[{"id":"vizinho","name":"Vizinho","publisher":"collie","publisherName":"Collie","summary":"s","kind":"agent","latest":{"version":"0.2.0","size":812345,"permissions":{"project":"read"},"hooks":["edit"],"helperTeamId":"AG8JQAH6YB"},"installed":{"version":"0.1.0","source":"catalog"},"update":true,"recalled":{"reason":"r"}}]}"#
     let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
     let v = try dec.decode(PluginCatalogView.self, from: Data(json.utf8))

@@ -6,7 +6,7 @@ import CollieProtocol
 @testable import CollieApp
 
 /// Preferências › Atualizações and the install sheet (spec 2026-11-17 §3, §5): the model alone, no UI.
-struct UpdateModelTests {
+@Suite(.appPT) struct UpdateModelTests {
     static let en = Locale(identifier: "en_US")
 
     static func status(_ state: String, version: String = "0.2.0", size: Double = 41_711_021, engine: String = "0.7.0-c1",

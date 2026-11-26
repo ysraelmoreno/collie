@@ -160,8 +160,13 @@ actor MemoryService {
     private var byRoot: [String: RepoMemory] = [:]
     private var byLot: [UUID: RepoMemory] = [:]
     /// Ids injected in a terminal's session (→ the `key` of their store), and the lot they were injected for: a change of
-    /// lot starts over. ponytail: in the actor only — lost on a daemon restart, when the terminals restart too.
+    /// lot starts this set over. ma1 3a: what the session got is also persisted (`lifecycle.injected(session:)`), and
+    /// `alreadySeen` joins both, so a restart or a lot change brings nothing back.
     private var injected: [UUID: (lot: UUID?, ids: [UUID: String])] = [:]
+    /// ma1 3a: ids a terminal's session may get once more (a `compact` emptied its context, an undo restored them), and
+    /// the ones it already got again (a second `compact` brings none of them back). ponytail: actor only — a restart drops
+    /// them, and the persisted set (`lifecycle.injected(session:)`) then keeps everything out: never more than once.
+    private var reinjectable: [UUID: Set<UUID>] = [:], reinjected: [UUID: Set<UUID>] = [:]
     /// Reference-document chunks a terminal's session was given (`<store key>#<chunk id>`): each goes in once; a session start clears it.
     private var injectedDocs: [UUID: Set<String>] = [:]
     /// Proposal ids still queued for the curator, and the ones in open asks (only those expire); set by the router.
@@ -198,7 +203,23 @@ actor MemoryService {
     /// When each terminal's session last started (`context(for:)`): `newRules` brings the user's rules changed after it.
     private var sessionStarted: [UUID: Date] = [:]
     func noteSession(_ terminal: UUID, transcript: String) {
-        sessions[terminal] = URL(fileURLWithPath: transcript).deletingPathExtension().lastPathComponent
+        let s = URL(fileURLWithPath: transcript).deletingPathExtension().lastPathComponent
+        // another session in this terminal: what the old one got is not this one's
+        if let old = sessions[terminal], old != s { injected[terminal] = nil; reinjectable[terminal] = nil; reinjected[terminal] = nil }
+        sessions[terminal] = s
+    }
+
+    /// ma1 3a: what `terminal`'s session already got: the actor's set (with store keys) ∪ the persisted one (a daemon
+    /// restart, a lot change), less what it may get once more (`reinjectable`).
+    private func alreadySeen(_ terminal: UUID) async -> Set<UUID> {
+        var ids = Set(injected[terminal].map { Array($0.ids.keys) } ?? [])
+        if let s = sessions[terminal] { ids.formUnion(await lifecycle.injected(session: s)) }
+        return ids.subtracting(reinjectable[terminal] ?? [])
+    }
+
+    /// `ids` were injected: a reinjectable one used its second chance.
+    private func consumed(_ terminal: UUID, _ ids: some Sequence<UUID>) {
+        for id in ids where reinjectable[terminal]?.remove(id) != nil { reinjected[terminal, default: []].insert(id) }
     }
 
     init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
@@ -298,7 +319,7 @@ actor MemoryService {
         return (lot.map { [lotStore($0)] } ?? []) + (r === global ? [r] : [r, global])
     }
 
-    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set) and,
+    /// Session summary; its pinned memories count as injected for `terminal` (added to what the session got) and,
     /// for scoring, for its open `work`.
     /// `source`: the SessionStart's (compact|resume are logged as `compact`, anything else as `start`).
     /// `workTitle`/`openTasks`/`lotGoal`: what the session is about beyond git (they join `sessionFocus`).
@@ -308,10 +329,19 @@ actor MemoryService {
                  source: String? = nil, workTitle: String? = nil, openTasks: [String] = [], lotGoal: String? = nil,
                  focusBlock: (budget: Int, max: Int, total: Int)? = nil) async -> String {
         sessionStarted[terminal] = Date()
+        // ma1 3a: a compact empties the agent's context: what it got may come back, once per id
+        let prior = await alreadySeen(terminal)
         let focus = await sessionFocus(cwd: cwd, paddock: paddock, workTitle: workTitle, openTasks: openTasks, lotGoal: lotGoal)
         let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit, focus: focus, focusBlock: focusBlock)
         // M10.4: near-duplicates left out count as seen (they don't come back), never as injected
-        injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a }.merging(c.collapsed) { a, _ in a })
+        // ma1 3a: a session start adds to what the session got, never replaces it (a new session: `noteSession` clears)
+        let now = c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a }.merging(c.collapsed) { a, _ in a }
+        injected[terminal] = (lot, (injected[terminal]?.lot == lot ? injected[terminal]?.ids ?? [:] : [:]).merging(now) { _, b in b })
+        if source == "compact" {
+            let again = prior.subtracting(reinjected[terminal] ?? [])
+            reinjected[terminal, default: []].formUnion(again.intersection(now.keys))
+            reinjectable[terminal, default: []].formUnion(again.subtracting(now.keys))
+        } else { consumed(terminal, now.keys) }
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
         if let s = sessions[terminal], !c.ids.isEmpty { await lifecycle.noteInjected(session: s, ids: Array(c.ids.keys), now: Date()) }
         if !c.text.isEmpty {
@@ -543,7 +573,7 @@ actor MemoryService {
         return [rules, mem].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
-    /// Moved to another lot: the session's set starts over.
+    /// Moved to another lot: the actor's set starts over (the persisted one still keeps the session's ids out).
     private func sync(_ terminal: UUID, lot: UUID?) {
         if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }
     }
@@ -557,11 +587,11 @@ actor MemoryService {
     func pushedRules(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int) async -> String {
         sync(terminal, lot: lot)
         guard let ids = pending.removeValue(forKey: terminal), !ids.isEmpty else { return "" }
-        let seen = injected[terminal]?.ids ?? [:]
+        let seen = await alreadySeen(terminal)
         var found: [UUID: (rec: MemoryRecord, key: String)] = [:]
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m in m.index()?.records(ids) ?? [:] }) ?? [:]
-            for r in recs.values where found[r.id] == nil && r.status == .active && seen[r.id] == nil
+            for r in recs.values where found[r.id] == nil && r.status == .active && !seen.contains(r.id)
                 && Self.visible(r, paddock: paddock, lot: s.lotId) && s.present(r) && provenance.isVerified(r) { found[r.id] = (r, s.key) }
         }
         var out = Self.rulesHeader, chosen: [UUID: String] = [:], wait: [UUID] = []
@@ -575,6 +605,7 @@ actor MemoryService {
         if !wait.isEmpty { pending[terminal] = wait + (pending[terminal] ?? []) }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [:])].ids.merge(chosen) { a, _ in a }
+        consumed(terminal, chosen.keys)
         if let s = sessions[terminal] { await lifecycle.noteInjected(session: s, ids: Array(chosen.keys), now: Date()) }
         note(terminal, "rule", ids.compactMap { chosen[$0] != nil ? found[$0]?.rec : nil }, bytes: out.utf8.count, work: nil, lot: lot,
              project: await repo(for: cwd).root?.path)
@@ -591,11 +622,11 @@ actor MemoryService {
     func newRules(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int) async -> String {
         sync(terminal, lot: lot)
         guard let since = sessionStarted[terminal] else { return "" }
-        let seen = injected[terminal]?.ids ?? [:], prov = provenance
+        let seen = await alreadySeen(terminal), prov = provenance
         var found: [(rec: MemoryRecord, key: String)] = []
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m in
-                m.store.all().records.filter { $0.kind == .feedback && $0.status == .active && $0.updatedAt > since && seen[$0.id] == nil
+                m.store.all().records.filter { $0.kind == .feedback && $0.status == .active && $0.updatedAt > since && !seen.contains($0.id)
                     && Self.visible($0, paddock: paddock, lot: m.lotId) && prov.isVerified($0) }
             }) ?? []
             found += recs.map { ($0, s.key) }
@@ -609,6 +640,7 @@ actor MemoryService {
         }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [:])].ids.merge(chosen.map { ($0.rec.id, $0.key) }) { a, _ in a }
+        consumed(terminal, chosen.map(\.rec.id))
         if let s = sessions[terminal] { await lifecycle.noteInjected(session: s, ids: chosen.map(\.rec.id), now: Date()) }
         note(terminal, "rule", chosen.map(\.rec), bytes: out.utf8.count, work: nil, lot: lot, project: await repo(for: cwd).root?.path)
         return out
@@ -721,7 +753,7 @@ actor MemoryService {
         // ranked across the stores together: one scale (R10)
         let hits = MemoryIndex.rank(cands, lang: vector?.lang).map { (hit: $0, store: from[$0.record.id]!) }
         guard let top = hits.first?.hit.score, top > 0 else { return noHit() }
-        let seen = injected[terminal]?.ids ?? [:]
+        let seen = await alreadySeen(terminal)
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
         // DX backlog 8: a memory about another platform than the prompt names is noise (none named: any platform goes)
         let asked = Self.platforms(prompt)
@@ -730,7 +762,7 @@ actor MemoryService {
             let p = Self.platforms(r.title + " " + r.subject + " " + r.body)
             return !p.isEmpty && p.isDisjoint(with: asked)
         }
-        let near = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil && !otherPlatform($0.hit.record) }
+        let near = hits.filter { $0.hit.score >= top * Self.minRelativeScore && !seen.contains($0.hit.record.id) && !otherPlatform($0.hit.record) }
         // M10.4: near-duplicates collapse into the best one before the byte cut (no vector: subject and title only)
         let byId = Dictionary(near.map { ($0.hit.record.id, $0) }, uniquingKeysWith: { a, _ in a })
         let vecs = vector == nil ? [:] : await dedupVectors(near.map { ($0.hit.record.id, $0.store) })
@@ -750,6 +782,7 @@ actor MemoryService {
         note(terminal, pull ? "pull" : "prompt", chosen.map(\.hit.record), bytes: text.utf8.count, work: work, lot: lot, project: project,
              collapsed: collapsed.map(\.hit.record.id))
         injected[terminal, default: (lot, [:])].ids.merge((chosen + collapsed).map { ($0.hit.record.id, $0.store.key) }) { a, _ in a }
+        consumed(terminal, (chosen + collapsed).map(\.hit.record.id))
         if let work { await scores.noteInjected(Set(chosen.map(\.hit.record.id)), work: work) }
         if let s = sessions[terminal] {
             let recs = chosen.map(\.hit.record)
@@ -758,12 +791,7 @@ actor MemoryService {
             if !pull { pendingRecords[terminal] = recs.filter(LifecycleRules.eligible) }
             if pull {} else if pend.isEmpty { _ = await lifecycle.takePending(session: s) } else { await lifecycle.setPending(session: s, ids: pend) }
         }
-        var stores: [RepoMemory] = []
-        for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
-        for s in stores {
-            let ids = chosen.filter { $0.store === s }.map(\.hit.record.id)
-            _ = try? await s.run { m in m.index()?.noteRead(ids) }
-        }
+        // ma1 3e: no `noteRead` here — reads count `memory get`/`search` only, or injection would feed its own ranking
         return text
     }
 
@@ -771,7 +799,7 @@ actor MemoryService {
     /// (`pushedRules` checks the store, visibility and what the session already has).
     func restored(_ ids: [UUID]) {
         for (t, told) in retracted {
-            for id in ids where told.contains(id) { pushRule(id, to: t); retracted[t]?.remove(id) }
+            for id in ids where told.contains(id) { pushRule(id, to: t); retracted[t]?.remove(id); reinjectable[t, default: []].insert(id) }
         }
     }
 
@@ -779,6 +807,7 @@ actor MemoryService {
     func endSession(_ terminal: UUID) async {
         let s = sessions[terminal]
         injected[terminal] = nil; injectedDocs[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
+        reinjectable[terminal] = nil; reinjected[terminal] = nil
         sessionStarted[terminal] = nil; pendingRecords[terminal] = nil; cited[terminal] = nil
         if let s { _ = await lifecycle.takePending(session: s) }
     }

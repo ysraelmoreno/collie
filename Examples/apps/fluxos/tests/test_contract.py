@@ -27,7 +27,7 @@ class ContractTests(unittest.TestCase):
     def test_valid_v2_with_the_four_commands(self):
         doc = load()
         self.assertEqual(doc["apiVersion"], 2)
-        self.assertEqual(sorted(c["name"] for c in doc["commands"]), ["goals", "go", "learn", "show"])
+        self.assertEqual(sorted(c["name"] for c in doc["commands"]), ["go", "goals", "learn", "show"])
         for c in doc["commands"]:
             self.assertRegex(c["name"], NAME)
             self.assertEqual(c["runs"], "http")

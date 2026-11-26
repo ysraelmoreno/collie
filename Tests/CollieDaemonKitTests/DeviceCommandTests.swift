@@ -100,6 +100,36 @@ private struct LiteFx {
 
 @Suite(.serialized) struct DeviceCommandTests {
 
+    /// d4: `device flow on|off|status`; only the user turns it on; a terminal sees its own paddock.
+    @Test func flowLogOptInPerPaddock() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("flow-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let flag = dir.appendingPathComponent(".collie/flows/enabled").path
+        try await withDevice { d, p in
+            #expect(try await admin(d, p, "paddock.create", ["name": "k", "folder": dir.path]).ok)
+            let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
+                args: ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")]), to: p.socket, timeoutSeconds: 60)
+            guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+            let a = Term(id: id, token: try await tokenOf(d, id))
+
+            let st = try await call(p, a, "device.flow")
+            #expect(st.ok && field(st, "enabled") == .bool(false) && field(st, "paddock") == .string("k"), "\(st)")
+            let on = try await call(p, a, "device.flow", ["action": "on"])
+            #expect(!on.ok && on.error?.code == .unauthorized)
+            #expect(!FileManager.default.fileExists(atPath: flag))
+            #expect(!(try await call(p, a, "device.flow", ["action": "status", "paddock": "k"])).ok)
+
+            let u = try await admin(d, p, "device.flow", ["action": "on", "paddock": "k"])
+            #expect(u.ok && field(u, "enabled") == .bool(true), "\(u)")
+            #expect(FileManager.default.fileExists(atPath: flag))
+            #expect(field(try await call(p, a, "device.flow"), "enabled") == .bool(true))
+            #expect(field(try await call(p, a, "device.flow", ["action": "off"]), "enabled") == .bool(false))
+            #expect(!FileManager.default.fileExists(atPath: flag))
+            #expect(!(try await admin(d, p, "device.flow", ["action": "nuke", "paddock": "k"])).ok)
+        }
+    }
+
     @Test func liteCreateIsAdminOnly() async throws {
         let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
         try await fx.daemon { d, p in

@@ -52,6 +52,32 @@ extension CommandRouter {
         return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd)
     }
 
+    /// `device.flow on|off|status` (d4): a terminal acts on its own paddock, the user names one with --paddock. Only the
+    /// user turns the log on (opt-in); off and status are open to the paddock's terminals.
+    func deviceFlowCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
+        let caller = try await principal(r, peer: peer)   // nil = admin
+        let action = str(r, "action") ?? "status"
+        guard ["on", "off", "status"].contains(action) else {
+            throw ProtocolError(code: .invalidArgs, message: "device flow \(action): use on, off or status")
+        }
+        let paddock: Paddock
+        if let me = caller {
+            guard action != "on" else { throw ProtocolError(code: .unauthorized, message: "only the user turns the action log on (collie device flow on --paddock <name>, outside a terminal)") }
+            guard r.args["paddock"] == nil else { throw ProtocolError(code: .unauthorized, message: "--paddock is the user's: a terminal acts on its own paddock") }
+            guard let pid = me.paddockId, let p = ws.paddocks.first(where: { $0.id == pid }) else {
+                throw ProtocolError(code: .invalidArgs, message: "the action log lives in a paddock; '\(me.name)' is on the pasture")
+            }
+            paddock = p
+        } else {
+            paddock = try findPaddock(try need(r, "paddock"))
+        }
+        let log = FlowActionLog(paddock: URL(fileURLWithPath: paddock.path))
+        if action != "status" { try log.setEnabled(action == "on") }
+        guard case .object(var o) = log.status() else { return log.status() }
+        o["paddock"] = .string(paddock.name)
+        return .object(o)
+    }
+
     /// Hands the device panels to the watchers: after a device panel opens or closes, and once at daemon start.
     func watchDevices() async { await devices.watch(panels: ws.panels) }
 }

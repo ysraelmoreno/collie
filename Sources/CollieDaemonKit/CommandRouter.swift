@@ -480,6 +480,9 @@ actor CommandRouter {
             if req.command.hasPrefix("app.") {   // list/attach: admin or terminal; approve: admin only
                 return Response(id: req.id, ok: true, result: try await appCommand(req, peer: peer))
             }
+            if req.command == "device.flow" {   // on: the user only; off/status: a terminal of the paddock too
+                return Response(id: req.id, ok: true, result: try await deviceFlowCommand(req, peer: peer))
+            }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let http = plugin.source == .builtIn ? nil : try await appHTTPCommand(req, plugin: plugin, peer: peer)
                 let result = if let http { http }

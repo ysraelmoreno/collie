@@ -104,12 +104,12 @@ extension DeviceCommandTests {
                 let mine = try await agent("device.run", ["plan": .string(planFile.path)])
                 #expect(mine.ok && mine.result == .object(["ok": .bool(false), "refused": .string("destructive"), "at": .number(2), "done": .number(1)]), "\(mine)")
                 let afterAgent = try String(contentsOf: log, encoding: .utf8)
-                #expect(afterAgent.contains("keyevent 61") && !afterAgent.contains("keyevent 66"), "\(afterAgent)")   // Tab ran, Enter did not
+                #expect(afterAgent.contains("keyevent\t61") && !afterAgent.contains("keyevent\t66"), "\(afterAgent)")   // Tab ran, Enter did not
 
                 let user = try await send(Request(id: "x", token: d.adminToken, command: "device.run",
                     args: ["plan": .string(planFile.path), "confirm-destructive": .bool(true)]))
                 #expect(user.ok && user.result == .object(["ok": .bool(true), "steps": .number(2)]), "\(user)")
-                #expect(try String(contentsOf: log, encoding: .utf8).contains("keyevent 66"))
+                #expect(try String(contentsOf: log, encoding: .utf8).contains("keyevent\t66"))
             }
         }
     }

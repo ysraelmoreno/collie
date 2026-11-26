@@ -39,6 +39,8 @@ struct FlowActionLog: Sendable {
     var readCap: Int { 2 * maxBytes }
     var keep = 3
     var maxAge: TimeInterval = 30 * 86_400
+    /// Where a failed rotation is reported: one line per failed rotation (wd2), stderr by default.
+    var warn: @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
 
     init(paddock: URL, flag: URL) { dir = paddock.appendingPathComponent(".collie/flows"); self.flag = flag }
 
@@ -78,11 +80,14 @@ struct FlowActionLog: Sendable {
         var fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
         if size(fd) >= maxBytes {
             close(fd)
-            // c2: a failed rotation (a folder at the tmp, ENOSPC) never costs the line: stderr, then write anyway
+            // c2: a failed rotation (a folder at the tmp, ENOSPC) never costs the line: warn, then write anyway.
+            // wd2: if the current file is still past the cap (it could not move), it is truncated, so it never grows
+            // without bound and the next rotation (and its warning) waits until it fills again, not the next action.
             do { try rotate(d, now: now) } catch {
-                FileHandle.standardError.write(Data("collied: flows: rotation of \(dir.path) failed: \(error)\n".utf8))
+                warn("collied: flows: rotation of \(dir.path) failed: \(error)")
             }
             fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
+            if size(fd) >= maxBytes { ftruncate(fd, 0) }
         }
         defer { close(fd) }
         try write(fd, data)
@@ -94,13 +99,13 @@ struct FlowActionLog: Sendable {
     func rotate(now: Date) throws { let d = try openDir(); defer { close(d) }; try rotate(d, now: now) }
 
     private func rotate(_ d: Int32, now: Date) throws {
-        unlinkat(d, name(keep - 1), 0)
+        drop(d, name(keep - 1))
         for n in stride(from: keep - 2, through: 0, by: -1) where renameat(d, name(n), d, name(n + 1)) != 0 && errno != ENOENT {
             throw fail("renameat \(name(n))")
         }
         let cutoff = now.addingTimeInterval(-maxAge)
         for n in 1..<keep {
-            guard let fd = try? openFile(d, name(n), O_RDONLY) else { unlinkat(d, name(n), 0); continue }
+            guard let fd = try? openFile(d, name(n), O_RDONLY) else { drop(d, name(n)); continue }
             if size(fd) > readCap { close(fd); continue }
             let raw = read(fd, max: readCap); close(fd)
             if raw.count > readCap { continue }   // grew after fstat
@@ -118,10 +123,23 @@ struct FlowActionLog: Sendable {
         }
     }
 
-    /// `device flow status`: {enabled, path, bytes}.
-    func status() -> JSONValue {
+    /// wd2: a file, or an empty folder (`AT_REMOVEDIR`), at `name`; a non-empty folder stays and the rotation fails.
+    private func drop(_ d: Int32, _ name: String) {
+        if unlinkat(d, name, 0) != 0 { unlinkat(d, name, AT_REMOVEDIR) }
+    }
+
+    /// The opt-in of the old format, in the worktree (`<paddock>/.collie/flows/enabled`); no longer read (b2).
+    var legacyFlag: URL { dir.appendingPathComponent("enabled") }
+
+    /// `device flow status`: {enabled, path, bytes}, plus `warning` when the paddock still has the old opt-in (wd2).
+    func status(paddock: String? = nil) -> JSONValue {
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int ?? 0
-        return .object(["enabled": .bool(enabled), "path": .string(file.path), "bytes": .number(Double(size))])
+        var o: [String: JSONValue] = ["enabled": .bool(enabled), "path": .string(file.path), "bytes": .number(Double(size))]
+        if !enabled, FileManager.default.fileExists(atPath: legacyFlag.path) {
+            o["warning"] = .string("the action log's opt-in moved out of the worktree (\(legacyFlag.path) is no longer read) and the log is off; "
+                + "turn it on with: collie device flow on --paddock \(paddock ?? "<paddock>")")
+        }
+        return .object(o)
     }
 
     /// `flows/`, created 0700 when missing; a symlink (or anything but a folder) there is refused.

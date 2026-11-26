@@ -121,7 +121,7 @@ extension CommandRouter {
         }
         let log = FlowActionLog(paddock: URL(fileURLWithPath: paddock.path), flag: flowFlag(paddock.id))
         if action != "status" { try log.setEnabled(action == "on") }
-        guard case .object(var o) = log.status() else { return log.status() }
+        guard case .object(var o) = log.status(paddock: paddock.name) else { return log.status() }
         o["paddock"] = .string(paddock.name)
         return .object(o)
     }

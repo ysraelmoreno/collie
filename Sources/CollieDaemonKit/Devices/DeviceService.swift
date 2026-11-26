@@ -34,6 +34,10 @@ actor DeviceService {
     /// b1/c3: the generation the panel's `refs` were proven at: a read whose generation did not move while it was in
     /// flight. The typed text of a `device.text` is written in clear only while it is still the current one (`flowFresh`).
     var flowFreshAt: [UUID: Int] = [:]
+    /// wd2: when the read behind `flowFreshAt` ended. A touch outside the viewer (Simulator.app, a physical device, an
+    /// external scrcpy) moves no generation, so the text is in clear only while that read is also `flowReadMaxAge` young.
+    var flowReadAt: [UUID: ContinuousClock.Instant] = [:]
+    static let flowReadMaxAge: Duration = .seconds(2)
     /// b4/c3: the generation the panel's last `device.screen` started at; once the generation moved past it (an action,
     /// a viewer touch down) its `flowSig` is "" ("tela gasta"), not the old read's signature again.
     var screenAt: [UUID: Int] = [:]
@@ -146,6 +150,7 @@ actor DeviceService {
     /// c3: the density for `device screen`, never waited for: the known value, else nil, and one read started in the
     /// background unless one is in flight or the last one failed less than `densityBackoff` ago (then no Task at all).
     /// Any failure backs off, a timeout and a fast adb error alike.
+    /// wd2: so the first Android read of a serial (`device screen`) comes out without density; later ones carry it.
     func densityKnown(_ serial: String) -> Double? {
         if let d = densities[serial] { return d }
         if let t = densityFailed[serial], now() - t < Self.densityBackoff { return nil }
@@ -228,7 +233,8 @@ actor DeviceService {
         // c3: the generation is taken before the action; the text is in clear only when the read was fresh at it and
         // nothing but the action's own bump moved it until the action ended (a viewer touch meanwhile masks)
         let gen = flowGen.value(panel.id)
-        let secure = Self.flowSecure(nodes, fresh: flowFreshAt[panel.id] == gen)
+        let recent = flowReadAt[panel.id].map { now() - $0 <= Self.flowReadMaxAge } ?? false
+        let secure = Self.flowSecure(nodes, fresh: flowFreshAt[panel.id] == gen && recent)
         let r = try await tracked(command, panel: panel, args: args, cwd: cwd)
         record(FlowAction(origin: flow.origin, action: action, target: Self.flowTarget(command, args, nodes),
                           text: command == "device.text" ? { if case .string(let t)? = args["text"] { t } else { nil } }() : nil,
@@ -246,7 +252,9 @@ actor DeviceService {
         if Self.flowActions[command] != nil { flowGen.bump(id) }
         let gen = flowGen.value(id)
         let r = if let f = performSeam { try await f(command, panel, args) } else { try await perform(command, panel: panel, args: args, cwd: cwd) }
-        if !closed.contains(id), flowGen.value(id) == gen, Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty { flowFreshAt[id] = gen }
+        if !closed.contains(id), flowGen.value(id) == gen, Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty {
+            flowFreshAt[id] = gen; flowReadAt[id] = now()
+        }
         return r
     }
 

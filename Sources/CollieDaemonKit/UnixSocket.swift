@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Darwin
 import Dispatch
 import CollieCore
@@ -360,10 +361,9 @@ public final class UnixSocketServer: @unchecked Sendable {
 
 /// c2: set when the client of a `flagsOnHangup` request hangs up (`UnixSocket`); its handler reads `current` and stops
 /// at a point of its own choosing instead of being cancelled mid-write.
-final class ClientHangup: @unchecked Sendable {   // `gone` under `lock`
+final class ClientHangup: Sendable {
     @TaskLocal static var current: ClientHangup?
-    private let lock = NSLock()
-    private var gone = false
-    var isSet: Bool { lock.withLock { gone } }
-    func set() { lock.withLock { gone = true } }
+    private let gone = OSAllocatedUnfairLock(initialState: false)
+    var isSet: Bool { gone.withLock { $0 } }
+    func set() { gone.withLock { $0 = true } }
 }

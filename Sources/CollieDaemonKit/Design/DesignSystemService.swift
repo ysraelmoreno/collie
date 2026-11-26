@@ -53,7 +53,7 @@ actor DesignSystemService {
         }
         // no await from the check to the insert
         if try await registry().contains(where: { $0.name.lowercased() == lower }) || busy.contains(lower) {
-            throw ProtocolError(code: .invalidArgs, message: "a design system named '\(name)' already exists")
+            throw ProtocolError(code: .invalidArgs, message: "a design system named '\(name)' \(ErrorTag.alreadyExists)")
         }
         busy.insert(lower); defer { busy.remove(lower) }
         let f: DesignService.File, version: Int, copied: Bool
@@ -61,7 +61,7 @@ actor DesignSystemService {
             let st = store
             guard let mark = try await UnixSocketClient.offPool({ st.pending() })[lower], mark.fileId == existing.id else {
                 throw ProtocolError(code: .invalidArgs,
-                                    message: "a design file named '\(name)' already exists (not a design system); pick another name")
+                                    message: "a design file named '\(name)' \(ErrorTag.alreadyExists) (not a design system); pick another name")
             }
             f = existing; copied = mark.copied
         } else {

@@ -449,7 +449,7 @@ extension CommandRouter {
             warnings.append(tr("fonte \(f) não baixada: collie font add \"\(f)\"", "font \(f) not downloaded: collie font add \"\(f)\""))
         }
         let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs, fonts: fonts)
-        try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
+        try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: tr("página", "page"), exclusive: true) }
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }
         let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas,
@@ -530,7 +530,7 @@ extension CommandRouter {
                     let s = try await design.currentStamp(fileId: fid, node: a.node, page: a.page, deadline: min(.now + .seconds(10), deadline))
                     out[a.id] = s == a.stamp ? "current" : "stale"
                 } catch {
-                    out[a.id] = (error as? ProtocolError).map { $0.message.contains("no such layer") || $0.message.hasPrefix("no such page") } == true ? "missing" : "unknown"
+                    out[a.id] = (error as? ProtocolError).map { $0.message.contains("no such layer") || $0.message.hasPrefix(ErrorTag.noSuchPage) } == true ? "missing" : "unknown"
                 }
             }
         }

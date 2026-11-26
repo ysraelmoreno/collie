@@ -6,6 +6,8 @@ import CollieProtocol
 /// dot-path (`.env`, `.git/`, `.collie/`). Pages are agent-written: untrusted. Reads go through `DiagramFile.readData`
 /// (no-follow from the root, regular file, ≤ 8 MiB).
 public enum PreviewFile {
+    /// Starts the "outside the project" refusal: fixed and untranslated, the app matches it (`OpenPanelTarget.failureText`).
+    public static let outsidePrefix = "outside-project:"
     static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
 
     /// `requested` (relative to `projectRoot`, or absolute); symlinks resolved, inside the project, `.html`/`.htm`, ≤ 8 MiB.
@@ -18,7 +20,7 @@ public enum PreviewFile {
             throw bad(tr("a página precisa ser um arquivo .html: \(path)", "the page must be an .html file: \(path)"))
         }
         guard url.pathComponents.count > root.pathComponents.count, url.pathComponents.starts(with: root.pathComponents) else {
-            throw bad(tr("a página precisa ficar dentro do projeto \(root.path): \(path)", "the page must be inside the project \(root.path): \(path)"))
+            throw bad(outsidePrefix + " " + tr("a página precisa ficar dentro do projeto \(root.path): \(path)", "the page must be inside the project \(root.path): \(path)"))
         }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > DiagramFile.maxBytes {
             throw bad(tr("página grande demais (máximo \(DiagramFile.maxBytes >> 20) MiB): \(path)", "page too large (max \(DiagramFile.maxBytes >> 20) MiB): \(path)"))

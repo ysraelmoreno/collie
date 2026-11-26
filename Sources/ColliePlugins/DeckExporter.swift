@@ -48,7 +48,7 @@ import WebKit
             }
             let pages = try await slidePDFs(url: url, artifactsRoot: artifactsRoot, width: width, timeout: timeout, end: end)
             return try await BrowserAutomation.offMain { write(pages, to: out) }.get()
-        } catch where error.message.hasSuffix("no slides") {
+        } catch where error.message.hasSuffix(ErrorTag.noSlides) {
             throw ProtocolError(code: .invalidArgs, message: "page has no slides")
         }
     }
@@ -68,7 +68,7 @@ import WebKit
                         box = try await web.callAsyncJavaScript(HTMLSnapshotScript.isolateSlide(i), contentWorld: .defaultClient) as? [String: Any] ?? [:]
                     } catch { throw ProtocolError(code: .internal, message: "deck.pdf: slide \(i + 1): \(error.localizedDescription)") }
                     count = (box["count"] as? NSNumber)?.intValue ?? 0
-                    guard count > 0 else { throw ProtocolError(code: .invalidArgs, message: "no slides") }
+                    guard count > 0 else { throw ProtocolError(code: .invalidArgs, message: ErrorTag.noSlides) }
                     let n = { (k: String) in CGFloat((box[k] as? NSNumber)?.doubleValue ?? 0) }
                     let pdf = WKPDFConfiguration()
                     pdf.rect = CGRect(x: n("x"), y: n("y"), width: max(1, n("w")), height: max(1, n("h")))

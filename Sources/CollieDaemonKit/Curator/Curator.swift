@@ -347,7 +347,7 @@ actor Curator {
             case .unavailable(let why, _): reason = why
             case .exhausted(_, let until):
                 let f = DateFormatter(); f.dateFormat = "HH:mm"
-                reason = tr("cota do \(provider.rawValue) esgotada até ", "\(provider.rawValue) quota exhausted until ") + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
+                reason = tr("cota do \(provider.rawValue) esgotada até ", "quota for \(provider.rawValue) exhausted until ") + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
             }
         }
         rollDay()

@@ -46,7 +46,7 @@ extension CommandRouter {
             while true {
                 let name = Self.importName(a.title, taken: Set(try await design.list().map(\.name)))
                 do { f = try await design.create(name, paddock: paddock, deadline: deadline); break }
-                catch let e as ProtocolError where e.message.hasSuffix("already exists") {   // taken meanwhile: the next one
+                catch let e as ProtocolError where e.message.hasSuffix(ErrorTag.alreadyExists) {   // taken meanwhile: the next one
                     _ = try DesignService.left(deadline)
                     try await Task.sleep(for: .milliseconds(100))
                 }

@@ -15,7 +15,7 @@ public enum ArgvParser {
                 name += ".\(sub)"; rest.removeFirst()
             }
         }
-        guard let spec = Commands.spec(name) else { throw bad("unknown command: \(name)") }
+        guard let spec = Commands.spec(name) else { throw bad("\(ErrorTag.unknownCommand): \(name)") }
 
         var args: [String: JSONValue] = [:]
         var words: [String] = []

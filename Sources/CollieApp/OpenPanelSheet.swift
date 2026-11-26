@@ -30,7 +30,7 @@ struct OpenPanelTarget: Equatable {
         // fixed prefix from the daemon (`PanelCommands.previewUsagePrefix`), whatever the language
         if e.message.hasPrefix("preview:") { return tr("Escolha um artifact ou um arquivo HTML para abrir a Prévia.", "Pick an artifact or an HTML file to open the Preview.") }
         // M6.5 (A9): `PreviewFile.resolve`'s refusal, in a fixed text (the daemon's message carries paths)
-        if e.message.hasPrefix("a página precisa ficar dentro do projeto") { return tr("A página precisa ficar dentro do projeto.", "The page must be inside the project.") }
+        if e.message.hasPrefix(PreviewFile.outsidePrefix) { return tr("A página precisa ficar dentro do projeto.", "The page must be inside the project.") }
         switch e.code {
         case .notFound: return tr("Não encontrei o artifact ou o arquivo escolhido.", "Couldn't find the chosen artifact or file.")
         case .unauthorized: return tr("O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso.", "Collie can't access that file. Use a file from the project or approve access.")

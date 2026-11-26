@@ -809,10 +809,10 @@ actor CommandRouter {
     /// Terminals and panels share one namespace: a panel's name is refused too.
     func reserve(_ name: String) throws(ProtocolError) {
         if let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            throw ProtocolError(code: .invalidArgs, message: "'\(name)' is the name of panel '\(p.name)'")
+            throw ProtocolError(code: .invalidArgs, message: "'\(name)' \(ErrorTag.isNameOfPanel) '\(p.name)'")
         }
         guard launching.insert(name.lowercased()).inserted else {
-            throw ProtocolError(code: .invalidArgs, message: "terminal '\(name)' is already being launched")
+            throw ProtocolError(code: .invalidArgs, message: "terminal '\(name)' is \(ErrorTag.alreadyLaunching)")
         }
     }
 

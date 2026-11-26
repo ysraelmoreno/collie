@@ -105,7 +105,7 @@ actor UpdateChecker {
             available = m.offer(installed: installed, system: system, skipped: skipped) ? m : nil
             if job?.phase == "failed", available?.sha256 != nil, !refused().contains(m.sha256) { job = nil }   // a new try
             lastError = nil
-        } catch let e as ProtocolError where e.message.contains("answered 404") {
+        } catch let e as ProtocolError where e.message.contains(ErrorTag.answered404) {
             available = nil; lastError = nil   // no update.json (older releases): nothing new
         } catch {
             lastError = (error as? ProtocolError)?.message ?? error.localizedDescription
@@ -203,7 +203,7 @@ actor UpdateChecker {
             return
         }
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
-        guard let size else { throw ProtocolError(code: .unavailable, message: "download answered 404 from \(url.path)") }
+        guard let size else { throw ProtocolError(code: .unavailable, message: "download \(ErrorTag.answered404) from \(url.path)") }
         if let limit, size > limit { throw ProtocolError(code: .unavailable, message: AndroidDownload.tooLarge) }
         try? FileManager.default.removeItem(at: to)
         try FileManager.default.copyItem(at: url, to: to)

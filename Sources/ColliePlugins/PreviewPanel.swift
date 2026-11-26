@@ -19,7 +19,7 @@ import WebKit
     nonisolated static func serve(_ r: URLRequest, root: URL) -> (Int, String, Data) {
         guard (r.httpMethod ?? "GET") == "GET", let url = r.url, url.host == "app",
               let file = PreviewFile.servable(url.path(percentEncoded: true), projectRoot: root),
-              let data = (try? DiagramFile.readData(file, root: root, noun: "página")) ?? nil else { return (404, "text/plain", Data()) }
+              let data = (try? DiagramFile.readData(file, root: root, noun: tr("página", "page"))) ?? nil else { return (404, "text/plain", Data()) }
         return (200, PreviewFile.contentType(file.pathExtension), data)
     }
 
@@ -208,7 +208,7 @@ import WebKit
         watcher = FileWatch(file: url, root: root) { [weak self] in self?.fileChanged() }
         guard let path = rel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
               let page = URL(string: "\(PreviewSchemeHandler.scheme)://app/\(path)") else { return fail(tr("Caminho inválido: \(rel)", "Invalid path: \(rel)")) }
-        if (try? DiagramFile.readData(url, root: root, noun: "página")) ?? nil == nil { header.status = tr("Arquivo removido", "File removed") }
+        if (try? DiagramFile.readData(url, root: root, noun: tr("página", "page"))) ?? nil == nil { header.status = tr("Arquivo removido", "File removed") }
         open(page)
     }
 
@@ -358,7 +358,7 @@ import WebKit
     func fileChanged() {
         guard let file, let root = projectRoot else { return }
         do throws(ProtocolError) {
-            guard try DiagramFile.readData(file, root: root, noun: "página") != nil else { header.status = tr("Arquivo removido", "File removed"); return }
+            guard try DiagramFile.readData(file, root: root, noun: tr("página", "page")) != nil else { header.status = tr("Arquivo removido", "File removed"); return }
         } catch { header.status = error.message; return }
         header.status = nil
         saved = nil
@@ -375,7 +375,7 @@ import WebKit
         let moved = ProtocolError(code: .invalidArgs, message: tr("a pasta da página mudou (link simbólico?): reabra a prévia", "the page's folder changed (symlink?): reopen the preview"))
         guard try PreviewFile.resolve(string("file") ?? "", projectRoot: root) == file,
               DiagramFile.real(file.deletingLastPathComponent()) == file.deletingLastPathComponent() else { throw moved }
-        guard let data = try DiagramFile.readData(file, root: root, noun: "página") else { throw ProtocolError(code: .notFound, message: tr("Arquivo removido", "File removed")) }
+        guard let data = try DiagramFile.readData(file, root: root, noun: tr("página", "page")) else { throw ProtocolError(code: .notFound, message: tr("Arquivo removido", "File removed")) }
         var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent), "nofollow": .bool(true)]
         if let f = string("folder") { args["folder"] = .string(f) }   // `artifact new --folder`
         if let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {

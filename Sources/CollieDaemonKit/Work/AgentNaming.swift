@@ -65,7 +65,7 @@ enum AgentNaming {
     // ponytail: told by the summon's own text (`ShepherdCommands`, `CommandRouter.reserve`); a code of its own if it moves
     static func refusedAsTaken(_ e: ProtocolError, _ name: String) -> Bool {
         e.code == .invalidArgs && e.message.lowercased().contains("'\(name)'")
-            && ["already exists", "is the name of panel", "already being launched"].contains { e.message.contains($0) }
+            && [ErrorTag.alreadyExists, ErrorTag.isNameOfPanel, ErrorTag.alreadyLaunching].contains { e.message.contains($0) }
     }
 
     /// M11.3: the `.build/<dir>` a terminal in a shared folder is told to build in (`--scratch-path`). An attempt's

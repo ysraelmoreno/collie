@@ -54,7 +54,7 @@ import CollieProtocol
 
     /// M6.5 (A9): a page outside the project says so, in a fixed text (never the daemon's path).
     @Test func aPageOutsideTheProjectSaysSo() {
-        let raw = ProtocolError(code: .invalidArgs, message: "a página precisa ficar dentro do projeto /Users/x/p: /tmp/a.html")
+        let raw = ProtocolError(code: .invalidArgs, message: "outside-project: a página precisa ficar dentro do projeto /Users/x/p: /tmp/a.html")
         #expect(OpenPanelTarget.failureText(raw) == "A página precisa ficar dentro do projeto.")
         #expect(OpenPanelTarget.failureText(ProtocolError(code: .invalidArgs, message: "other")) == "Não foi possível abrir o painel com essas opções.")
     }

@@ -149,7 +149,7 @@ struct AndroidPreferences: View {
         case .ocupado(let message):
             banner(Color.collieAttention) {
                 Text(tr("Feche o Android Studio ou espere o outro sdkmanager terminar.", "Close Android Studio or wait for the other sdkmanager to finish.")).font(.collieUI(13)).foregroundStyle(Color.collieText)
-                Text(message.hasPrefix("busy: ") ? String(message.dropFirst(6)) : message).font(.collieMono(12)).foregroundStyle(Color.collieMuted).textSelection(.enabled)
+                Text(message.hasPrefix(ErrorTag.busy + " ") ? String(message.dropFirst(ErrorTag.busy.count + 1)) : message).font(.collieMono(12)).foregroundStyle(Color.collieMuted).textSelection(.enabled)
                 Button(button) { busyMessage = nil; install() }.buttonStyle(CollieButtonStyle(.primary)).disabled(!enabled)
             }
         case .pronto:
@@ -270,7 +270,7 @@ struct AndroidPreferences: View {
         Task {
             do { _ = try await client.adminCall(command, args, timeout: timeout) } catch {
                 let m = (error as? ProtocolError)?.message ?? "\(error)"
-                if command == "android.install", m.hasPrefix("busy:") { busyMessage = m } else { self.error = m }
+                if command == "android.install", m.hasPrefix(ErrorTag.busy) { busyMessage = m } else { self.error = m }
             }
             working = false
             await load()

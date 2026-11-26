@@ -112,7 +112,7 @@ actor DesignService {
             try Self.validate(name)
             let lower = name.lowercased()
             if try registry().contains(where: { $0.name.lowercased() == lower }) || naming.contains(lower) {
-                throw ProtocolError(code: .invalidArgs, message: "a design file named '\(name)' already exists")
+                throw ProtocolError(code: .invalidArgs, message: "a design file named '\(name)' \(ErrorTag.alreadyExists)")
             }
             naming.insert(lower); defer { naming.remove(lower) }
             let deadline = deadline ?? self.deadline("design.new")
@@ -325,7 +325,7 @@ actor DesignService {
                               _ deadline: ContinuousClock.Instant) async throws(ProtocolError) -> ([JSONValue], String?) {
         if let node { return ([nodeId(node)], nil) }
         let top = topLayers(decoded(try await c.call("inspect_document", ["depth": .number(1)], timeout: try left(deadline))), page: page)
-        if let page, top == nil { throw ProtocolError(code: .notFound, message: "no such page \(page)") }
+        if let page, top == nil { throw ProtocolError(code: .notFound, message: "\(ErrorTag.noSuchPage) \(page)") }
         guard let top, !top.ids.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "the page is empty: nothing to export") }
         return (top.ids, top.page)
     }

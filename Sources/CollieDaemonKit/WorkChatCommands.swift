@@ -252,7 +252,7 @@ extension CommandRouter {
         guard let p = e as? ProtocolError else { return tr("erro interno", "internal error") }
         switch p.code {
         case .timeout:
-            return p.message.contains("not delivered") || p.message.contains("not accepting input")
+            return p.message.contains(ErrorTag.promptNotDelivered) || p.message.contains(ErrorTag.notAcceptingInput)
                 ? tr("a mensagem não foi entregue", "the message was not delivered") : tr("sem resposta em 30 min", "no answer in 30 min")
         case .notRunning: return tr("o terminal parou", "the terminal stopped")
         default: return tr("erro interno", "internal error")

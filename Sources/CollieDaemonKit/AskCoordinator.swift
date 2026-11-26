@@ -641,7 +641,7 @@ public actor AskCoordinator {
                     Thread.sleep(forTimeInterval: PromptInjector.submitDelay)
                     try process.write(PromptInjector.submit, origin: .collie)
                     c.resume(returning: nil)
-                } catch { c.resume(returning: ProtocolError(code: .notRunning, message: "Terminal '\(name)' is not accepting input")) }
+                } catch { c.resume(returning: ProtocolError(code: .notRunning, message: "Terminal '\(name)' is \(ErrorTag.notAcceptingInput)")) }
             }
         }
         if let failed { releaseCapture(to, hold); throw failed }
@@ -652,7 +652,7 @@ public actor AskCoordinator {
         ProtocolError(code: .unavailable, message: "'\(name)' is in the middle of a turn; run again with --wait to switch once it ends")
     }
     static func dialogOpen(_ name: String) -> ProtocolError {
-        ProtocolError(code: .unavailable, message: "'\(name)' shows a dialog or approval; it must be answered first (collie check \(name) --screen)")
+        ProtocolError(code: .unavailable, message: "'\(name)' shows a dialog or \(ErrorTag.approval); it must be answered first (collie check \(name) --screen)")
     }
 
     /// Ends hold `hold` (a later one stays) and types the next queued ask.
@@ -707,8 +707,8 @@ public actor AskCoordinator {
     /// prompt" (the Enter never took); any other `.unavailable` (a terminal gone) is not.
     nonisolated static func promptNotDelivered(_ e: ProtocolError) -> Bool {
         switch e.code {
-        case .timeout: e.message.contains("prompt not delivered") || e.message.contains("not accepting input")
-        case .unavailable: e.message.contains("did not submit the prompt")
+        case .timeout: e.message.contains(ErrorTag.promptNotDelivered) || e.message.contains(ErrorTag.notAcceptingInput)
+        case .unavailable: e.message.contains(ErrorTag.didNotSubmit)
         default: false
         }
     }
@@ -722,12 +722,12 @@ public actor AskCoordinator {
         }
         let t = targets[w.to], name = name(w.to)
         let message = if let t, t.queue.contains(id), !t.ready {
-            t.process.lastOutputAt == nil ? "'\(name)' produced no output yet; prompt not delivered"
-                                          : "'\(name)' is not ready yet (no quiet period); prompt not delivered"
+            t.process.lastOutputAt == nil ? "'\(name)' produced no output yet; \(ErrorTag.promptNotDelivered)"
+                                          : "'\(name)' is not ready yet (no quiet period); \(ErrorTag.promptNotDelivered)"
         } else if let t, t.queue.contains(id), t.inflight != nil {
-            "'\(name)' is still busy with an earlier turn; prompt not delivered"
+            "'\(name)' is still busy with an earlier turn; \(ErrorTag.promptNotDelivered)"
         } else if let t, t.queue.contains(id), w.afterQuiet {
-            "'\(name)' is still working; prompt not delivered"
+            "'\(name)' is still working; \(ErrorTag.promptNotDelivered)"
         } else { "No reply from '\(name)' within \(timeout.components.seconds)s" }
         abandon(id, ProtocolError(code: .timeout, message: message))
     }
@@ -872,7 +872,7 @@ public actor AskCoordinator {
                 else { Task { await self?.delivered(id) } }
             } catch {
                 let e = (error as? PTYError) == .stalled
-                    ? ProtocolError(code: .timeout, message: "target '\(name)' is not accepting input")
+                    ? ProtocolError(code: .timeout, message: "target '\(name)' is \(ErrorTag.notAcceptingInput)")
                     : ProtocolError(code: .notRunning, message: "Terminal '\(name)' is not running")
                 Task { await self?.finish(id, .failure(e)) }
             }
@@ -888,7 +888,7 @@ public actor AskCoordinator {
     }
 
     static func awaitingApproval(_ name: String) -> ProtocolError {
-        ProtocolError(code: .unavailable, message: "'\(name)' is waiting for an approval; prompt not delivered")
+        ProtocolError(code: .unavailable, message: "'\(name)' is waiting for an \(ErrorTag.approval); \(ErrorTag.promptNotDelivered)")
     }
 
     /// Its write found output not scanned yet: back to the head of the queue, written after the scan (or refused).
@@ -1063,7 +1063,7 @@ public actor AskCoordinator {
             // Cursor: no footer is no proof (a fast turn ends before a poll sees it): idle/reply decide from here
             if t.cursorTUI { submitted(id, to); return }
             finish(id, .failure(ProtocolError(code: .unavailable, message:
-                "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
+                "'\(t.name)' \(ErrorTag.didNotSubmit); it may still be in its input. Check it with `collie check`")))
             return
         }
     }

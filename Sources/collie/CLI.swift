@@ -228,7 +228,7 @@ enum CLI {
     /// An unknown command may be an external plug-in's: one `plugin.specs` fetch, then the parse again.
     static func parse(_ argv: [String]) async throws(ProtocolError) -> (command: String, args: [String: JSONValue]) {
         do { return try ArgvParser.parse(argv) } catch {
-            guard error.message.hasPrefix("unknown command"), await Client.fetchPlugins() else { throw error }
+            guard error.message.hasPrefix(ErrorTag.unknownCommand), await Client.fetchPlugins() else { throw error }
             return try ArgvParser.parse(argv)
         }
     }

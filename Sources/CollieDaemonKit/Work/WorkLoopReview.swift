@@ -504,7 +504,7 @@ extension WorkLoop {
         static func of(_ e: ProtocolError, turn: Int) -> ReviewMuteCause {
             if AskCoordinator.promptNotDelivered(e) { return .promptNotDelivered }
             if e.code == .timeout { return .timedOut(turn) }
-            if e.code == .unavailable, e.message.contains("approval") { return .awaitingApproval }
+            if e.code == .unavailable, e.message.contains(ErrorTag.approval) { return .awaitingApproval }
             return .terminalGone
         }
     }

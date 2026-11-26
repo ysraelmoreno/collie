@@ -82,7 +82,7 @@ final class MitmProcess: Sendable {
                       ready: Duration = .seconds(20)) async throws(ProtocolError) -> MitmProcess {
         do { return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, rules: rules, port: port,
                                         upstreamCA: upstreamCA, ready: ready) }
-        catch where port == nil && error.code == .internal && error.message.hasPrefix("mitmdump exited") {
+        catch where port == nil && error.code == .internal && error.message.hasPrefix(ErrorTag.mitmExited) {
             return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, rules: rules, port: nil,
                                        upstreamCA: upstreamCA, ready: ready)
         }
@@ -106,7 +106,7 @@ final class MitmProcess: Sendable {
         while true {
             if let c = m.exited {
                 m.stop()   // its addon file
-                throw ProtocolError(code: .internal, message: "mitmdump exited (\(c)) before listening on 127.0.0.1:\(m.port)"
+                throw ProtocolError(code: .internal, message: "\(ErrorTag.mitmExited) (\(c)) before listening on 127.0.0.1:\(m.port)"
                                     + (m.lastNoise.map { ": \($0.prefix(300))" } ?? ""))
             }
             if FileManager.default.fileExists(atPath: m.caCert.path), listening(port: m.port) { return m }

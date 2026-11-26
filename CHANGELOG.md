@@ -4,7 +4,7 @@ All notable changes to Collie, by version. The format follows [Keep a Changelog]
 
 Names in quotes are labels of the app, which is in Portuguese.
 
-## [Unreleased]
+## [0.3.0] — 2026-11-26
 
 ### Added
 - **Fields (preview):** `collie summon --field <name>` gives an agent its own lane worktree inside a paddock; `collie field list|land|drop`. One integrator per paddock lands a field, and `ask --check` that passes lands its field. Fields are configured in `collie-work.json`, and the sandbox of a field is its own. A field that was not judged never lands, and nothing in a field is lost when it is dropped by mistake (review of F3 to F5).

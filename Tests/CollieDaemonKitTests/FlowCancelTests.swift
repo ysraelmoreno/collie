@@ -95,14 +95,14 @@ extension DeviceCommandTests {
         }
 
         @Test func aStepFailingAfterACrashCarriesTheErrors() async throws {
-            let plan = #"{"steps":[{"action":"tap","target":"Carrinho","expectSig":"s1"},{"action":"tap","target":"Pagar"}]}"#
+            let plan = #"{"steps":[{"action":"tap","target":"Carrinho","expectSig":"s1"},{"action":"tap","target":"Abrir"}]}"#
             let d = Device(screens: [["sig": .string("s1"), "errors": .array([.string("FATAL EXCEPTION: main (com.loja)")])]], fail: 2)
             do {
                 _ = try await runner(d).run(try FlowPlan.parse(Data(plan.utf8)))
                 Issue.record("the failing step should throw")
             } catch {
                 #expect(error.code == .notFound)
-                #expect(error.message.hasPrefix("step 2 (tap Pagar): no 'Pagar' on screen"))
+                #expect(error.message.hasPrefix("step 2 (tap Abrir): no 'Pagar' on screen"))
                 #expect(error.message.contains("FATAL EXCEPTION: main (com.loja)"))
             }
         }

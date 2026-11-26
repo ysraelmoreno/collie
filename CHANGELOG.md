@@ -4,6 +4,13 @@ All notable changes to Collie, by version. The format follows [Keep a Changelog]
 
 Names in quotes are labels of the app, which is in Portuguese.
 
+## [0.3.1] — 2026-11-26
+
+### Fixed
+- **Asks of a dismissed terminal say so:** the asks a terminal still owed when it was dismissed (`collie dismiss`, a replace or a kill) now fail with "Terminal '<name>' was dismissed before answering this ask: ask its replacement" instead of a bare "exited" (a crash still says "exited"). `collie dismiss` returns `failedAsks` with the ids it dropped, its sub-terminals' included, so the caller can ask the replacement. `collie ask result` lists your asks.
+- **`collie reply` with no ask waiting** now says what to use instead (`collie notify "<text>"`).
+- **Cursor Shepherd, delegation:** the brief tells it to hand the task over with `collie summon` (no `--preset`: the terminal is a Cursor like it) and then not to sleep or poll. A Cursor takes a message only when its turn ends, so a child's reply never reached a Shepherd that waited inside a command (measured: the reply came ~8 s after the ask, but was read only after a `sleep 120`). It ends its turn, or blocks with `collie wait <name>`.
+
 ## [0.3.0] — 2026-11-26
 
 ### Added

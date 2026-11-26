@@ -6,7 +6,15 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Added
+- **Fields (preview):** `collie summon --field <name>` gives an agent its own lane worktree inside a paddock; `collie field list|land|drop`. One integrator per paddock lands a field, and `ask --check` that passes lands its field. Fields are configured in `collie-work.json`, and the sandbox of a field is its own. A field that was not judged never lands, and nothing in a field is lost when it is dropped by mistake (review of F3 to F5).
+- **Plug-in marketplace, phase 1 (unused until a catalog is published):** a signed catalog (`plugins.json` + Ed25519 signature, sequence number, 30 days before it is stale), install and update of a plug-in from the catalog (SHA-256 of the package and of its tree checked), installed plug-ins keep their source, `.github/workflows/plugins-release.yml` publishes the packages and the catalog, and the app's "Descobrir" tab installs and updates from it. The catalog's public key is in the app (`PluginCatalog.publicKeys`); the private half is the `PLUGIN_CATALOG_KEY` secret. A catalog signed by another key is refused.
+- **`collie plugin validate <folder>`:** refuses what an install would refuse (`PluginStore.scan`, manifest, `apiVersion 1`) plus the curated catalog's rules (`permissions.network` empty, the helper a Mach-O signed as `dev.collie.plugin.<id>`). Exit 0 prints `ok` and the `TeamIdentifier`, exit 1 prints one reason per line. The files of the future `collie-plugins` repository (README, `check.yml`, `publish.yml`, the `publishers/` format) are in `docs/superpowers/roadmap/2026-11-24-marketplace/collie-plugins/`.
+
 ### Fixed
+- **The loop's gate sees a runner rewritten in an ignored folder:** before the first attempt the loop records `node_modules/.bin`, `.venv/bin` and `venv/bin` (name, size, date, link target, never the content); a gate or acceptance that runs a runner that changed or appeared since is refused as tampered, like a tracked file. A spec that cites `npm install`, `pip install` and the like lets installs through.
+- **"Cercado fábrica" says why it is disabled:** off a git repository the switch now shows "Precisa de um repositório git." beside it.
+- **Cursor Shepherd, delegation:** the brief also reaches the Cursor Shepherd in its `sessionStart` context (no shell or file reads for the task), next to the plugin rule below. Asking it to *delegate* works; "open a terminal and do X" can still make it do X itself.
 - **A Cursor Shepherd asked to open a terminal did the work itself:** the orientation teaches `collie summon` but, under its 1500-character cap, never said to hand the task over, so the agent opened the terminal and kept working in parallel. A Cursor Shepherd's plugin now carries an always-applied rule (`rules/collie-delegate.mdc`): after `collie summon`, give the terminal the task with `collie ask <name> "<task>" --no-wait`, wait for its reply, do not do the work or use your own subagents. A plain Cursor terminal gets no rule.
 
 ## [0.2.4] — 2026-11-25

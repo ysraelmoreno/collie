@@ -76,7 +76,7 @@ extension CommandRouter {
                 try await save(f)
             }
             guard case .object(var o) = try isoJSON(f) else { return .null }
-            if f.trustLoops == true { o["loops"] = .string("laços sem cartão: sim") }
+            if f.trustLoops == true { o["loops"] = .string(tr("laços sem cartão: sim", "loops without card: yes")) }
             return .object(o)
         case "paddock.land":
             guard let mode = LandMode(rawValue: str(r, "mode") ?? "merge") else {
@@ -142,7 +142,7 @@ extension CommandRouter {
     func createFolderPaddock(_ name: String, folder: URL, createdBy: UUID?, factory: Bool = false) async throws -> Paddock {
         if let me = ws.terminals.first(where: { $0.id == createdBy }), !startedOpen(me),
            !ProjectRoot.contains(folder.path, root: try await projectRoot(of: me)) {
-            throw ProtocolError(code: .invalidArgs, message: "a pasta \(folder.path) fica fora do seu projeto: o cercado seria mais largo que ele")
+            throw ProtocolError(code: .invalidArgs, message: tr("a pasta \(folder.path) fica fora do seu projeto: o cercado seria mais largo que ele", "folder \(folder.path) is outside your project: the paddock would be wider than it"))
         }
         var f = try PaddockManager.createFolder(name: name, folder: folder, createdBy: createdBy)
         f.factory = factory
@@ -162,21 +162,21 @@ extension CommandRouter {
     }
 
     /// C6 (S8): `paddock create --factory` by an agent: what it asked is to create, not to switch on or off.
-    static let factoryCreateOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono pode criar como fábrica (o app ou a CLI do dono), nunca um agente")
-    static let factoryOwnerOnly = ProtocolError(code: .unauthorized, message: "cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente")
-    static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "cercado fábrica não ligado: \(why)") }
+    static var factoryCreateOwnerOnly: ProtocolError { ProtocolError(code: .unauthorized, message: tr("cercado fábrica: só o dono pode criar como fábrica (o app ou a CLI do dono), nunca um agente", "factory paddock: only the owner can create it as a factory (the app or the owner's CLI), never an agent")) }
+    static var factoryOwnerOnly: ProtocolError { ProtocolError(code: .unauthorized, message: tr("cercado fábrica: só o dono liga ou desliga (o app ou a CLI do dono), nunca um agente", "factory paddock: only the owner can turn it on or off (the app or the owner's CLI), never an agent")) }
+    static func factoryRefused(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: tr("cercado fábrica não ligado: \(why)", "factory paddock not enabled: \(why)")) }
 
     /// B1: why the worktree's `collie-work.json` is not HEAD's, in one line; nil: it is (or git says so).
     /// C1 (B1-b): an ignored file is no change to `git status`, yet HEAD may lack it or hold another: refused.
     static func factoryDirty(_ dir: URL) async -> String? {
         let name = ProjectWorkConfig.fileName
         if let ig = try? await GitRunner.run(["check-ignore", "-q", "--", name], in: dir, timeout: .seconds(30)), ig.status == 0 {
-            return "o perfil está no .gitignore: o motor lê o commit base, não a árvore"
+            return tr("o perfil está no .gitignore: o motor lê o commit base, não a árvore", "the profile is in .gitignore: the engine reads the base commit, not the tree")
         }
         guard let st = try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", name], in: dir, timeout: .seconds(30)),
-              st.status == 0 else { return "\(name) não pôde ser comparado com o commit HEAD (git status falhou)" }
+              st.status == 0 else { return tr("\(name) não pôde ser comparado com o commit HEAD (git status falhou)", "\(name) could not be compared with the HEAD commit (git status failed)") }
         return st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil
-            : "\(name) difere do commit HEAD (o que o laço lê); próxima ação: commite ou descarte a mudança e ligue de novo"
+            : tr("\(name) difere do commit HEAD (o que o laço lê); próxima ação: commite ou descarte a mudança e ligue de novo", "\(name) differs from the HEAD commit (what the loop reads); next: commit or discard the change and turn it on again")
     }
 
     /// A2: marks (or unmarks) the paddock cercado fábrica, saved and told to the app.
@@ -230,7 +230,7 @@ extension CommandRouter {
 
     /// C2: the save after a land; the tests' seam (`landSaveFails`) fails it, as a full disk would.
     private func saveAfterLand(_ f: Paddock) async throws {
-        if landSaveFails { throw ProtocolError(code: .internal, message: "a gravação do cercado falhou (teste)") }
+        if landSaveFails { throw ProtocolError(code: .internal, message: tr("a gravação do cercado falhou (teste)", "saving the paddock failed (test)")) }
         try await save(f)
     }
 
@@ -261,7 +261,7 @@ extension CommandRouter {
 public enum PaddockText {
     public static func line(_ o: [String: JSONValue]) -> String {
         func str(_ k: String) -> String { if case .string(let s)? = o[k] { s } else { "" } }
-        var l = str("name") + (o["factory"] == .bool(true) ? " (fábrica)" : "") + "\t" + str("status")
+        var l = str("name") + (o["factory"] == .bool(true) ? tr(" (fábrica)", " (factory)") : "") + "\t" + str("status")
         if case .string(let b)? = o["branch"], !b.isEmpty { l += "\t" + b }
         if case .string(let x)? = o["path"], !x.isEmpty { l += "\t" + x }   // B1: docs/referencia.md promises the paths
         if case .string(let x)? = o["loops"] { l += "\t" + x }

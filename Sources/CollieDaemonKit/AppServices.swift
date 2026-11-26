@@ -142,7 +142,7 @@ actor AppService {
         switch phase {
         case .running: return
         case .failed(let why): throw ProtocolError(code: .unavailable, message: "\(title): \(why) (collie app logs \(app))")
-        default: throw ProtocolError(code: .unavailable, message: "\(title) ainda está iniciando (health em \(origin)\(health ?? "/"))")
+        default: throw ProtocolError(code: .unavailable, message: tr("\(title) ainda está iniciando (health em \(origin)\(health ?? "/"))", "\(title) is still starting (health at \(origin)\(health ?? "/"))"))
         }
     }
 
@@ -173,8 +173,8 @@ actor AppService {
                                    onExit: { [weak self] code in Task { await self?.exited(g, code) } })
         } catch {
             let why = (error as? ProtocolError)?.message ?? error.localizedDescription
-            log.append("[collie] não iniciou: \(why)")
-            return await set(.failed("não iniciou: \(why)"))
+            log.append(tr("[collie] não iniciou: \(why)", "[collie] did not start: \(why)"))
+            return await set(.failed(tr("não iniciou: \(why)", "did not start: \(why)")))
         }
         Task { await probe(g) }
     }
@@ -192,18 +192,18 @@ actor AppService {
             try? await Task.sleep(for: .milliseconds(250))
         }
         guard g == gen, phase == .starting else { return }
-        log.append("[collie] o health não respondeu em \(Int(PluginManifest.startWait)) s")
+        log.append(tr("[collie] o health não respondeu em \(Int(PluginManifest.startWait)) s", "[collie] health did not respond in \(Int(PluginManifest.startWait)) s"))
         proc?.terminate()   // its exit counts as a death
     }
 
     private func exited(_ g: Int, _ code: Int32) async {
         guard g == gen else { return }   // stopped, or a newer start
         proc = nil
-        log.append("[collie] saiu com código \(code)")
+        log.append(tr("[collie] saiu com código \(code)", "[collie] exited with code \(code)"))
         let now = ContinuousClock.now
         deaths = deaths.filter { now - $0 < AppServices.crashWindow } + [now]
         if deaths.count >= AppServices.crashLimit {
-            return await set(.failed("caiu \(deaths.count) vezes em \(AppServices.crashWindow.components.seconds / 60) min (último código \(code))"))
+            return await set(.failed(tr("caiu \(deaths.count) vezes em \(AppServices.crashWindow.components.seconds / 60) min (último código \(code))", "crashed \(deaths.count) times in \(AppServices.crashWindow.components.seconds / 60) min (last code \(code))")))
         }
         if phase != .starting { await set(.starting) }
         let delay = min(AppServices.restartBase * pow(2, Double(deaths.count - 1)), AppServices.restartMax)

@@ -1,3 +1,4 @@
+import CollieCore
 import Foundation
 import CollieProtocol
 
@@ -11,15 +12,15 @@ enum ArtifactFolder {
     static func normalize(_ s: String) throws(ProtocolError) -> String? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return nil }
-        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "pasta inválida '\(s)': \(m)") }
-        guard !t.hasPrefix("/"), !t.hasSuffix("/") else { throw bad("sem / no início ou no fim") }
+        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: tr("pasta inválida '\(s)': \(m)", "invalid folder '\(s)': \(m)")) }
+        guard !t.hasPrefix("/"), !t.hasSuffix("/") else { throw bad(tr("sem / no início ou no fim", "no / at the start or end")) }
         let names = t.split(separator: "/", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        guard names.count <= maxDepth else { throw bad("até \(maxDepth) níveis") }
+        guard names.count <= maxDepth else { throw bad(tr("até \(maxDepth) níveis", "up to \(maxDepth) levels")) }
         for n in names {
             guard (1...maxName).contains(n.count) else { throw bad("cada nome com 1 a \(maxName) caracteres") }
             // controlCharacters is Cc + Cf: zero-width spaces/joiners, BOM, bidi embeddings, overrides and isolates
-            guard !n.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw bad("caractere de controle ou invisível") }
-            guard n != ".", n != ".." else { throw bad("nome . ou .. não vale") }
+            guard !n.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw bad(tr("caractere de controle ou invisível", "control or invisible character")) }
+            guard n != ".", n != ".." else { throw bad(tr("nome . ou .. não vale", "name . or .. is not allowed")) }
         }
         return names.joined(separator: "/")
     }

@@ -39,7 +39,7 @@ extension CommandRouter {
                 origin = "history-" + u.uuidString.lowercased()   // the app's HISTÓRICO detail: one artifact per work
             } else if let v = str(r, "source"), !v.isEmpty {
                 let l = try ClaudeImport.links([v])
-                guard l.count == 1 else { throw invalid("--source: um link só") }
+                guard l.count == 1 else { throw invalid(tr("--source: um link só", "--source: just one link")) }
                 origin = l[0]
             }
             // the asked terminal's report (the app's sheet follows only those); taken before the add clears the grant
@@ -63,7 +63,7 @@ extension CommandRouter {
         case "artifact.import-list":
             let nonce = str(r, "nonce") ?? ""
             guard let asked = claudeLists[nonce], caller.map({ $0.id == asked }) ?? true else {
-                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu a lista a entrega (com o --nonce do pedido)")
+                throw ProtocolError(code: .unauthorized, message: tr("só o terminal a quem o app pediu a lista a entrega (com o --nonce do pedido)", "only the terminal the app asked for the list may deliver it (with the request's --nonce)"))
             }
             let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
             let file = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
@@ -77,12 +77,12 @@ extension CommandRouter {
             return .object(["count": .number(Double(items.count))])
         case "artifact.import-failed":
             let l = try ClaudeImport.links([try need(r, "url")])
-            guard l.count == 1 else { throw invalid("um link só") }
+            guard l.count == 1 else { throw invalid(tr("um link só", "just one link")) }
             guard let nonce = askedNonce(l[0], r, caller) else {
-                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu esse link relata a falha (com o --nonce do pedido)")
+                throw ProtocolError(code: .unauthorized, message: tr("só o terminal a quem o app pediu esse link relata a falha (com o --nonce do pedido)", "only the terminal the app asked for this link may report its failure (with the request's --nonce)"))
             }
             let reason = ClaudeImport.clean(str(r, "reason") ?? "")
-            await importFailed(l[0], reason.isEmpty ? "o terminal não conseguiu ler o artifact" : reason, nonce: nonce)
+            await importFailed(l[0], reason.isEmpty ? tr("o terminal não conseguiu ler o artifact", "the terminal could not read the artifact") : reason, nonce: nonce)
             return .object([:])
         case "artifact.new":
             guard let kind = ArtifactTemplates.Kind(rawValue: try need(r, "kind")) else {
@@ -210,7 +210,7 @@ extension CommandRouter {
         guard let folder, !ArtifactFolder.same(folder, lotFolder(me)) else { return }
         if let link, let g = claudeImports[link], g.terminal == me.id, ArtifactFolder.same(g.folder, folder) { return }
         if try await artifacts.folders().contains(where: { ArtifactFolder.same($0.path, folder) }) { return }
-        throw ProtocolError(code: .unauthorized, message: "a pasta '\(folder)' não existe: crie no app (Artifacts → Nova pasta) ou use uma existente")
+        throw ProtocolError(code: .unauthorized, message: tr("a pasta '\(folder)' não existe: crie no app (Artifacts → Nova pasta) ou use uma existente", "folder '\(folder)' does not exist: create it in the app (Artifacts → New folder) or use an existing one"))
     }
 
     /// The nonce of the app's ask for `link` when `r` brings it (`--nonce`) from the terminal it was asked of; nil otherwise.
@@ -236,7 +236,7 @@ extension CommandRouter {
         // the app's history detail (`origin` history-<uuid> only for the admin): the page inline, no file anywhere
         // ponytail: no design-file import nor Artifacts-panel event, a history page is only read in a Prévia
         if let origin, origin.hasPrefix("history-") {
-            guard let html = str(r, "html"), !html.isEmpty, html.utf8.count <= 8 << 20 else { throw invalid("histórico: falta a página (html) ou passa de 8 MiB") }
+            guard let html = str(r, "html"), !html.isEmpty, html.utf8.count <= 8 << 20 else { throw invalid(tr("histórico: falta a página (html) ou passa de 8 MiB", "history: missing page (html) or over 8 MiB")) }
             let t = ClaudeImport.clean(str(r, "title") ?? "")
             // M7.1: kept in the work's paddock (as `work.history` scopes it), in the fixed folder, one version per work
             let wid = String(origin.dropFirst(8))
@@ -249,7 +249,7 @@ extension CommandRouter {
         let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
         let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
         let known = try await artifacts.continued(origin: origin, byId: caller?.id)
-        if let known, importingArtifacts.contains(known.id) { throw invalid("importação em andamento desse artifact; tente de novo em instantes") }
+        if let known, importingArtifacts.contains(known.id) { throw invalid(tr("importação em andamento desse artifact; tente de novo em instantes", "this artifact is being imported; try again shortly")) }
         let folder = r.args["folder"] == nil && known != nil ? nil : try artifactFolder(r, caller: caller)
         if let me = caller { try await checkImportFolder(folder, link: origin, by: me) }   // every terminal add
         let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
@@ -257,7 +257,7 @@ extension CommandRouter {
         let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
         let rw = OfflineRewriter(libs: libs) { f in
             google || Fonts.bundled.contains { $0.family == f } || Fonts.downloaded(f, in: fontDir) != nil ? nil
-                : "fonte \(f) não baixada: ligue Baixar fontes do Google Fonts nas Preferências ou rode collie font add \"\(f)\""
+                : tr("fonte \(f) não baixada: ligue Baixar fontes do Google Fonts nas Preferências ou rode collie font add \"\(f)\"", "font \(f) not downloaded: turn on Download Google Fonts in Preferences or run collie font add \"\(f)\"")
         }
         let ext = src.pathExtension.lowercased()
         let isDir = (try? src.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map { $0.isDirectory == true && $0.isSymbolicLink != true } ?? false
@@ -265,7 +265,7 @@ extension CommandRouter {
         let root = str(r, "root").flatMap { $0.isEmpty ? nil : $0 }
         let a: Artifact
         if isDir || ext == "zip" {
-            guard root == nil else { throw invalid("--root vale só com uma página .html") }
+            guard root == nil else { throw invalid(tr("--root vale só com uma página .html", "--root only works with a single .html page")) }
             var scratch: URL?
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
             let (top, page): (URL, URL)
@@ -353,7 +353,7 @@ extension CommandRouter {
         if mine, !words.trimmingCharacters(in: .whitespaces).isEmpty { throw invalid("--mine lista os artifacts: sem links") }
         let links = mine ? [] : try ClaudeImport.links([words])
         let title = str(r, "title").map { ClaudeImport.clean($0) }.flatMap { $0.isEmpty ? nil : $0 }
-        if title != nil, links.count != 1 { throw invalid("--title vale para um link só") }
+        if title != nil, links.count != 1 { throw invalid(tr("--title vale para um link só", "--title only works with a single link")) }
         let folder: String?, target: TerminalRecord
         if let me = caller {
             guard str(r, "terminal") == nil else { throw ProtocolError(code: .unauthorized, message: "--terminal is for the app only") }
@@ -365,12 +365,12 @@ extension CommandRouter {
             let all = await claudeTerminals()
             if let n = str(r, "terminal"), !n.isEmpty {
                 guard let t = all.first(where: { $0.0.name.caseInsensitiveCompare(n) == .orderedSame || $0.0.id.uuidString.caseInsensitiveCompare(n) == .orderedSame }) else {
-                    throw ProtocolError(code: .notFound, message: "nenhum terminal Claude chamado \(n)")
+                    throw ProtocolError(code: .notFound, message: tr("nenhum terminal Claude chamado \(n)", "no Claude terminal named \(n)"))
                 }
-                guard t.1 else { throw ProtocolError(code: .notRunning, message: "o terminal \(t.0.name) não está rodando") }
+                guard t.1 else { throw ProtocolError(code: .notRunning, message: tr("o terminal \(t.0.name) não está rodando", "terminal \(t.0.name) is not running")) }
                 target = t.0
             } else {
-                guard let t = all.first(where: { $0.2 }) else { throw ProtocolError(code: .notFound, message: "nenhum terminal Claude aberto: abra um (já logado no claude.ai)") }
+                guard let t = all.first(where: { $0.2 }) else { throw ProtocolError(code: .notFound, message: tr("nenhum terminal Claude aberto: abra um (já logado no claude.ai)", "no Claude terminal open: open one (already logged in to claude.ai)")) }
                 target = t.0
             }
         }
@@ -424,7 +424,7 @@ extension CommandRouter {
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
         if let n = str(r, "name") {
-            guard let s = ArtifactTemplates.slug(n) else { throw invalid("nome sem letras nem números: \(n)") }
+            guard let s = ArtifactTemplates.slug(n) else { throw invalid(tr("nome sem letras nem números: \(n)", "name has no letters or digits: \(n)")) }
             slug = s
         } else {
             var i = 1
@@ -432,7 +432,7 @@ extension CommandRouter {
             slug = "\(kind.rawValue)-\(i)"
         }
         let rel = "docs/pages/\(slug)/index.html", url = root.appendingPathComponent(rel)   // the slug has no `/` nor `.`
-        if FileManager.default.fileExists(atPath: url.path) { throw invalid("já existe: \(rel)") }
+        if FileManager.default.fileExists(atPath: url.path) { throw invalid(tr("já existe: \(rel)", "already exists: \(rel)")) }
         var warnings: [String] = [], variables: JSONValue?
         if let id = activeSystem(paddock: paddock) {
             do throws(ProtocolError) {
@@ -440,13 +440,13 @@ extension CommandRouter {
                     throw ProtocolError(code: .notFound, message: "design system")
                 }
                 variables = try await systems.variables(of: ds, deadline: .now + .seconds(10))
-            } catch { warnings.append("design system indisponível: tokens padrão") }
-        } else { warnings.append("sem design system ativo: tokens padrão") }
+            } catch { warnings.append(tr("design system indisponível: tokens padrão", "design system unavailable: default tokens")) }
+        } else { warnings.append(tr("sem design system ativo: tokens padrão", "no active design system: default tokens")) }
         let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? str(r, "name") ?? kind.label
         if libs.isEmpty { warnings.append("bibliotecas offline ausentes") }
         let fonts = ArtifactTemplates.fonts(variables: variables), fontDir = config.paths.root.appendingPathComponent("fonts")
         for f in Set([fonts.text, fonts.mono]).sorted() where !Fonts.bundled.contains(where: { $0.family == f }) && Fonts.downloaded(f, in: fontDir) == nil {
-            warnings.append("fonte \(f) não baixada: collie font add \"\(f)\"")
+            warnings.append(tr("fonte \(f) não baixada: collie font add \"\(f)\"", "font \(f) not downloaded: collie font add \"\(f)\""))
         }
         let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs, fonts: fonts)
         try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }

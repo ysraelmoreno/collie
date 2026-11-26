@@ -12,7 +12,7 @@ enum ArtifactTemplates {
         case deck, dashboard, doc, prototype
         /// The default title (pt-BR).
         var label: String {
-            switch self { case .deck: "Apresentação"; case .dashboard: "Painel"; case .doc: "Documento"; case .prototype: "Protótipo" }
+            switch self { case .deck: tr("Apresentação", "Presentation"); case .dashboard: tr("Painel", "Dashboard"); case .doc: tr("Documento", "Document"); case .prototype: tr("Protótipo", "Prototype") }
         }
     }
 

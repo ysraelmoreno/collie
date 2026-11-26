@@ -21,7 +21,7 @@ actor FigcraftInstaller {
         var error: String?
     }
 
-    static let badSha = "O arquivo baixado não confere (sha256). Nada foi instalado."
+    static var badSha: String { tr("O arquivo baixado não confere (sha256). Nada foi instalado.", "The downloaded file does not match (sha256). Nothing was installed.") }
     /// Free space an install needs beyond the asset and the extracted tree.
     static let margin: Int64 = 100_000_000
 
@@ -51,7 +51,7 @@ actor FigcraftInstaller {
     func install() throws(ProtocolError) -> Job {
         if running, let job { return job }
         guard let pin else {
-            throw ProtocolError(code: .unavailable, message: "este Collie não tem pin do motor de design (figcraft-engine.json)")
+            throw ProtocolError(code: .unavailable, message: tr("este Collie não tem pin do motor de design (figcraft-engine.json)", "this Collie has no design engine pin (figcraft-engine.json)"))
         }
         let j = Job(phase: "downloading", total: pin.size)
         job = j
@@ -71,10 +71,10 @@ actor FigcraftInstaller {
     func remove() async throws(ProtocolError) {
         let held = await busy()
         if running || held {
-            throw ProtocolError(code: .conflict, message: "motor de design ocupado (instalação, troca ou backup em andamento)")
+            throw ProtocolError(code: .conflict, message: tr("motor de design ocupado (instalação, troca ou backup em andamento)", "design engine busy (install, swap or backup in progress)"))
         }
         guard FileManager.default.fileExists(atPath: engine.path) else {
-            throw ProtocolError(code: .notFound, message: "nenhum motor de design baixado")
+            throw ProtocolError(code: .notFound, message: tr("nenhum motor de design baixado", "no design engine downloaded"))
         }
         let root = root
         do { try await swap { try Self.swapInto(root: root, staged: nil) } }
@@ -107,11 +107,11 @@ actor FigcraftInstaller {
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         if let free = freeSpace(root.path), free < pin.size + pin.unpackedSize + Self.margin {
-            throw ProtocolError(code: .unavailable, message: "Espaço insuficiente")
+            throw ProtocolError(code: .unavailable, message: tr("Espaço insuficiente", "Not enough space"))
         }
         FigcraftEngine.cleanStaging(root: root)
         try fm.createDirectory(at: staging, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        guard let url = URL(string: pin.url) else { throw ProtocolError(code: .invalidArgs, message: "pin url inválida") }
+        guard let url = URL(string: pin.url) else { throw ProtocolError(code: .invalidArgs, message: tr("pin url inválida", "invalid pin url")) }
         let asset = staging.appendingPathComponent("asset.tar.gz")
         try await fetch(url, asset) { [weak self] b, t in Task { await self?.progress(b, t) } }
         try Task.checkCancellation()
@@ -125,10 +125,10 @@ actor FigcraftInstaller {
         let staged = staging.appendingPathComponent("figcraft")
         try Self.scan(staged)
         guard FigcraftEngine.isValid(staged), FigcraftEngine.version(staged) == pin.version else {
-            throw ProtocolError(code: .unavailable, message: "o motor baixado não tem o formato esperado (versão \(pin.version))")
+            throw ProtocolError(code: .unavailable, message: tr("o motor baixado não tem o formato esperado (versão \(pin.version))", "the downloaded engine does not have the expected format (version \(pin.version))"))
         }
         for id in ["figcraft-server", "figcraft-cli"] where !signature(staged.appendingPathComponent("bin/\(id)"), id, pin.teamId) {
-            throw ProtocolError(code: .unavailable, message: "a assinatura do motor baixado não confere (\(id))")
+            throw ProtocolError(code: .unavailable, message: tr("a assinatura do motor baixado não confere (\(id))", "the downloaded engine's signature does not match (\(id))"))
         }
         Self.stripQuarantine(staged)
         var v = URLResourceValues(); v.isExcludedFromBackup = true
@@ -166,7 +166,7 @@ actor FigcraftInstaller {
         for rel in items {
             let path = rel.isEmpty ? dir.path : dir.appendingPathComponent(rel).path
             var st = stat()
-            guard lstat(path, &st) == 0 else { throw ProtocolError(code: .unavailable, message: "motor baixado: \(rel) ilegível") }
+            guard lstat(path, &st) == 0 else { throw ProtocolError(code: .unavailable, message: tr("motor baixado: \(rel) ilegível", "downloaded engine: \(rel) unreadable")) }
             if let why = refusal(mode: st.st_mode) { throw ProtocolError(code: .unavailable, message: "motor baixado: \(rel) \(why)") }
             if st.st_mode & 0o022 != 0 { chmod(path, st.st_mode & 0o7755) }
         }
@@ -175,7 +175,7 @@ actor FigcraftInstaller {
     /// Why an extracted entry of this mode is refused (nil: kept): only files and dirs, no setuid/setgid.
     static func refusal(mode: mode_t) -> String? {
         let type = mode & S_IFMT
-        guard type == S_IFREG || type == S_IFDIR else { return "não é arquivo nem pasta" }
+        guard type == S_IFREG || type == S_IFDIR else { return tr("não é arquivo nem pasta", "not a file or folder") }
         guard mode & (S_ISUID | S_ISGID) == 0 else { return "com setuid/setgid" }
         return nil
     }

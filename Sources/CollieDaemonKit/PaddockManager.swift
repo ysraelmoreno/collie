@@ -69,13 +69,13 @@ enum PaddockManager {
         try validate(name: name)
         var dir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &dir), dir.boolValue else {
-            throw fail("a pasta \(folder.path) não existe")
+            throw fail(tr("a pasta \(folder.path) não existe", "folder \(folder.path) does not exist"))
         }
         return .folder(name: name, path: SignedAppCheck.realPath(folder), createdBy: createdBy)
     }
 
     static func refuseFolder(_ f: Paddock) throws(ProtocolError) {
-        if f.isFolder { throw fail("o cercado \(f.name) é uma pasta, sem branch: não tem land nem PR") }
+        if f.isFolder { throw fail(tr("o cercado \(f.name) é uma pasta, sem branch: não tem land nem PR", "paddock \(f.name) is a folder, with no branch: no land or PR")) }
     }
 
     /// C3b: `base`, the commit the base branch must be on right before the merge (the auto-land's judged base): another
@@ -97,7 +97,7 @@ enum PaddockManager {
         // C3a: read here, right before the merge: equal to the commit after, the land made no commit (nothing to integrate)
         let before = mode == .pr ? nil : try await git(["rev-parse", "HEAD"], in: pasture)
         if let base, before != base {
-            throw ProtocolError(code: .conflict, message: "a base está em \(before?.prefix(12) ?? "?"), o land foi julgado em \(base.prefix(12)); nada integrado")
+            throw ProtocolError(code: .conflict, message: tr("a base está em \(before?.prefix(12) ?? "?"), o land foi julgado em \(base.prefix(12)); nada integrado", "the base is at \(before?.prefix(12) ?? "?"), the land was judged at \(base.prefix(12)); nothing integrated"))
         }
 
         /// On failure: list conflicted files, abort, throw.
@@ -139,7 +139,7 @@ enum PaddockManager {
             f.status = .done; f.landedAt = Date()
             return LandResult(mode: mode, commit: commit, prURL: url)
         }
-        if failAfterMerge { throw fail("falhou depois do merge (teste)") }
+        if failAfterMerge { throw fail(tr("falhou depois do merge (teste)", "failed after the merge (test)")) }
         let commit = try await git(["rev-parse", "HEAD"], in: pasture)
         f.status = .done; f.landedAt = Date()
         return LandResult(mode: mode, commit: commit, prURL: nil, before: before)

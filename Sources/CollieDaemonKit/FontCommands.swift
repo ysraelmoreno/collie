@@ -38,7 +38,7 @@ public enum GoogleFonts {
             let b = String(m.1)
             guard let src = b.firstMatch(of: /src:\s*url\(\s*['"]?([^'")\s]+)['"]?\s*\)/).flatMap({ URL(string: String($0.1)) }),
                   allowed(src), src.host?.lowercased() == "fonts.gstatic.com", src.pathExtension.lowercased() == ext else {
-                throw ProtocolError(code: .unavailable, message: "o Google Fonts respondeu uma fonte fora de fonts.gstatic.com ou que não é \(ext)")
+                throw ProtocolError(code: .unavailable, message: tr("o Google Fonts respondeu uma fonte fora de fonts.gstatic.com ou que não é \(ext)", "Google Fonts returned a font outside fonts.gstatic.com or that is not \(ext)"))
             }
             let weight = b.firstMatch(of: /font-weight:\s*(\d{1,4}(?: \d{1,4})?)\s*;/).map { String($0.1) } ?? "400"
             let style = b.contains(/font-style:\s*italic/) ? "italic" : "normal"
@@ -49,7 +49,7 @@ public enum GoogleFonts {
     /// The daemon's fetch: an ephemeral session (no cookies, no cache), the redirect refused unless `allowed`, the body
     /// read up to `cap`.
     public static let fetch: FontFetch = { url, cap, userAgent in
-        guard allowed(url) else { throw ProtocolError(code: .invalidArgs, message: "endereço fora do Google Fonts: \(url.absoluteString)") }
+        guard allowed(url) else { throw ProtocolError(code: .invalidArgs, message: tr("endereço fora do Google Fonts: \(url.absoluteString)", "address outside Google Fonts: \(url.absoluteString)")) }
         var req = URLRequest(url: url, timeoutInterval: 30)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let dl = Download(cap: cap)
@@ -95,7 +95,7 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         func family() throws(ProtocolError) -> String {
             let f = try need(r, "family")
-            guard Fonts.validFamily(f) else { throw invalid("nome de fonte inválido: use letras, números e espaços (até 64)") }
+            guard Fonts.validFamily(f) else { throw invalid(tr("nome de fonte inválido: use letras, números e espaços (até 64)", "invalid font name: use letters, digits and spaces (up to 64)")) }
             return f
         }
         switch r.command {
@@ -112,10 +112,10 @@ extension CommandRouter {
             let mine = Set(fonts.map(\.family))
             return .array(fonts.map { row($0, "google") } + Fonts.bundled.filter { !mine.contains($0.family) }.map { row($0, "bundled") })
         case "font.remove":
-            guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'font.remove' é só do app") }
+            guard caller == nil else { throw ProtocolError(code: .unauthorized, message: tr("'font.remove' é só do app", "'font.remove' is app-only")) }
             let f = try family()
             guard try await UnixSocketClient.offPool({ Fonts.downloaded(f, in: dir) != nil }) else {
-                throw ProtocolError(code: .notFound, message: Fonts.bundled.contains { $0.family == f } ? "\(f) vem com o Collie e não sai" : "fonte \(f) não baixada")
+                throw ProtocolError(code: .notFound, message: Fonts.bundled.contains { $0.family == f } ? tr("\(f) vem com o Collie e não sai", "\(f) ships with Collie and cannot be removed") : tr("fonte \(f) não baixada", "font \(f) not downloaded"))
             }
             try await UnixSocketClient.offPool { try FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
             await fontsChanged()
@@ -126,7 +126,7 @@ extension CommandRouter {
             if let w = str(r, "weights") {
                 let parts = w.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 let ns = parts.compactMap { Int($0) }.filter { (100...900).contains($0) }
-                guard !parts.isEmpty, ns.count == parts.count, ns.count <= 9 else { throw invalid("--weights: números de 100 a 900, separados por vírgula (ex.: 400,700)") }
+                guard !parts.isEmpty, ns.count == parts.count, ns.count <= 9 else { throw invalid(tr("--weights: números de 100 a 900, separados por vírgula (ex.: 400,700)", "--weights: numbers from 100 to 900, comma-separated (e.g. 400,700)")) }
                 weights = Array(Set(ns)).sorted()
             }
             return try await addFont(f, weights: weights, italic: flag(r, "italic"), caller: caller)
@@ -142,7 +142,7 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         var f = family, weights = weights, italic = italic
         guard googleFonts else {
-            throw ProtocolError(code: .unavailable, message: "Baixar fontes do Google Fonts está desligado nas Preferências do Collie; peça ao usuário para ligar")
+            throw ProtocolError(code: .unavailable, message: tr("Baixar fontes do Google Fonts está desligado nas Preferências do Collie; peça ao usuário para ligar", "Download Google Fonts is off in Collie Preferences; ask the user to turn it on"))
         }
         // one at a time (a call's downloads held in memory): the next waits. ponytail: 100 ms polling, as herd.apply
         while addingFont { try await Task.sleep(for: .milliseconds(100)) }
@@ -151,7 +151,7 @@ extension CommandRouter {
             let hour = ContinuousClock.now - .seconds(3600)
             fontAdds.removeAll { $0 < hour }
             guard fontAdds.count < GoogleFonts.addsPerHour else {
-                throw ProtocolError(code: .tooMany, message: "limite de \(GoogleFonts.addsPerHour) fontes por hora para os terminais; tente mais tarde ou baixe pelas Preferências")
+                throw ProtocolError(code: .tooMany, message: tr("limite de \(GoogleFonts.addsPerHour) fontes por hora para os terminais; tente mais tarde ou baixe pelas Preferências", "limit of \(GoogleFonts.addsPerHour) fonts per hour for terminals; try later or download from Preferences"))
             }
             fontAdds.append(.now)
         }
@@ -180,13 +180,13 @@ extension CommandRouter {
             f = stored.family
             weights = Array(have.union(weights).filter { (100...900).contains($0) }).sorted()
             italic = italic || hasItalic
-            guard weights.count <= 9 else { throw invalid("\(f) já tem pesos demais; remova a família nas Preferências e baixe de novo") }
+            guard weights.count <= 9 else { throw invalid(tr("\(f) já tem pesos demais; remova a família nas Preferências e baixe de novo", "\(f) already has too many weights; remove the family in Preferences and download again")) }
         } else if used.families.count >= GoogleFonts.maxFamilies {
-            throw ProtocolError(code: .tooMany, message: "já há \(GoogleFonts.maxFamilies) famílias baixadas; remova algumas em Preferências → Fontes")
+            throw ProtocolError(code: .tooMany, message: tr("já há \(GoogleFonts.maxFamilies) famílias baixadas; remova algumas em Preferências → Fontes", "\(GoogleFonts.maxFamilies) families already downloaded; remove some in Preferences → Fonts"))
         }
         let budget = GoogleFonts.totalCap - used.bytes + (stored.map { used.families[$0.family] ?? 0 } ?? 0)
         guard budget > 0 else {
-            throw ProtocolError(code: .tooMany, message: "as fontes baixadas já ocupam \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
+            throw ProtocolError(code: .tooMany, message: tr("as fontes baixadas já ocupam \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes", "downloaded fonts already use \(GoogleFonts.totalCap >> 20) MiB; remove some in Preferences → Fonts"))
         }
         let (added, warning) = try await downloadFont(f, weights: weights, italic: italic, into: dir, budget: budget)
         await fontsChanged()
@@ -212,15 +212,15 @@ extension CommandRouter {
             do { d = try await fetch(u, cap, ua) } catch let e as ProtocolError where e.code == .tooMany {
                 throw ProtocolError(code: .tooMany, message: "\(what) passa de \(cap >> 20) MiB")
             } catch let e as ProtocolError where e.code == .notFound {
-                throw ProtocolError(code: .notFound, message: "o Google Fonts não tem \(family) com esses pesos")
+                throw ProtocolError(code: .notFound, message: tr("o Google Fonts não tem \(family) com esses pesos", "Google Fonts does not have \(family) with those weights"))
             } catch let e as ProtocolError { throw e } catch where error is CancellationError || Task.isCancelled { throw error } catch {
-                throw ProtocolError(code: .unavailable, message: "não consegui baixar do Google Fonts: \(error.localizedDescription)")
+                throw ProtocolError(code: .unavailable, message: tr("não consegui baixar do Google Fonts: \(error.localizedDescription)", "could not download from Google Fonts: \(error.localizedDescription)"))
             }
             guard d.count <= cap else { throw ProtocolError(code: .tooMany, message: "\(what) passa de \(cap >> 20) MiB") }
             return d
         }
         let faces = try GoogleFonts.faces(String(decoding: try await get(css, GoogleFonts.fileCap, "a resposta do Google Fonts"), as: UTF8.self))
-        guard !faces.isEmpty else { throw ProtocolError(code: .notFound, message: "o Google Fonts não tem \(family) com esses pesos") }
+        guard !faces.isEmpty else { throw ProtocolError(code: .notFound, message: tr("o Google Fonts não tem \(family) com esses pesos", "Google Fonts does not have \(family) with those weights")) }
         var files: [URL: String] = [:], blobs: [(String, Data)] = [], total = 0
         var meta = FontFamily(family: family, faces: [], source: css.absoluteString,
                               licence: "SIL OFL 1.1 ou Apache 2.0, conforme a família: https://fonts.google.com/specimen/\(family.replacingOccurrences(of: " ", with: "+"))/license")
@@ -229,9 +229,9 @@ extension CommandRouter {
                 let name = "\(face.style)-\(face.weight.replacingOccurrences(of: " ", with: "-"))-\(files.count).woff2"
                 let d = try await get(face.url, GoogleFonts.fileCap, "um arquivo da fonte")
                 total += d.count
-                guard total <= GoogleFonts.familyCap else { throw ProtocolError(code: .tooMany, message: "a família passa de 20 MiB; peça menos pesos") }
+                guard total <= GoogleFonts.familyCap else { throw ProtocolError(code: .tooMany, message: tr("a família passa de 20 MiB; peça menos pesos", "the family is over 20 MiB; ask for fewer weights")) }
                 guard total <= budget else {
-                    throw ProtocolError(code: .tooMany, message: "as fontes baixadas passariam de \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
+                    throw ProtocolError(code: .tooMany, message: tr("as fontes baixadas passariam de \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes", "downloaded fonts would exceed \(GoogleFonts.totalCap >> 20) MiB; remove some in Preferences → Fonts"))
                 }
                 files[face.url] = name; blobs.append((name, d))
             }
@@ -258,7 +258,7 @@ extension CommandRouter {
             throw error
         } catch {
             ttfs = []
-            warning = "o FigCraft não vai usar \(family) (as páginas sim): \((error as? ProtocolError)?.message ?? error.localizedDescription)"
+            warning = tr("o FigCraft não vai usar \(family) (as páginas sim): \((error as? ProtocolError)?.message ?? error.localizedDescription)", "FigCraft will not use \(family) (pages will): \((error as? ProtocolError)?.message ?? error.localizedDescription)")
         }
         let licence = "\(family)\nFonte: \(css.absoluteString)\nLicença: \(meta.licence ?? "")\nBaixada em: \(ISO8601DateFormatter().string(from: Date()))\n"
         let out = meta, written = blobs + ttfs + [(Fonts.metaFile, try JSONEncoder().encode(meta)), ("LICENSE.txt", Data(licence.utf8))]
@@ -274,7 +274,7 @@ extension CommandRouter {
                 for (name, d) in written {
                     let u = tmp.appendingPathComponent(name)
                     guard fm.createFile(atPath: u.path, contents: d, attributes: [.posixPermissions: 0o600]) else {
-                        throw ProtocolError(code: .internal, message: "não consegui gravar \(u.path)")
+                        throw ProtocolError(code: .internal, message: tr("não consegui gravar \(u.path)", "could not write \(u.path)"))
                     }
                 }
                 let final = dir.appendingPathComponent(family)

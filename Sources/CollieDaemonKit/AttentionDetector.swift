@@ -78,7 +78,7 @@ struct AttentionDetector {
 /// The owner calls `feed("")` once the window is over (`windowEnd`), and `overflowCheck()` once more `Fanout.inputQuiet`
 /// later when `overflowArmed`.
 struct QuietDetector {
-    static let overflowReason = "saída demais para conferir"
+    static var overflowReason: String { tr("saída demais para conferir", "too much output to check") }
     static let heldCap = 64 * 1024
     private let preset: Preset
     private let agent: String

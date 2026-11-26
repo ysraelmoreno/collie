@@ -163,7 +163,7 @@ actor ArtifactStore {
     private func agentRecord(title: String, paddockId: UUID?, by: String, byId: UUID?, inFolder: String?, origin: String?,
                              from: String? = nil) async throws -> Artifact {
         if let known = try await continued(origin: origin, byId: byId) {
-            guard !converting.contains(known.id) else { throw Self.invalid("importação em andamento desse artifact; tente de novo em instantes") }
+            guard !converting.contains(known.id) else { throw Self.invalid(tr("importação em andamento desse artifact; tente de novo em instantes", "this artifact is being imported; try again shortly")) }
             let n = max(known.version, reserved[known.id] ?? 0) + 1
             reserved[known.id] = n
             return Artifact(id: known.id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId ?? known.paddockId, by: by, at: Date(),
@@ -398,7 +398,7 @@ actor ArtifactStore {
     // MARK: folders
 
     private static func known(_ list: [Artifact], _ fl: [FolderEntry]) -> [String] { fl.map(\.path) + list.compactMap(\.inFolder) }
-    private static func missing(_ p: String) -> ProtocolError { ProtocolError(code: .notFound, message: "pasta não encontrada: \(p)") }
+    private static func missing(_ p: String) -> ProtocolError { ProtocolError(code: .notFound, message: tr("pasta não encontrada: \(p)", "folder not found: \(p)")) }
 
     func move(_ id: UUID, to folder: String?) async throws { try await move([id], to: folder) }
     /// Artifacts `ids` into `folder` (normalized; nil: none), spelled as an existing one: one write; an unknown id moves none.
@@ -431,7 +431,7 @@ actor ArtifactStore {
     /// An empty folder kept (`path` normalized); one the user already has: refused.
     func createFolder(_ path: String) async throws {
         try await edit { list, fl in
-            guard !fl.contains(where: { ArtifactFolder.same($0.path, path) }) else { throw Self.invalid("já existe: \(path)") }
+            guard !fl.contains(where: { ArtifactFolder.same($0.path, path) }) else { throw Self.invalid(tr("já existe: \(path)", "already exists: \(path)")) }
             fl.append(FolderEntry(path: ArtifactFolder.canonical(path, known: Self.known(list, fl))))
         }
     }
@@ -445,12 +445,12 @@ actor ArtifactStore {
             let known = Self.known(list, fl)
             guard known.contains(where: { ArtifactFolder.isUnder($0, from) }) else { throw Self.missing(from) }
             if !ArtifactFolder.same(from, to) {
-                guard !ArtifactFolder.isUnder(to, from) else { throw Self.invalid("não cabe dentro dela mesma: \(to)") }
-                guard !known.contains(where: { ArtifactFolder.isUnder($0, to) }) else { throw Self.invalid("já existe: \(to)") }
+                guard !ArtifactFolder.isUnder(to, from) else { throw Self.invalid(tr("não cabe dentro dela mesma: \(to)", "cannot go inside itself: \(to)")) }
+                guard !known.contains(where: { ArtifactFolder.isUnder($0, to) }) else { throw Self.invalid(tr("já existe: \(to)", "already exists: \(to)")) }
             }
             func moved(_ p: String) throws(ProtocolError) -> String {
                 let n = ArtifactFolder.rebase(p, from: from, to: to) ?? to
-                guard ArtifactFolder.names(n).count <= ArtifactFolder.maxDepth else { throw Self.invalid("passaria de \(ArtifactFolder.maxDepth) níveis: \(n)") }
+                guard ArtifactFolder.names(n).count <= ArtifactFolder.maxDepth else { throw Self.invalid(tr("passaria de \(ArtifactFolder.maxDepth) níveis: \(n)", "would exceed \(ArtifactFolder.maxDepth) levels: \(n)")) }
                 return n
             }
             for i in list.indices where ArtifactFolder.isUnder(list[i].inFolder, from) { list[i].inFolder = try moved(list[i].inFolder!) }
@@ -466,11 +466,11 @@ actor ArtifactStore {
             guard known.contains(where: { ArtifactFolder.isUnder($0, path) }) else { throw Self.missing(path) }
             let inside = list.indices.filter { ArtifactFolder.isUnder(list[$0].inFolder, path) }
             if let dest = moveTo {
-                if let d = dest, ArtifactFolder.isUnder(d, path) { throw Self.invalid("--move-to fica dentro da pasta removida") }
+                if let d = dest, ArtifactFolder.isUnder(d, path) { throw Self.invalid(tr("--move-to fica dentro da pasta removida", "--move-to is inside the removed folder")) }
                 let to = dest.map { ArtifactFolder.canonical($0, known: known) }
                 for i in inside { list[i].inFolder = to }
             } else if !inside.isEmpty {
-                throw Self.invalid("a pasta \(path) tem \(inside.count) artifact(s): esvazie-a ou use --move-to")
+                throw Self.invalid(tr("a pasta \(path) tem \(inside.count) artifact(s): esvazie-a ou use --move-to", "folder \(path) has \(inside.count) artifact(s): empty it or use --move-to"))
             }
             fl.removeAll { ArtifactFolder.isUnder($0.path, path) }
         }

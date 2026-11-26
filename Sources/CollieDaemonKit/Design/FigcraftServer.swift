@@ -1,3 +1,4 @@
+import CollieCore
 import Foundation
 import Darwin
 import CollieProtocol
@@ -19,10 +20,10 @@ actor FigcraftServer {
     static func unavailable(_ state: EngineState, admin: Bool) -> ProtocolError {
         let outdated = if case .needsUpdate = state { true } else { false }
         let m = switch (outdated, admin) {
-        case (false, true): "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie design engine install)"
-        case (false, false): "Motor de design não instalado: peça ao usuário para baixá-lo em Preferências › Desenho e sandbox do Collie."
-        case (true, true): "Motor de design desatualizado. Atualize em Preferências › Desenho e sandbox (collie design engine install)"
-        case (true, false): "Motor de design desatualizado: peça ao usuário para atualizá-lo em Preferências › Desenho e sandbox do Collie."
+        case (false, true): tr("Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie design engine install)", "Design engine not installed. Download it in Preferences › Design & sandbox (collie design engine install)")
+        case (false, false): tr("Motor de design não instalado: peça ao usuário para baixá-lo em Preferências › Desenho e sandbox do Collie.", "Design engine not installed: ask the user to download it in Collie Preferences › Design & sandbox.")
+        case (true, true): tr("Motor de design desatualizado. Atualize em Preferências › Desenho e sandbox (collie design engine install)", "Design engine out of date. Update it in Preferences › Design & sandbox (collie design engine install)")
+        case (true, false): tr("Motor de design desatualizado: peça ao usuário para atualizá-lo em Preferências › Desenho e sandbox do Collie.", "Design engine out of date: ask the user to update it in Collie Preferences › Design & sandbox.")
         }
         return ProtocolError(code: .unavailable, message: m)
     }

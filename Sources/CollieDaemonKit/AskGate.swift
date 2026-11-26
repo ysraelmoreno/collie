@@ -1,3 +1,4 @@
+import CollieCore
 import Foundation
 import CollieProtocol
 
@@ -45,9 +46,9 @@ struct AskGate: Sendable {
 typealias AskCheckRun = @Sendable (_ command: String, _ dir: URL, _ timeout: Duration) async throws(ProtocolError) -> ProcessResult
 
 extension AskGate {
-    static let correctionHead = "O check falhou. Corrija e encerre o turno. Fim da saída:"
-    static let uncommitted = "O check passou, mas há mudanças sem commit no field: commite antes de encerrar."
-    static func notice(_ command: String) -> String { "O Collie roda este check quando você terminar e só aceita a resposta se ele passar: \(command)" }
+    static var correctionHead: String { tr("O check falhou. Corrija e encerre o turno. Fim da saída:", "The check failed. Fix it and end the turn. End of output:") }
+    static var uncommitted: String { tr("O check passou, mas há mudanças sem commit no field: commite antes de encerrar.", "The check passed, but the field has uncommitted changes: commit before finishing.") }
+    static func notice(_ command: String) -> String { tr("O Collie roda este check quando você terminar e só aceita a resposta se ele passar: \(command)", "Collie runs this check when you finish and only accepts the answer if it passes: \(command)") }
 
     /// The request, the spec's path (if any) and the fixed line about the check.
     func prompt(_ request: String) -> String { request + (spec.map { "\nSpec: \($0)" } ?? "") + "\n" + Self.notice(command) }
@@ -67,8 +68,8 @@ extension AskGate {
 
 /// C2: a check that passes before the task measures nothing; the loop's `work run` and the ask's gate refuse it alike.
 enum GreenCheck {
-    static let reason = "o check já passa antes da tarefa: não mede o que ela muda"
-    static let hint = "escreva um check que falhe antes (um assert sobre o comportamento pedido), ou marque --green-ok se ele deve continuar verde (refatoração)"
+    static var reason: String { tr("o check já passa antes da tarefa: não mede o que ela muda", "the check already passes before the task: it does not measure what the task changes") }
+    static var hint: String { tr("escreva um check que falhe antes (um assert sobre o comportamento pedido), ou marque --green-ok se ele deve continuar verde (refatoração)", "write a check that fails first (an assert on the requested behavior), or pass --green-ok if it should stay green (refactor)") }
     /// `--green-ok` says so at the card and in the refusal's own words.
     static let flag = "--green-ok"
 }
@@ -109,7 +110,7 @@ extension AskCoordinator {
                     if passed, let dirty = gate.dirty, await dirty() { passed = false; tail = AskGate.uncommitted }
                 } catch where error.code == .timeout {
                     tail = "o check passou de \(Int(gate.checkTimeout.components.seconds)) s"
-                } catch { tail = "o check não rodou: \(error.message)" }
+                } catch { tail = tr("o check não rodou: \(error.message)", "the check did not run: \(error.message)") }
             }
             if passed || tries >= gate.tries {
                 r.check = AskCheckReport(status: passed ? .passed : .failed, tries: tries, tail: tail)

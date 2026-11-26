@@ -184,7 +184,7 @@ public enum AgentLaunch {
             // No turn hooks: `--plugin-dir` registers only sessionStart (2026.10.22, retested 2026.11.17; spike REPORT §8),
             // the ask ends on idle once the latest frame lost the `ctrl+c to stop` footer (AskCoordinator.pollIdle).
             guard (env["PATH"] ?? "").split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/cursor-agent") }) else {
-                throw ProtocolError(code: .invalidArgs, message: "cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)")
+                throw ProtocolError(code: .invalidArgs, message: tr("cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)", "cursor-agent not found (install with: curl https://cursor.com/install -fsS | bash)"))
             }
             return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled --trust" : "")
                          + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)

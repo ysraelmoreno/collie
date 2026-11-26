@@ -55,7 +55,7 @@ enum OfflineRewrite {
         let have = e.version.split(separator: ".")
         let same = !want.isEmpty && want.count <= have.count && zip(want, have).allSatisfy { $0 == $1 }
         return ("\(WebLibs.scheme)://lib/\(e.name)@\(e.version)/\(first)",
-                same ? nil : "\(e.name) \(ver ?? "sem versão") trocado pela versão offline \(e.version)")
+                same ? nil : tr("\(e.name) \(ver ?? "sem versão") trocado pela versão offline \(e.version)", "\(e.name) \(ver ?? "no version") replaced by offline version \(e.version)"))
     }
 
     /// A Google Fonts css/css2 URL as `collie-lib://fonts/css` and its families (valid names only; nil: none).
@@ -242,7 +242,7 @@ final class OfflineRewriter: @unchecked Sendable {
         guard ["html", "htm", "css"].contains(e), let s = String(data: data, encoding: .utf8) else { return data }
         let done = e == "css" ? OfflineRewrite.css(s) : OfflineRewrite.html(s, libs: libs, deadline: deadline)
         guard let (out, r0) = done, ContinuousClock.now < deadline else {
-            lock.withLock { _report.merge(OfflineRewrite.Report(warnings: ["página grande demais para deixar offline a tempo: guardada como veio"])) }
+            lock.withLock { _report.merge(OfflineRewrite.Report(warnings: [tr("página grande demais para deixar offline a tempo: guardada como veio", "page too large to make offline in time: kept as it came")])) }
             return data
         }
         var r = r0

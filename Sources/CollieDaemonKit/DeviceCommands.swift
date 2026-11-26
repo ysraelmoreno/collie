@@ -51,7 +51,7 @@ extension CommandRouter {
         var args = r.args; args["panel"] = nil
         // d5: an agent's action goes to its paddock's flow log (the panel's when the agent is on the pasture); the user's
         // own CLI calls are neither agent nor panel and are not recorded
-        let flow = caller.flatMap { me in flowLog(me.paddockId ?? panel?.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
+        let flow = caller.flatMap { me in flowLog(me.paddockId ?? panel.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
         return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd, flow: flow)
     }
 

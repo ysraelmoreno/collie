@@ -72,7 +72,7 @@ extension DeviceCommandTests {
     @Suite struct FlowActionRecordingTests {
         @Test func tapTextRecordsOriginAndBothSignatures() async throws {
             let fx = try Fx(); defer { fx.cleanup() }
-            try await withPaddockDevice(fx) { d, p, a in
+            try await withPaddockDevice(fx) { d, p, a async throws in
                 guard case .string(let before)? = field(try await call(p, a, "device.screen"), "sig") else { Issue.record("no sig"); return }
                 let r = try await call(p, a, "device.tap", ["text": "Login", "then": "screen", "settle": "0"])
                 guard case .object(let screen)? = field(r, "screen"), case .string(let after)? = screen["sig"] else { Issue.record("\(r)"); return }
@@ -90,7 +90,7 @@ extension DeviceCommandTests {
 
         @Test func logOffRecordsNothing() async throws {
             let fx = try Fx(); defer { fx.cleanup() }
-            try await withPaddockDevice(fx, flowOn: false) { d, p, a in
+            try await withPaddockDevice(fx, flowOn: false) { d, p, a async throws in
                 #expect(try await call(p, a, "device.tap", ["text": "Login"]).ok)
                 #expect(try await call(p, a, "device.swipe", ["x1": "1", "y1": "2", "x2": "3", "y2": "4"]).ok)
                 await d.router.devices.flowFlushed()
@@ -100,7 +100,7 @@ extension DeviceCommandTests {
 
         @Test func writeFailureDoesNotFailTheCommand() async throws {
             let fx = try Fx(); defer { fx.cleanup() }
-            try await withPaddockDevice(fx) { d, p, a in
+            try await withPaddockDevice(fx) { d, p, a async throws in
                 try FileManager.default.createDirectory(at: fx.actions, withIntermediateDirectories: true)   // the file can't be written
                 let r = try await call(p, a, "device.tap", ["x": "3", "y": "4"])
                 #expect(r.ok && r.result == .object([:]), "\(r)")
@@ -111,7 +111,7 @@ extension DeviceCommandTests {
 
         @Test func panelAndAgentHaveDistinctOrigins() async throws {
             let fx = try Fx(); defer { fx.cleanup() }
-            try await withPaddockDevice(fx) { d, p, a in
+            try await withPaddockDevice(fx) { d, p, a async throws in
                 #expect(try await call(p, a, "device.tap", ["x": "3", "y": "4"]).ok)
                 await d.router.devices.recordPanelTap(panel: UUID(), target: "10,20", log: FlowActionLog(paddock: fx.paddock))
                 await d.router.devices.flowFlushed()
@@ -141,7 +141,7 @@ extension DeviceCommandTests {
             </hierarchy>
             """
             let fx = try Fx(ui: ui); defer { fx.cleanup() }
-            try await withPaddockDevice(fx) { d, p, a in
+            try await withPaddockDevice(fx) { d, p, a async throws in
                 #expect(try await call(p, a, "device.ui").ok)
                 #expect(try await call(p, a, "device.tap", ["ref": "e1"]).ok)
                 #expect(try await call(p, a, "device.text", ["text": "hunter2"]).ok)

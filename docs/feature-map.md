@@ -111,6 +111,9 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   Log de ações (d4): `collie device flow on|off|status [--paddock <nome>]`, opt-in por cercado (`on` só o usuário);
   grava `<cercado>/.collie/flows/actions.jsonl` (senha `•••`, texto até 80, rodízio 5 MiB × 3, 30 dias, 0600/0700).
   Arquivo: `Sources/CollieDaemonKit/Devices/FlowActionLog.swift`. Testes: `--filter FlowActionLogTests`.
+  Registro das ações (d5): com o log ligado, `device tap|text|swipe|key|launch` de agente (`origin: agent:<nome>`) e o toque
+  do painel (`origin: panel`) viram linhas; `sigBefore` do último `device screen`, `sigAfter` da tela devolvida (`--then screen`).
+  Escrita fora do comando (falha só no log do daemon). Em `DeviceService.run(flow:)`. Testes: `--filter FlowActionRecordingTests`.
   OCR (H6, Android; A3, iOS por `simctl io screenshot` com caixas convertidas de pixels para pontos; Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
   (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
   sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso

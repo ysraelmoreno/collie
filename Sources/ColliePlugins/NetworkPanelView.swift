@@ -1,3 +1,4 @@
+import CollieCore
 import AppKit
 import Foundation
 import CollieNetwork
@@ -15,7 +16,7 @@ struct NetworkView: View {
             bar
             if let e = model.error ?? model.pollError { notice(e, tone: .collieDanger, icon: "exclamationmark.triangle") }
             if !model.restartSuggested.isEmpty {
-                notice("Reinicie \(model.restartSuggested.joined(separator: ", ")) no emulador para que leia a CA do Collie.",
+                notice(tr("Reinicie \(model.restartSuggested.joined(separator: ", ")) no emulador para que leia a CA do Collie.", "Restart \(model.restartSuggested.joined(separator: ", ")) on the emulator so it reads Collie's CA."),
                        tone: .collieAttention, icon: "arrow.clockwise")
             }
             if let n = model.offNotice { notice(n, tone: .collieAttention, icon: "power") }
@@ -33,36 +34,36 @@ struct NetworkView: View {
 
     private var bar: some View {
         HStack(spacing: 8) {
-            Picker("Emulador", selection: Binding(get: { model.serial ?? "" }, set: { s in Task { await model.select(serial: s) } })) {
-                if model.emulators.isEmpty { Text("Nenhum emulador").tag("") }
+            Picker(tr("Emulador", "Emulator"), selection: Binding(get: { model.serial ?? "" }, set: { s in Task { await model.select(serial: s) } })) {
+                if model.emulators.isEmpty { Text(tr("Nenhum emulador", "No emulator")).tag("") }
                 ForEach(model.emulators, id: \.self) { Text($0).tag($0) }
                 if let s = model.serial, !model.emulators.contains(s) { Text(s).tag(s) }
             }
             .labelsHidden().frame(width: 160).disabled(model.busy || model.attached)
-            .accessibilityLabel("Emulador")
+            .accessibilityLabel(tr("Emulador", "Emulator"))
             Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                 .buttonStyle(CollieButtonStyle(.quiet)).disabled(model.busy)
-                .accessibilityLabel("Recarregar emuladores")
-            Button(model.attached ? "Parar" : "Interceptar") { Task { await model.toggle() } }
+                .accessibilityLabel(tr("Recarregar emuladores", "Reload emulators"))
+            Button(model.attached ? tr("Parar", "Stop") : tr("Interceptar", "Intercept")) { Task { await model.toggle() } }
                 .buttonStyle(CollieButtonStyle(model.attached ? .secondary : .primary))
                 .disabled(model.serial == nil || model.busy)
-                .accessibilityLabel(model.attached ? "Parar a interceptação" : "Interceptar o tráfego do emulador")
+                .accessibilityLabel(model.attached ? tr("Parar a interceptação", "Stop intercepting") : tr("Interceptar o tráfego do emulador", "Intercept the emulator's traffic"))
             status
-            if model.pendingDetach { CollieTag("restaurando emulador", tone: .attention) }
-            if model.dropped > 0 { CollieTag("\(model.dropped) perdidas", tone: .attention) }
+            if model.pendingDetach { CollieTag(tr("restaurando emulador", "restoring emulator"), tone: .attention) }
+            if model.dropped > 0 { CollieTag(tr("\(model.dropped) perdidas", "\(model.dropped) dropped"), tone: .attention) }
             if let on = model.onLabel { CollieTag(on, tone: .attention) }
             Spacer(minLength: 8)
             Picker("", selection: $tab) {
-                Text("Fluxos").tag(PanelTab.flows)
-                Text("Regras (\(model.rules.count))").tag(PanelTab.rules)
+                Text(tr("Fluxos", "Flows")).tag(PanelTab.flows)
+                Text(tr("Regras (\(model.rules.count))", "Rules (\(model.rules.count))")).tag(PanelTab.rules)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 170).accessibilityLabel("Fluxos ou regras de map local")
+            .pickerStyle(.segmented).labelsHidden().frame(width: 170).accessibilityLabel(tr("Fluxos ou regras de map local", "Flows or map-local rules"))
             .onChange(of: tab) { _, t in if t == .rules { Task { await model.loadRules() } } }
-            TextField("Filtrar host, caminho, método, status", text: $model.filter)
-                .collieField().frame(maxWidth: 280).accessibilityLabel("Filtrar requisições")
-            Button("Limpar") { Task { await model.clear() } }
+            TextField(tr("Filtrar host, caminho, método, status", "Filter host, path, method, status"), text: $model.filter)
+                .collieField().frame(maxWidth: 280).accessibilityLabel(tr("Filtrar requisições", "Filter requests"))
+            Button(tr("Limpar", "Clear")) { Task { await model.clear() } }
                 .buttonStyle(CollieButtonStyle(.quiet)).disabled(!model.attached)
-                .accessibilityLabel("Limpar requisições capturadas")
+                .accessibilityLabel(tr("Limpar requisições capturadas", "Clear captured requests"))
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
     }
@@ -70,10 +71,10 @@ struct NetworkView: View {
     private var status: some View {
         Group {
             if model.busy { ProgressView().controlSize(.small) }
-            else if model.attached { CollieTag(model.port.map { "proxy :\($0)" } ?? "interceptando", tone: .accent) }
-            else { CollieTag("parado", tone: .neutral) }
+            else if model.attached { CollieTag(model.port.map { "proxy :\($0)" } ?? tr("interceptando", "intercepting"), tone: .accent) }
+            else { CollieTag(tr("parado", "stopped"), tone: .neutral) }
         }
-        .accessibilityLabel(model.attached ? "Interceptando\(model.port.map { ", porta \($0)" } ?? "")" : "Parado")
+        .accessibilityLabel(model.attached ? tr("Interceptando\(model.port.map { ", porta \($0)" } ?? "")", "Intercepting\(model.port.map { ", port \($0)" } ?? "")") : tr("Parado", "Stopped"))
     }
 
     private func notice(_ text: String, tone: Color, icon: String) -> some View {
@@ -103,17 +104,17 @@ private struct FlowList: View {
         let rows = model.visible
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Text("Método").frame(width: 56, alignment: .leading)
+                Text(tr("Método", "Method")).frame(width: 56, alignment: .leading)
                 Text("Status").frame(width: 44, alignment: .leading)
-                Text("Host / caminho").frame(maxWidth: .infinity, alignment: .leading)
-                Text("Tamanho").frame(width: 64, alignment: .trailing)
-                Text("Tempo").frame(width: 60, alignment: .trailing)
+                Text(tr("Host / caminho", "Host / path")).frame(maxWidth: .infinity, alignment: .leading)
+                Text(tr("Tamanho", "Size")).frame(width: 64, alignment: .trailing)
+                Text(tr("Tempo", "Time")).frame(width: 60, alignment: .trailing)
             }
             .font(.collieMono(11, .medium)).foregroundStyle(Color.collieMuted)
             .padding(.horizontal, 12).padding(.vertical, 6)
             Rectangle().fill(Color.collieBorderSoft).frame(height: 1)
             if rows.isEmpty {
-                Text(model.attached ? "Aguardando requisições…" : "Escolha um emulador e clique em Interceptar.")
+                Text(model.attached ? tr("Aguardando requisições…", "Waiting for requests…") : tr("Escolha um emulador e clique em Interceptar.", "Pick an emulator and click Intercept."))
                     .font(.collieUI(13)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
@@ -169,7 +170,7 @@ private struct FlowDetailView: View {
 
     var body: some View {
         if let d = model.detail { content(d.flow, d) } else {
-            Text(model.selected == nil ? "Selecione uma requisição." : "Carregando…")
+            Text(model.selected == nil ? tr("Selecione uma requisição.", "Select a request.") : tr("Carregando…", "Loading…"))
                 .font(.collieUI(13)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -190,17 +191,17 @@ private struct FlowDetailView: View {
             }
             HStack(spacing: 8) {
                 // short labels: the detail column is narrow and "Copiar…" truncated both to the same text
-                Button("URL") { model.copyURL() }.buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel("Copiar URL")
-                    .help("Copiar URL")
+                Button("URL") { model.copyURL() }.buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel(tr("Copiar URL", "Copy URL"))
+                    .help(tr("Copiar URL", "Copy URL"))
                 Button("cURL") { Task { await model.copyCurl() } }.buttonStyle(CollieButtonStyle(.secondary))
-                    .accessibilityLabel("Copiar como cURL").help("Copiar como cURL")
+                    .accessibilityLabel(tr("Copiar como cURL", "Copy as cURL")).help(tr("Copiar como cURL", "Copy as cURL"))
                 if f.status != nil {
-                    Button("Mapear") { form = MapForm(d) }.buttonStyle(CollieButtonStyle(.quiet))
-                        .accessibilityLabel("Mapear esta resposta").help("Mapear esta resposta: responder no lugar do servidor")
+                    Button(tr("Mapear", "Map")) { form = MapForm(d) }.buttonStyle(CollieButtonStyle(.quiet))
+                        .accessibilityLabel(tr("Mapear esta resposta", "Map this response")).help(tr("Mapear esta resposta: responder no lugar do servidor", "Map this response: answer in the server's place"))
                 }
                 Spacer()
                 Picker("", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel("Request ou Response")
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel(tr("Request ou Response", "Request or Response"))
             }
             if let notice = model.mappedNotice(f.mappedBy) {
                 HStack(spacing: 8) {
@@ -228,7 +229,7 @@ private struct FlowDetailView: View {
     static func timing(_ f: Flow) -> String {
         let t = f.timing
         let ms = { (d: Date?) in d.map { NetworkPanelModel.duration(Int(($0.timeIntervalSince(t.start) * 1000).rounded())) } }
-        return ["início " + t.start.formatted(date: .omitted, time: .standard), ms(t.ttfb).map { "TTFB \($0)" }, ms(t.end).map { "total \($0)" }]
+        return [tr("início ", "start ") + t.start.formatted(date: .omitted, time: .standard), ms(t.ttfb).map { "TTFB \($0)" }, ms(t.end).map { "total \($0)" }]
             .compactMap { $0 }.joined(separator: " · ")
     }
 }
@@ -236,7 +237,7 @@ private struct FlowDetailView: View {
 private struct HeadersTable: View {
     let headers: [Header]
     var body: some View {
-        if headers.isEmpty { Text("Sem headers").font(.collieUI(12)).foregroundStyle(Color.collieMuted) } else {
+        if headers.isEmpty { Text(tr("Sem headers", "No headers")).font(.collieUI(12)).foregroundStyle(Color.collieMuted) } else {
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
                 ForEach(headers.indices, id: \.self) { i in
                     GridRow {
@@ -255,23 +256,23 @@ private struct BodyPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let b = captured, b.truncated {
-                Label("Corpo truncado: \(NetworkPanelModel.size(b.data.count)) de \(NetworkPanelModel.size(b.size)) capturados.",
+                Label(tr("Corpo truncado: \(NetworkPanelModel.size(b.data.count)) de \(NetworkPanelModel.size(b.size)) capturados.", "Body truncated: \(NetworkPanelModel.size(b.data.count)) of \(NetworkPanelModel.size(b.size)) captured."),
                       systemImage: "scissors").font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
             if preview.view != .empty {
                 HStack(spacing: 8) {
                     if preview.isPartial {
-                        Text("Mostrando \(NetworkPanelModel.size(preview.shown)) de \(NetworkPanelModel.size(preview.total))")
+                        Text(tr("Mostrando \(NetworkPanelModel.size(preview.shown)) de \(NetworkPanelModel.size(preview.total))", "Showing \(NetworkPanelModel.size(preview.shown)) of \(NetworkPanelModel.size(preview.total))"))
                             .font(.collieUI(12)).foregroundStyle(Color.collieAttention)
                     }
                     Spacer()
-                    Button("Copiar body", action: copy).buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel("Copiar body inteiro")
+                    Button(tr("Copiar body", "Copy body"), action: copy).buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel(tr("Copiar body inteiro", "Copy the whole body"))
                 }
             }
             switch preview.view {
-            case .empty: Text("Sem corpo").font(.collieUI(12)).foregroundStyle(Color.collieMuted).frame(maxHeight: .infinity, alignment: .top)
-            case .text(let s): BodyText(text: s, wraps: true, label: "Corpo")
-            case .hex(let s): BodyText(text: s, wraps: false, label: "Corpo em hexadecimal")
+            case .empty: Text(tr("Sem corpo", "No body")).font(.collieUI(12)).foregroundStyle(Color.collieMuted).frame(maxHeight: .infinity, alignment: .top)
+            case .text(let s): BodyText(text: s, wraps: true, label: tr("Corpo", "Body"))
+            case .hex(let s): BodyText(text: s, wraps: false, label: tr("Corpo em hexadecimal", "Body in hexadecimal"))
             }
         }
     }
@@ -311,7 +312,7 @@ private struct RulesList: View {
     var body: some View {
         VStack(spacing: 0) {
             if model.rules.isEmpty {
-                Text("Nenhuma regra. Use Mapear no detalhe de um fluxo, ou collie network rule-add.")
+                Text(tr("Nenhuma regra. Use Mapear no detalhe de um fluxo, ou collie network rule-add.", "No rules. Use Map in a flow's details, or collie network rule-add."))
                     .font(.collieUI(13)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -320,15 +321,15 @@ private struct RulesList: View {
                             HStack(spacing: 10) {
                                 Toggle("", isOn: Binding(get: { r.enabled }, set: { on in Task { await model.setRule(r.id, enabled: on) } }))
                                     .toggleStyle(.switch).controlSize(.small).labelsHidden()
-                                    .accessibilityLabel("\(r.enabled ? "Desligar" : "Ligar") a regra \(r.name ?? r.id)")
+                                    .accessibilityLabel(tr("\(r.enabled ? "Desligar" : "Ligar") a regra \(r.name ?? r.id)", "\(r.enabled ? "Turn off" : "Turn on") rule \(r.name ?? r.id)"))
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(r.name ?? r.id).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText)
                                     Text(r.summary).font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).truncationMode(.middle)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                if r.empty { CollieTag("toda requisição", tone: .attention) }
-                                Button("Remover") { Task { await model.removeRule(r.id) } }.buttonStyle(CollieButtonStyle(.quiet))
-                                    .accessibilityLabel("Remover a regra \(r.name ?? r.id)")
+                                if r.empty { CollieTag(tr("toda requisição", "every request"), tone: .attention) }
+                                Button(tr("Remover", "Remove")) { Task { await model.removeRule(r.id) } }.buttonStyle(CollieButtonStyle(.quiet))
+                                    .accessibilityLabel(tr("Remover a regra \(r.name ?? r.id)", "Remove rule \(r.name ?? r.id)"))
                             }
                             .padding(.horizontal, 12).padding(.vertical, 8)
                             Rectangle().fill(Color.collieBorderSoft).frame(height: 1)
@@ -339,7 +340,7 @@ private struct RulesList: View {
                     Text("A primeira regra ligada que casa vence. Todas voltam desligadas quando o Collie abre.")
                         .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                     Spacer()
-                    Button("Remover todas") { Task { await model.clearRules() } }.buttonStyle(CollieButtonStyle(.quiet))
+                    Button(tr("Remover todas", "Remove all")) { Task { await model.clearRules() } }.buttonStyle(CollieButtonStyle(.quiet))
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
             }
@@ -355,50 +356,50 @@ private struct MapFormView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Mapear esta resposta").font(.collieUI(15, .semibold))
+            Text(tr("Mapear esta resposta", "Map this response")).font(.collieUI(15, .semibold))
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                row("Nome") { TextField("PDP com desconto", text: $form.name).collieField() }
-                row("Método") { TextField("qualquer", text: $form.method).collieField().frame(width: 100) }
-                row("Host") { TextField("qualquer (aceita *)", text: $form.host).collieField() }
-                row("Caminho") { TextField("qualquer (aceita *)", text: $form.path).collieField() }
-                row("Query") { TextField("k=v&k2=v2 (todas precisam estar)", text: $form.query).collieField() }
-                row("Ação") {
-                    Picker("", selection: $form.drop) { Text("Responder com…").tag(false); Text("Cortar a conexão").tag(true) }
+                row(tr("Nome", "Name")) { TextField(tr("PDP com desconto", "PDP with discount"), text: $form.name).collieField() }
+                row(tr("Método", "Method")) { TextField(tr("qualquer", "any"), text: $form.method).collieField().frame(width: 100) }
+                row("Host") { TextField(tr("qualquer (aceita *)", "any (accepts *)"), text: $form.host).collieField() }
+                row(tr("Caminho", "Path")) { TextField(tr("qualquer (aceita *)", "any (accepts *)"), text: $form.path).collieField() }
+                row("Query") { TextField(tr("k=v&k2=v2 (todas precisam estar)", "k=v&k2=v2 (all must be present)"), text: $form.query).collieField() }
+                row(tr("Ação", "Action")) {
+                    Picker("", selection: $form.drop) { Text(tr("Responder com…", "Respond with…")).tag(false); Text(tr("Cortar a conexão", "Drop the connection")).tag(true) }
                         .pickerStyle(.segmented).labelsHidden().frame(width: 260)
                 }
                 if !form.drop { row("Status") { TextField("200", value: $form.status, format: .number).collieField().frame(width: 80) } }
-                row("Atraso (ms)") { TextField("0", value: $form.delayMs, format: .number).collieField().frame(width: 80) }
+                row(tr("Atraso (ms)", "Delay (ms)")) { TextField("0", value: $form.delayMs, format: .number).collieField().frame(width: 80) }
             }
             if !form.drop {
-                Text("Cabeçalhos (um por linha)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
-                TextEditor(text: $form.headers).font(.collieMono(12)).frame(height: 54).accessibilityLabel("Cabeçalhos")
-                Text("Corpo (até 5 MiB, sem compressão)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                Text(tr("Cabeçalhos (um por linha)", "Headers (one per line)")).font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                TextEditor(text: $form.headers).font(.collieMono(12)).frame(height: 54).accessibilityLabel(tr("Cabeçalhos", "Headers"))
+                Text(tr("Corpo (até 5 MiB, sem compressão)", "Body (up to 5 MiB, uncompressed)")).font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                 HStack(spacing: 8) {
-                    Button("Escolher arquivo…") {
+                    Button(tr("Escolher arquivo…", "Choose file…")) {
                         let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false
                         if p.runModal() == .OK, let u = p.url { form.bodyFile = u.path }
                     }
                     .buttonStyle(CollieButtonStyle(.quiet))
                     if let f = form.bodyFile {
                         Text(URL(fileURLWithPath: f).lastPathComponent).font(.collieMono(12)).foregroundStyle(Color.collieText)
-                        Button("Usar o corpo abaixo") { form.bodyFile = nil }.buttonStyle(CollieButtonStyle(.quiet))
+                        Button(tr("Usar o corpo abaixo", "Use the body below")) { form.bodyFile = nil }.buttonStyle(CollieButtonStyle(.quiet))
                     }
                 }
                 if form.bodyFile != nil {
-                    Text("O arquivo vai como corpo, lido ao salvar.").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                    Text(tr("O arquivo vai como corpo, lido ao salvar.", "The file goes as the body, read on save.")).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
                 } else if form.body != nil {
                     TextEditor(text: Binding(get: { form.body ?? "" }, set: { form.body = $0 })).font(.collieMono(12)).frame(minHeight: 120)
-                        .accessibilityLabel("Corpo")
+                        .accessibilityLabel(tr("Corpo", "Body"))
                 } else {
-                    Text("O corpo capturado (binário ou grande) vai como está.").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                    Text(tr("O corpo capturado (binário ou grande) vai como está.", "The captured body (binary or large) goes as is.")).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
                 }
             }
             if let w = form.warning { Label(w, systemImage: "exclamationmark.triangle").font(.collieUI(12)).foregroundStyle(Color.collieAttention) }
             HStack {
-                Toggle("Ligar agora", isOn: $form.enabled)
+                Toggle(tr("Ligar agora", "Turn on now"), isOn: $form.enabled)
                 Spacer()
-                Button("Cancelar", action: cancel).buttonStyle(CollieButtonStyle(.quiet)).keyboardShortcut(.cancelAction)
-                Button("Salvar regra") { save(form) }.buttonStyle(CollieButtonStyle(.primary)).keyboardShortcut(.defaultAction)
+                Button(tr("Cancelar", "Cancel"), action: cancel).buttonStyle(CollieButtonStyle(.quiet)).keyboardShortcut(.cancelAction)
+                Button(tr("Salvar regra", "Save rule")) { save(form) }.buttonStyle(CollieButtonStyle(.primary)).keyboardShortcut(.defaultAction)
             }
         }
         .padding(16).frame(width: 520)

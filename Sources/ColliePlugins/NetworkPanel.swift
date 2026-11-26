@@ -45,10 +45,10 @@ public struct RuleRow: Decodable, Identifiable, Equatable, Sendable {
     /// "GET api.example.com/pdp/* → 200 · 2.1 KB", "… → queda", plus " · atraso 8 s".
     public var summary: String {
         let q = (match.query ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
-        let target = empty ? "toda requisição"
+        let target = empty ? tr("toda requisição", "every request")
             : [match.method, (match.host ?? "*") + (match.path ?? "") + (q.isEmpty ? "" : "?" + q)].compactMap { $0 }.joined(separator: " ")
-        let what = action == "drop" ? "queda" : "\(status ?? 200) · \(NetworkPanelModel.size(bodySize ?? 0))"
-        return "\(target) → \(what)" + (delayMs > 0 ? " · atraso \(NetworkPanelModel.duration(delayMs))" : "")
+        let what = action == "drop" ? tr("queda", "drop") : "\(status ?? 200) · \(NetworkPanelModel.size(bodySize ?? 0))"
+        return "\(target) → \(what)" + (delayMs > 0 ? tr(" · atraso \(NetworkPanelModel.duration(delayMs))", " · delay \(NetworkPanelModel.duration(delayMs))") : "")
     }
 }
 
@@ -85,7 +85,7 @@ public struct MapForm: Equatable, Sendable {
     /// Shown above "Salvar regra" when nothing narrows the match.
     public var warning: String? {
         [method, host, path, query].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
-            ? "Sem método, host, caminho nem query: a regra responde a toda requisição do emulador." : nil
+            ? tr("Sem método, host, caminho nem query: a regra responde a toda requisição do emulador.", "No method, host, path or query: the rule answers every request from the emulator.") : nil
     }
 
     func args(serial: String?) -> [String: JSONValue] {
@@ -318,7 +318,7 @@ public struct BodyPreview: Equatable, Sendable {
             let v = try await call("network.get", ["serial": .string(serial), "id": .string(id)])
             // off main: base64 of up to 20 MB of bodies, and the previews
             guard let d = await Task.detached(operation: { Self.decode(FlowDetail.self, v) }).value else {
-                throw ProtocolError(code: .internal, message: "Resposta inválida de network.get.")
+                throw ProtocolError(code: .internal, message: tr("Resposta inválida de network.get.", "Invalid response from network.get."))
             }
             if gen == detailGen, selected == id { detail = d }
         } catch {   // evicted, or the session ended: not "Carregando…" forever
@@ -358,7 +358,7 @@ public struct BodyPreview: Equatable, Sendable {
     /// The detail's line under a mapped flow (nil: the server answered).
     public func mappedNotice(_ id: String?) -> String? {
         guard let id else { return nil }
-        return "Resposta fabricada pela regra \(rules.first { $0.id == id }?.name ?? id). O servidor não foi chamado."
+        return tr("Resposta fabricada pela regra \(rules.first { $0.id == id }?.name ?? id). O servidor não foi chamado.", "Response faked by rule \(rules.first { $0.id == id }?.name ?? id). The server was not called.")
     }
 
     /// The bar's "N regras ligadas" (nil: none on).
@@ -371,7 +371,7 @@ public struct BodyPreview: Equatable, Sendable {
     public var offNotice: String? {
         let n = rules.filter { !$0.enabled }.count
         guard n > 0 else { return nil }
-        return n == 1 ? "1 regra salva está desligada. Ligue só o que precisa." : "\(n) regras salvas estão desligadas. Ligue só o que precisa."
+        return n == 1 ? tr("1 regra salva está desligada. Ligue só o que precisa.", "1 saved rule is off. Turn on only what you need.") : tr("\(n) regras salvas estão desligadas. Ligue só o que precisa.", "\(n) saved rules are off. Turn on only what you need.")
     }
 
     /// The selected flow's request as cURL, on the pasteboard.
@@ -408,8 +408,8 @@ public struct BodyPreview: Equatable, Sendable {
     /// The status column: code, "falha", "túnel" or "…".
     public static func statusText(_ s: FlowSummary) -> String {
         switch s.state {
-        case .failed: "falha"
-        case .tunneled: "túnel"
+        case .failed: tr("falha", "failed")
+        case .tunneled: tr("túnel", "tunnel")
         case .pending: "…"
         case .done: s.status.map(String.init) ?? "—"
         }
@@ -471,15 +471,15 @@ public struct BodyPreview: Equatable, Sendable {
     static func describe(_ e: ProtocolError) -> String {
         let m = e.message
         if m.contains("brew install") { return m }
-        if m == "No emulator online" { return "Nenhum emulador ligado." }
-        if m.hasPrefix("No network panel reachable") { return "Nenhum painel Rede alcançável." }
-        if m.contains("is not being captured") { return "Esse emulador não está sendo interceptado." }
+        if m == "No emulator online" { return tr("Nenhum emulador ligado.", "No emulator online.") }
+        if m.hasPrefix("No network panel reachable") { return tr("Nenhum painel Rede alcançável.", "No Network panel reachable.") }
+        if m.contains("is not being captured") { return tr("Esse emulador não está sendo interceptado.", "That emulator is not being intercepted.") }
         return m
     }
 
     private func fetch<T: Decodable>(_ t: T.Type, _ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> T {
         let v = try await call(command, args)
-        guard let r = Self.decode(t, v) else { throw ProtocolError(code: .internal, message: "Resposta inválida de \(command).") }
+        guard let r = Self.decode(t, v) else { throw ProtocolError(code: .internal, message: tr("Resposta inválida de \(command).", "Invalid response from \(command).")) }
         return r
     }
 

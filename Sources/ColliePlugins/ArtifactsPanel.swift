@@ -18,10 +18,10 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public let needsNetwork: [String]?
     public var isExport: Bool { kind == "export" }
     public var statusLabel: String {
-        ["current": "atual", "stale": "desatualizado", "missing": "origem removida", "unknown": "desconhecido",
-         "pending": "aguardando importação", "importing": "importando…", "failed": "falha na importação"][status ?? "unknown"] ?? (status ?? "desconhecido")
+        ["current": tr("atual", "current"), "stale": tr("desatualizado", "outdated"), "missing": tr("origem removida", "source removed"), "unknown": tr("desconhecido", "unknown"),
+         "pending": tr("aguardando importação", "waiting to import"), "importing": tr("importando…", "importing…"), "failed": tr("falha na importação", "import failed")][status ?? "unknown"] ?? (status ?? tr("desconhecido", "unknown"))
     }
-    public var origin: String { isExport ? file.map { "tela \($0)" } ?? "tela removida" : "HTML do agente" }
+    public var origin: String { isExport ? file.map { tr("tela \($0)", "screen \($0)") } ?? tr("tela removida", "screen removed") : tr("HTML do agente", "Agent HTML") }
 }
 
 /// One `artifact.folders` entry.
@@ -82,7 +82,7 @@ public enum ArtifactFolderTree {
         kids(nil).forEach { emit($0, depth: 0) }
         let loose = shown.filter { $0.folder == nil }
         if !loose.isEmpty {
-            out.append(FolderSection(path: nil, name: "Sem pasta", depth: 0, total: loose.count, rows: loose, pinned: false, presentation: false,
+            out.append(FolderSection(path: nil, name: tr("Sem pasta", "No folder"), depth: 0, total: loose.count, rows: loose, pinned: false, presentation: false,
                                      color: nil, collapsed: collapsed.contains("\u{0}"), hasChildren: false))
         }
         return out
@@ -240,7 +240,7 @@ public struct ArtifactSelection: Equatable {
         do throws(ProtocolError) {
             let v = try await call("artifact.list", [:])
             let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
-            do { rows = try d.decode([ArtifactRow].self, from: JSONEncoder().encode(v)) } catch { return "lista inválida: \(error.localizedDescription)" }
+            do { rows = try d.decode([ArtifactRow].self, from: JSONEncoder().encode(v)) } catch { return tr("lista inválida: \(error.localizedDescription)", "invalid list: \(error.localizedDescription)") }
             selection.keep(Set(rows.map(\.id)))
             return await fetchFolders()
         } catch { return error.message }
@@ -250,7 +250,7 @@ public struct ArtifactSelection: Equatable {
     private func fetchFolders() async -> String? {
         do throws(ProtocolError) {
             let f = try await call("artifact.folders", [:])
-            do { folders = try JSONDecoder().decode([ArtifactFolderRow].self, from: JSONEncoder().encode(f)) } catch { return "pastas inválidas: \(error.localizedDescription)" }
+            do { folders = try JSONDecoder().decode([ArtifactFolderRow].self, from: JSONEncoder().encode(f)) } catch { return tr("pastas inválidas: \(error.localizedDescription)", "invalid folders: \(error.localizedDescription)") }
             var at: [String: String] = [:]
             for f in folders { for id in f.items { at[id] = f.path } }
             let moved = rows.map { r in var r = r; r.folder = at[r.id]; return r }
@@ -424,31 +424,31 @@ struct ArtifactsView: View {
         let targets = ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil }
         let sections = model.sections, visible = ArtifactSelection.visible(sections)
         return VStack(spacing: 0) {
-            PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? "1 página" : "\(model.rows.count) páginas") {
+            PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? tr("1 página", "1 page") : tr("\(model.rows.count) páginas", "\(model.rows.count) pages")) {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
                     Button { model.toggleCompact() } label: {
                         Image(systemName: model.compact == true ? "rectangle.grid.1x2" : "list.bullet")
                     }
-                    .help(model.compact == true ? "Mostrar cartões" : "Lista compacta")
-                    .accessibilityLabel(model.compact == true ? "Mostrar cartões" : "Lista compacta").buttonStyle(CollieButtonStyle(.secondary))
-                    Button(model.selecting ? "Concluir" : "Selecionar") { model.selecting.toggle() }.disabled(model.rows.isEmpty)
+                    .help(model.compact == true ? tr("Mostrar cartões", "Show cards") : tr("Lista compacta", "Compact list"))
+                    .accessibilityLabel(model.compact == true ? tr("Mostrar cartões", "Show cards") : tr("Lista compacta", "Compact list")).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(model.selecting ? tr("Concluir", "Done") : tr("Selecionar", "Select")) { model.selecting.toggle() }.disabled(model.rows.isEmpty)
                         .buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Importar do Claude…") { importing = true }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Nova pasta") { name = ""; naming = .create(nil) }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Atualizar") { Task { await model.refresh() } }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Importar do Claude…", "Import from Claude…")) { importing = true }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Nova pasta", "New folder")) { name = ""; naming = .create(nil) }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Atualizar", "Refresh")) { Task { await model.refresh() } }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                 }
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {   // lazy: only the cards on screen are built (and their thumbnails read)
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
-                    TextField("Buscar artifacts ou pastas", text: $model.query).textFieldStyle(.roundedBorder).font(.collieUI(13))
+                    TextField(tr("Buscar artifacts ou pastas", "Search artifacts or folders"), text: $model.query).textFieldStyle(.roundedBorder).font(.collieUI(13))
                     if model.selecting, !model.query.trimmingCharacters(in: .whitespaces).isEmpty, !visible.isEmpty {
-                        Button(model.selection.all(visible) ? "Desmarcar os resultados" : "Selecionar todos os resultados (\(visible.count))") {
+                        Button(model.selection.all(visible) ? tr("Desmarcar os resultados", "Deselect the results") : tr("Selecionar todos os resultados (\(visible.count))", "Select all results (\(visible.count))")) {
                             model.selection.selectAll(visible)
                         }.buttonStyle(CollieButtonStyle(.quiet))
                     }
-                    if model.rows.isEmpty { Text("Nenhum artifact.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                    if model.rows.isEmpty { Text(tr("Nenhum artifact.", "No artifacts.")).font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                     ForEach(sections) { s in
                         folderHeader(s)
                         if !s.collapsed {
@@ -465,7 +465,7 @@ struct ArtifactsView: View {
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
             if model.selecting { selectionBar(targets, visible) }
-            PanelFooter("collie artifact add <página.html> · solte .html, pasta ou .zip aqui")
+            PanelFooter(tr("collie artifact add <página.html> · solte .html, pasta ou .zip aqui", "collie artifact add <page.html> · drop .html, a folder or .zip here"))
         }
         .background(Color.collieSidebar)
         .dropDestination(for: URL.self) { urls, _ in   // onto the panel: "Sem pasta"
@@ -474,13 +474,13 @@ struct ArtifactsView: View {
         }
         .sheet(isPresented: $importing) { ClaudeImportSheet(model: model, shown: $importing) }
         .task { await model.refresh() }
-        .confirmationDialog("Remover \(removing?.title ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+        .confirmationDialog(tr("Remover \(removing?.title ?? "")?", "Remove \(removing?.title ?? "")?"), isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible, presenting: removing) { r in
-            Button("Remover", role: .destructive) { Task { await model.remove(r) } }
-        } message: { _ in Text("A pasta vai para artifacts/.removed.") }
-        .alert(naming.map { if case .rename = $0 { "Renomear pasta" } else { "Nova pasta" } } ?? "",
+            Button(tr("Remover", "Remove"), role: .destructive) { Task { await model.remove(r) } }
+        } message: { _ in Text(tr("A pasta vai para artifacts/.removed.", "The folder goes to artifacts/.removed.")) }
+        .alert(naming.map { if case .rename = $0 { tr("Renomear pasta", "Rename folder") } else { tr("Nova pasta", "New folder") } } ?? "",
                isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
-            TextField("Nome", text: $name)
+            TextField(tr("Nome", "Name"), text: $name)
             Button("OK") {
                 let n = naming; naming = nil
                 Task {
@@ -491,18 +491,18 @@ struct ArtifactsView: View {
                     }
                 }
             }
-            Button("Cancelar", role: .cancel) { naming = nil }
-        } message: { Text("Até 3 níveis; cada nome com até 40 caracteres.") }
-        .confirmationDialog("Remover a pasta \(removingFolder?.name ?? "")?", isPresented: Binding(get: { removingFolder != nil }, set: { if !$0 { removingFolder = nil } }),
+            Button(tr("Cancelar", "Cancel"), role: .cancel) { naming = nil }
+        } message: { Text(tr("Até 3 níveis; cada nome com até 40 caracteres.", "Up to 3 levels; each name up to 40 characters.")) }
+        .confirmationDialog(tr("Remover a pasta \(removingFolder?.name ?? "")?", "Remove folder \(removingFolder?.name ?? "")?"), isPresented: Binding(get: { removingFolder != nil }, set: { if !$0 { removingFolder = nil } }),
                             titleVisibility: .visible, presenting: removingFolder) { s in
-            Button(s.total == 0 ? "Remover" : "Mover artifacts para Sem pasta e remover", role: .destructive) {
+            Button(s.total == 0 ? tr("Remover", "Remove") : tr("Mover artifacts para Sem pasta e remover", "Move artifacts to No folder and remove"), role: .destructive) {
                 Task { if let p = s.path { await model.removeFolder(p, emptying: s.total > 0) } }
             }
-        } message: { s in Text(s.total == 0 ? "A pasta está vazia." : "Nenhum artifact é apagado.") }
-        .confirmationDialog("Remover \(model.selection.count == 1 ? "1 artifact" : "\(model.selection.count) artifacts")?", isPresented: $removingSelected,
+        } message: { s in Text(s.total == 0 ? tr("A pasta está vazia.", "The folder is empty.") : tr("Nenhum artifact é apagado.", "No artifact is deleted.")) }
+        .confirmationDialog(tr("Remover \(model.selection.count == 1 ? "1 artifact" : "\(model.selection.count) artifacts")?", "Remove \(model.selection.count == 1 ? "1 artifact" : "\(model.selection.count) artifacts")?"), isPresented: $removingSelected,
                             titleVisibility: .visible) {
-            Button("Remover", role: .destructive) { Task { await model.removeSelected() } }
-        } message: { Text("As pastas deles vão para artifacts/.removed.") }
+            Button(tr("Remover", "Remove"), role: .destructive) { Task { await model.removeSelected() } }
+        } message: { Text(tr("As pastas deles vão para artifacts/.removed.", "Their folders go to artifacts/.removed.")) }
     }
 
     /// The row's checkbox; shift-click checks the range from the last one clicked.
@@ -514,7 +514,7 @@ struct ArtifactsView: View {
             Image(systemName: on ? "checkmark.square.fill" : "square").font(.system(size: 15))
                 .foregroundStyle(on ? Color.collieAccent : Color.collieMuted)
         }
-        .buttonStyle(.plain).accessibilityLabel(r.title).accessibilityValue(on ? "selecionado" : "não selecionado")
+        .buttonStyle(.plain).accessibilityLabel(r.title).accessibilityValue(on ? tr("selecionado", "selected") : tr("não selecionado", "not selected"))
     }
 
     /// "N selecionados" · **Mover para…** · **Remover…** · **Cancelar**; ⌘A checks every row shown.
@@ -522,18 +522,18 @@ struct ArtifactsView: View {
         let n = model.selection.count
         return HStack(spacing: 8) {
             Text(n == 1 ? "1 selecionado" : "\(n) selecionados").font(.collieMono(12)).foregroundStyle(Color.collieText)
-            Button("Selecionar todos") { model.selection.selectAll(visible.filter { !model.selection.contains($0) }) }
+            Button(tr("Selecionar todos", "Select all")) { model.selection.selectAll(visible.filter { !model.selection.contains($0) }) }
                 .keyboardShortcut("a", modifiers: .command).buttonStyle(CollieButtonStyle(.quiet))
             Spacer(minLength: 0)
-            Menu("Mover para…") {
-                Button("Sem pasta") { Task { await model.moveSelected(to: nil) } }
+            Menu(tr("Mover para…", "Move to…")) {
+                Button(tr("Sem pasta", "No folder")) { Task { await model.moveSelected(to: nil) } }
                 ForEach(targets) { t in
                     Button(String(repeating: "  ", count: t.depth) + t.name) { Task { await model.moveSelected(to: t.path) } }
                 }
             }
             .fixedSize().disabled(n == 0 || model.busy)
-            Button("Remover…", role: .destructive) { removingSelected = true }.disabled(n == 0 || model.busy).buttonStyle(CollieButtonStyle(.quiet))
-            Button("Cancelar") { model.selecting = false }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
+            Button(tr("Remover…", "Remove…"), role: .destructive) { removingSelected = true }.disabled(n == 0 || model.busy).buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Cancelar", "Cancel")) { model.selecting = false }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
         }
         .padding(.horizontal, 16).padding(.vertical, 8).background(Color.collieSunken)
     }
@@ -545,19 +545,19 @@ struct ArtifactsView: View {
             Text(r.title).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
             if !r.warnings.isEmpty {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.collieAttention)
-                    .help(r.warnings.joined(separator: "\n")).accessibilityLabel("Avisos: " + r.warnings.joined(separator: ", "))
+                    .help(r.warnings.joined(separator: "\n")).accessibilityLabel(tr("Avisos: ", "Warnings: ") + r.warnings.joined(separator: ", "))
             }
             Spacer(minLength: 0)
             if let f = r.folder { Text(f).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1) }
             Text(r.statusLabel).font(.collieMono(11, r.status == "stale" ? .semibold : .medium)).foregroundStyle(statusColor(r)).help(r.importError ?? "")
             Menu {
-                Button("Abrir na Prévia") { Task { await model.openInPreview(r) } }
-                Button("Abrir no Navegador") { Task { await model.openInBrowser(r) } }
+                Button(tr("Abrir na Prévia", "Open in Preview")) { Task { await model.openInPreview(r) } }
+                Button(tr("Abrir no Navegador", "Open in Browser")) { Task { await model.openInBrowser(r) } }
                 moveMenu(r, targets)
                 Divider()
-                Button("Remover…", role: .destructive) { removing = r }
+                Button(tr("Remover…", "Remove…"), role: .destructive) { removing = r }
             } label: { Image(systemName: "ellipsis") }
-            .menuStyle(.borderlessButton).fixedSize().disabled(model.busy).accessibilityLabel("Ações de \(r.title)")
+            .menuStyle(.borderlessButton).fixedSize().disabled(model.busy).accessibilityLabel(tr("Ações de \(r.title)", "Actions for \(r.title)"))
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -574,12 +574,12 @@ struct ArtifactsView: View {
                     .opacity(s.hasChildren || !s.rows.isEmpty ? 1 : 0.3).accessibilityHidden(true)
                 Image(systemName: s.path == nil ? "tray" : s.presentation ? "play.rectangle" : "folder").accessibilityHidden(true)
                 Text(s.name).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
-                if s.pinned { Image(systemName: "pin.fill").font(.system(size: 10)).accessibilityLabel("Fixada") }
+                if s.pinned { Image(systemName: "pin.fill").font(.system(size: 10)).accessibilityLabel(tr("Fixada", "Pinned")) }
                 Text("\(s.total)").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                 Spacer(minLength: 0)
                 if model.selecting, !s.rows.isEmpty {
                     let ids = s.rows.map(\.id)
-                    Button(model.selection.all(ids) ? "Desmarcar todos" : "Selecionar todos") { model.selection.selectAll(ids) }
+                    Button(model.selection.all(ids) ? tr("Desmarcar todos", "Deselect all") : tr("Selecionar todos", "Select all")) { model.selection.selectAll(ids) }
                         .buttonStyle(CollieButtonStyle(.quiet))
                 }
             }
@@ -587,7 +587,7 @@ struct ArtifactsView: View {
         }
         .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
         .padding(.leading, CGFloat(s.depth) * 16).padding(.top, 4)
-        .accessibilityLabel("\(s.path ?? s.name), \(s.total) artifacts, \(s.collapsed ? "recolhida" : "aberta")")
+        .accessibilityLabel("\(s.path ?? s.name), \(s.total) artifacts, \(s.collapsed ? tr("recolhida", "collapsed") : tr("aberta", "expanded"))")
         .dropDestination(for: String.self) { ids, _ in
             // a row's id moves it (a selected one: the whole selection, in one move); a file from the Finder (its file URL) is added into the folder
             let files = ids.compactMap { $0.hasPrefix("file://") ? URL(string: $0) : nil }
@@ -601,14 +601,14 @@ struct ArtifactsView: View {
         }
         .contextMenu {
             if let p = s.path {
-                if s.depth < 2 { Button("Nova pasta dentro") { name = ""; naming = .create(p) } }
-                Button("Renomear…") { name = s.name; naming = .rename(p) }
-                Button(s.pinned ? "Desafixar" : "Fixar no topo") { Task { await model.setFolder(p, pinned: !s.pinned) } }
-                Button(s.presentation ? "Deixar de ser apresentação" : "Apresentação (páginas em ordem)") {
+                if s.depth < 2 { Button(tr("Nova pasta dentro", "New subfolder")) { name = ""; naming = .create(p) } }
+                Button(tr("Renomear…", "Rename…")) { name = s.name; naming = .rename(p) }
+                Button(s.pinned ? tr("Desafixar", "Unpin") : tr("Fixar no topo", "Pin to top")) { Task { await model.setFolder(p, pinned: !s.pinned) } }
+                Button(s.presentation ? tr("Deixar de ser apresentação", "Stop being a presentation") : tr("Apresentação (páginas em ordem)", "Presentation (pages in order)")) {
                     Task { await model.setFolder(p, presentation: !s.presentation) }
                 }
                 Divider()
-                Button("Remover…", role: .destructive) { removingFolder = s }
+                Button(tr("Remover…", "Remove…"), role: .destructive) { removingFolder = s }
             }
         }
     }
@@ -624,8 +624,8 @@ struct ArtifactsView: View {
 
     /// **Mover para…**: every folder (`targets`), and "Sem pasta".
     private func moveMenu(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
-        Menu("Mover para…") {
-            Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
+        Menu(tr("Mover para…", "Move to…")) {
+            Button(tr("Sem pasta", "No folder")) { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
             ForEach(targets) { t in
                 Button(String(repeating: "  ", count: t.depth) + t.name) { Task { await model.move(r.id, to: t.path) } }
                     .disabled(t.path.map(ArtifactFolderTree.key) == r.folder.map(ArtifactFolderTree.key))
@@ -652,7 +652,7 @@ struct ArtifactsView: View {
                     Text(r.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
                     if !r.warnings.isEmpty {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.collieAttention)
-                            .help(r.warnings.joined(separator: "\n")).accessibilityLabel("Avisos: " + r.warnings.joined(separator: ", "))
+                            .help(r.warnings.joined(separator: "\n")).accessibilityLabel(tr("Avisos: ", "Warnings: ") + r.warnings.joined(separator: ", "))
                     }
                     Spacer(minLength: 0)
                     Text(r.statusLabel).font(.collieMono(11, r.status == "stale" ? .semibold : .medium)).foregroundStyle(statusColor(r))
@@ -660,35 +660,35 @@ struct ArtifactsView: View {
                 }
                 Text("\(r.origin) · v\(r.version)").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                 if let net = r.needsNetwork, !net.isEmpty {
-                    Label("precisa de rede", systemImage: "wifi").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
-                        .help(net.joined(separator: "\n")).accessibilityLabel("Precisa de rede: " + net.joined(separator: ", "))
+                    Label(tr("precisa de rede", "needs network"), systemImage: "wifi").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                        .help(net.joined(separator: "\n")).accessibilityLabel(tr("Precisa de rede: ", "Needs network: ") + net.joined(separator: ", "))
                 }
-                Text("por \(r.by) · \(relative.localizedString(for: r.at, relativeTo: Date()))").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                Text(tr("por \(r.by) · \(relative.localizedString(for: r.at, relativeTo: Date()))", "by \(r.by) · \(relative.localizedString(for: r.at, relativeTo: Date()))")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                 if r.status == "importing" { ProgressView().progressViewStyle(.linear).tint(Color.collieSecondary) }
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
-                        if r.isExport { Button("Reexportar") { Task { await model.reexport(r) } }.buttonStyle(CollieButtonStyle(.attention)) }
-                        Button("Abrir no Navegador") { Task { await model.openInBrowser(r) } }
-                        Button("Abrir na Prévia") { Task { await model.openInPreview(r) } }
+                        if r.isExport { Button(tr("Reexportar", "Re-export")) { Task { await model.reexport(r) } }.buttonStyle(CollieButtonStyle(.attention)) }
+                        Button(tr("Abrir no Navegador", "Open in Browser")) { Task { await model.openInBrowser(r) } }
+                        Button(tr("Abrir na Prévia", "Open in Preview")) { Task { await model.openInPreview(r) } }
                         if !r.isExport {
-                            Menu("Exportar") {
+                            Menu(tr("Exportar", "Export")) {
                                 Button("PowerPoint (.pptx)") { exportRow(r, "pptx") }
                                 Button("PDF") { exportRow(r, "pdf") }
                             }.fixedSize()
                         }
-                        if r.status == "failed" { Button("Importar de novo") { Task { await model.reimport(r) } } }
-                        if r.status == "pending" { Button("Importar") { Task { await model.reimport(r) } } }
+                        if r.status == "failed" { Button(tr("Importar de novo", "Import again")) { Task { await model.reimport(r) } } }
+                        if r.status == "pending" { Button(tr("Importar", "Import")) { Task { await model.reimport(r) } } }
                     }
                     HStack(spacing: 6) {
-                        if r.source != nil { Button("Abrir origem") { Task { await model.openSource(r) } } }
-                        if r.isExport, r.file != nil { Button("Abrir no Design") { Task { await model.openInDesign(r) } } }
+                        if r.source != nil { Button(tr("Abrir origem", "Open source")) { Task { await model.openSource(r) } } }
+                        if r.isExport, r.file != nil { Button(tr("Abrir no Design", "Open in Design")) { Task { await model.openInDesign(r) } } }
                         moveMenu(r, targets).fixedSize()
-                        Button("Remover…", role: .destructive) { removing = r }.buttonStyle(CollieButtonStyle(.quiet))
+                        Button(tr("Remover…", "Remove…"), role: .destructive) { removing = r }.buttonStyle(CollieButtonStyle(.quiet))
                     }
                 }
                 .buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy).padding(.top, 4)
                 if !r.isExport, !model.exportWarnings(for: r.id).isEmpty {
-                    Text("Avisos da exportação\n" + model.exportWarnings(for: r.id).joined(separator: "\n")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                    Text(tr("Avisos da exportação\n", "Export warnings\n") + model.exportWarnings(for: r.id).joined(separator: "\n")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

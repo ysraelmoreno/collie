@@ -5,7 +5,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// Real WKWebView; deck pages served from a temp `artifacts/<id>/source/` folder through `collie-artifact://app/`.
-@MainActor @Suite(.serialized) struct DeckExporterTests {
+@MainActor @Suite(.serialized, .pt) struct DeckExporterTests {
     struct Site { let root: URL; let id: String; let url: URL; var exportDir: URL { root.appendingPathComponent("\(id)/.export") } }
 
     func site(_ html: String) throws -> Site {

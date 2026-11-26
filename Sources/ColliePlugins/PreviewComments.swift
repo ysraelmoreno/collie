@@ -11,7 +11,7 @@ import WebKit
 /// script only reports where the user clicked and which pin was opened.
 @MainActor final class PreviewComments: ObservableObject {
     static let world = WKContentWorld.world(name: "collie-comments")
-    static let noAddressee = "Nenhum terminal ligado a esta prévia: ligue um para entregar"
+    static var noAddressee: String { tr("Nenhum terminal ligado a esta prévia: ligue um para entregar", "No terminal linked to this preview: link one to deliver") }
 
     struct Message: Identifiable, Equatable { let id: String; let byName: String; let body: String; let at: Date?; let user: Bool }
     struct Thread: Identifiable, Equatable {
@@ -142,9 +142,9 @@ import WebKit
                                at: s(m["at"]).flatMap { try? Date($0, strategy: .iso8601) }, user: m["byTerminal"] == nil || m["byTerminal"] == .null)
             }
         } else { [] }
-        let notice: String? = o["undeliverable"] == .bool(true) ? "Não entregue: o terminal \(s(o["toName"]) ?? "") não existe mais"
+        let notice: String? = o["undeliverable"] == .bool(true) ? tr("Não entregue: o terminal \(s(o["toName"]) ?? "") não existe mais", "Not delivered: terminal \(s(o["toName"]) ?? "") no longer exists")
             : s(o["to"]) == nil ? noAddressee : nil
-        return Thread(id: id, short: s(o["short"]) ?? String(id.prefix(8)), n: n, anchorText: s(a["text"]) ?? s(a["selector"]) ?? "ponto da página",
+        return Thread(id: id, short: s(o["short"]) ?? String(id.prefix(8)), n: n, anchorText: s(a["text"]) ?? s(a["selector"]) ?? tr("ponto da página", "point on the page"),
                       selector: s(a["selector"]), x: d(a["x"]), y: d(a["y"]), resolved: o["resolved"] == .bool(true), notice: notice, messages: msgs)
     }
 
@@ -246,24 +246,24 @@ struct PreviewCommentsDrawer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Comentários").font(.collieUI(13, .semibold))
+                Text(tr("Comentários", "Comments")).font(.collieUI(13, .semibold))
                 Spacer()
-                Button { m.drawer = false; m.setMode(false) } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help("Fechar")
+                Button { m.drawer = false; m.setMode(false) } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(tr("Fechar", "Close"))
             }
-            Picker("Filtro", selection: $m.showAll) { Text("Abertos").tag(false); Text("Todos").tag(true) }
+            Picker(tr("Filtro", "Filter"), selection: $m.showAll) { Text(tr("Abertos", "Open")).tag(false); Text(tr("Todos", "All")).tag(true) }
                 .pickerStyle(.segmented).labelsHidden()
-            Button(m.mode ? "Clique na página… (cancelar)" : "Fixar comentário") { m.setMode(!m.mode) }
+            Button(m.mode ? tr("Clique na página… (cancelar)", "Click on the page… (cancel)") : tr("Fixar comentário", "Pin a comment")) { m.setMode(!m.mode) }
                 .buttonStyle(CollieButtonStyle(m.mode ? .primary : .secondary))
             if let e = m.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger).lineLimit(3) }
             if let d = m.draft {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Novo comentário em \(d.text ?? "um ponto da página")").font(.collieUI(12)).foregroundStyle(Color.collieMuted).lineLimit(2)
+                    Text(tr("Novo comentário em \(d.text ?? "um ponto da página")", "New comment on \(d.text ?? "a point on the page")")).font(.collieUI(12)).foregroundStyle(Color.collieMuted).lineLimit(2)
                     TextEditor(text: $text).font(.collieUI(12)).frame(height: 70)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.collieBorder))
                     HStack {
-                        Button("Enviar") { let t = text; Task { await m.send(t); if m.draft == nil { text = "" } } }
+                        Button(tr("Enviar", "Send")) { let t = text; Task { await m.send(t); if m.draft == nil { text = "" } } }
                             .disabled(m.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty).buttonStyle(CollieButtonStyle(.primary))
-                        Button("Cancelar") { m.draft = nil; text = "" }.buttonStyle(CollieButtonStyle(.secondary))
+                        Button(tr("Cancelar", "Cancel")) { m.draft = nil; text = "" }.buttonStyle(CollieButtonStyle(.secondary))
                     }
                 }
             }
@@ -271,7 +271,7 @@ struct PreviewCommentsDrawer: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         let shown = m.threads.filter { m.showAll || !$0.resolved }
-                        if shown.isEmpty { Text("Nenhum comentário").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
+                        if shown.isEmpty { Text(tr("Nenhum comentário", "No comments")).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
                         ForEach(shown) { t in thread(t).id(t.id) }
                     }
                 }
@@ -290,7 +290,7 @@ struct PreviewCommentsDrawer: View {
                     .background(Capsule().fill(Color.collieAccent.opacity(t.resolved ? 0.3 : 1))).foregroundStyle(.white)
                 Text(t.anchorText).font(.collieUI(12, .medium)).lineLimit(1)
                 if m.approximate.contains(t.id) {
-                    Text("posição aproximada").font(.collieMono(10, .medium)).foregroundStyle(Color.collieAttention)
+                    Text(tr("posição aproximada", "approximate position")).font(.collieMono(10, .medium)).foregroundStyle(Color.collieAttention)
                 }
             }
             if let n = t.notice { Text(n).font(.collieUI(11)).foregroundStyle(Color.collieAttention) }
@@ -304,13 +304,13 @@ struct PreviewCommentsDrawer: View {
                 }
             }
             HStack {
-                TextField("Responder…", text: Binding(get: { replies[t.id] ?? "" }, set: { replies[t.id] = $0 })).textFieldStyle(.roundedBorder)
-                Button("Enviar") {
+                TextField(tr("Responder…", "Reply…"), text: Binding(get: { replies[t.id] ?? "" }, set: { replies[t.id] = $0 })).textFieldStyle(.roundedBorder)
+                Button(tr("Enviar", "Send")) {
                     let r = replies[t.id] ?? ""
                     Task { if await m.followUp(t.id, r) { replies[t.id] = nil } }
                 }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
             }
-            Button(t.resolved ? "Reabrir" : "Resolver") { Task { await m.setResolved(t.id, !t.resolved) } }
+            Button(t.resolved ? tr("Reabrir", "Reopen") : tr("Resolver", "Resolve")) { Task { await m.setResolved(t.id, !t.resolved) } }
                 .disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
         }
         .padding(8)

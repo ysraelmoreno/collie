@@ -1,3 +1,4 @@
+import CollieCore
 import WebKit
 
 /// What every Collie web panel that must stay offline (external plug-ins, Diagram, Design) sets on its configuration
@@ -6,7 +7,7 @@ import WebKit
 /// in the view's empty initial document before anything loads, and the panel refuses to load (fails closed) when WebRTC
 /// is still there.
 enum WebLockdown {
-    static let failure = "bloqueio de rede indisponível"
+    static var failure: String { tr("bloqueio de rede indisponível", "network block unavailable") }
 
     static func harden(_ c: WKWebViewConfiguration) {
         // ponytail: private key (WebKit's own name); if a WebKit drops it, `peerConnectionsOff` fails closed

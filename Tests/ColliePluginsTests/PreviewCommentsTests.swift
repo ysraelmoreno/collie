@@ -34,7 +34,7 @@ private func comment(_ id: String, selector: String?, x: Double, y: Double, reso
                                                  "body": .string(body), "at": .string("2026-10-25T10:00:00Z")])])])
 }
 
-@MainActor @Suite(.serialized) struct PreviewCommentsTests {
+@MainActor @Suite(.serialized, .pt) struct PreviewCommentsTests {
     func project(_ html: String) throws -> URL {
         let u = DiagramFile.real(FileManager.default.temporaryDirectory.appendingPathComponent("preview-cm-\(UUID().uuidString)"))
         try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)

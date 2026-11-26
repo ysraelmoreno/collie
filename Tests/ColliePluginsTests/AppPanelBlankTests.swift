@@ -58,7 +58,7 @@ private final class RouteServer: @unchecked Sendable {
 /// Hypothesis 1 (the load runs before the service listens) and 2 (the origin's rule list blocks the page's own
 /// `app.js` / `style.css` on first use), each as a scenario; the page reports through `collie.context` that its
 /// script ran and its stylesheet applied.
-@MainActor @Suite(.serialized) struct AppPanelBlankTests {
+@MainActor @Suite(.serialized, .pt) struct AppPanelBlankTests {
     final class Calls: @unchecked Sendable {
         private let lock = NSLock(); private var list: [(String, [String: JSONValue])] = []
         func add(_ c: String, _ a: [String: JSONValue]) { lock.withLock { list.append((c, a)) } }

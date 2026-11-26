@@ -15,7 +15,7 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
     ArtifactFolderRow(path: path, count: 0, total: 0, color: nil, pinned: pinned, presentation: presentation, items: items)
 }
 
-@Suite struct ArtifactFolderTreeTests {
+@Suite(.pt) struct ArtifactFolderTreeTests {
     @Test func groupsInUserOrderPinnedFirstNoFolderLast() {
         let rows = [row("a", "Cliente/Landing"), row("b", nil), row("c", "cliente"), row("d", "Zeta")]
         let s = ArtifactFolderTree.sections(rows: rows, folders: [folder("Landing"), folder("Cliente"), folder("Vazia", pinned: true)])
@@ -58,7 +58,7 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
     }
 }
 
-@MainActor @Suite struct ArtifactFolderModelTests {
+@MainActor @Suite(.pt) struct ArtifactFolderModelTests {
     actor Log { var calls: [(String, [String: JSONValue])] = []; func add(_ c: String, _ a: [String: JSONValue]) { calls.append((c, a)) } }
 
     @Test func actionsCallTheDaemon() async {
@@ -88,7 +88,7 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
 
 /// A move used to refetch `artifact.list` twice (the action's refresh and the `artifact.changed` one): the daemon asks the
 /// design engine for every export's stamp on each list. A move or a folder change now refetches only `artifact.folders`.
-@MainActor @Suite struct ArtifactMoveRefreshTests {
+@MainActor @Suite(.pt) struct ArtifactMoveRefreshTests {
     actor Log {
         var calls: [String] = [], items: [String] = []
         func add(_ c: String) { calls.append(c) }
@@ -137,7 +137,7 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
     }
 }
 
-@Suite struct ArtifactSelectionTests {
+@Suite(.pt) struct ArtifactSelectionTests {
     @Test func toggleRangeAndCounts() {
         var s = ArtifactSelection()
         let order = ["a", "b", "c", "d", "e"]
@@ -176,7 +176,7 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
     }
 }
 
-@MainActor @Suite struct ArtifactBatchModelTests {
+@MainActor @Suite(.pt) struct ArtifactBatchModelTests {
     actor Log { var calls: [(String, [String: JSONValue])] = []; func add(_ c: String, _ a: [String: JSONValue]) { calls.append((c, a)) } }
 
     @Test func moveSelectedIsOneCallAndExits() async {

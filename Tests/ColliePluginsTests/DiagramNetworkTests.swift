@@ -6,7 +6,7 @@ import WebKit
 
 /// The Diagram panel never reaches the network: the hosts draw.io knows (fonts, its sites, GitHub, the M365 redirect)
 /// are blocked as loads and cancelled as navigations or new windows. No request leaves the machine in these tests.
-@MainActor @Suite(.serialized) struct DiagramNetworkTests {
+@MainActor @Suite(.serialized, .pt) struct DiagramNetworkTests {
     static let phoneHome = [
         "https://fonts.googleapis.com/css?family=Inter", "https://fonts.gstatic.com/s/inter/v1/a.woff2",
         "https://app.diagrams.net/", "https://viewer.diagrams.net/#M", "https://convert.diagrams.net/node/export",

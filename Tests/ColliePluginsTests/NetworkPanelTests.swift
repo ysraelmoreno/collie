@@ -122,7 +122,7 @@ private actor Fake {
     NetworkPanelModel(call: { c, a throws(ProtocolError) in try await fake.handle(c, a) })
 }
 
-@MainActor @Suite struct NetworkPanelTests {
+@MainActor @Suite(.pt) struct NetworkPanelTests {
     @Test func refreshListsOnlyOnlineEmulatorsAndPicksTheFirst() async {
         let m = model(Fake())
         await m.refresh()

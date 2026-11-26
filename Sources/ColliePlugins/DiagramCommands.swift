@@ -10,7 +10,7 @@ extension DiagramPanel {
         let previous = queue
         let mine = Task { @MainActor [weak self] () -> Result<JSONValue, ProtocolError> in
             await previous?.value
-            guard let self else { return .failure(ProtocolError(code: .notFound, message: "painel fechado")) }
+            guard let self else { return .failure(ProtocolError(code: .notFound, message: tr("painel fechado", "panel closed"))) }
             do throws(ProtocolError) { return .success(try await self.run(command, args)) } catch { return .failure(error) }
         }
         queue = Task { _ = await mine.value }
@@ -34,7 +34,7 @@ extension DiagramPanel {
                 throw ProtocolError(code: .invalidArgs, message: "diagram.mermaid: falta o texto Mermaid")
             }
             guard text.utf8.count <= Self.mermaidMaxBytes else {
-                throw ProtocolError(code: .invalidArgs, message: "diagram.mermaid: texto grande demais (máximo \(Self.mermaidMaxBytes >> 10) KiB)")
+                throw ProtocolError(code: .invalidArgs, message: tr("diagram.mermaid: texto grande demais (máximo \(Self.mermaidMaxBytes >> 10) KiB)", "diagram.mermaid: text too large (max \(Self.mermaidMaxBytes >> 10) KiB)"))
             }
             _ = try current()   // a bad file is refused before the editor is started
             try await ensureEditor()
@@ -54,13 +54,13 @@ extension DiagramPanel {
             return try await export(format, page: string(args, "page"))
         case "diagram.screenshot":
             try await ensureEditor(timeout: 25)   // within the command's 30 s
-            guard let web = webView else { throw ProtocolError(code: .unavailable, message: "o editor de diagramas não está aberto") }
+            guard let web = webView else { throw ProtocolError(code: .unavailable, message: tr("o editor de diagramas não está aberto", "the diagram editor is not open")) }
             let image: NSImage
             do { image = try await web.takeSnapshot(configuration: nil) } catch {
                 throw ProtocolError(code: .unavailable, message: "screenshot failed: \(error.localizedDescription)")
             }
             guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                throw ProtocolError(code: .unavailable, message: "screenshot: o painel não tem tamanho")
+                throw ProtocolError(code: .unavailable, message: tr("screenshot: o painel não tem tamanho", "screenshot: the panel has no size"))
             }
             return try BrowserPanel.savePNG(cg, in: screens, prefix: panel.id.uuidString + "-").get()
         default:
@@ -76,10 +76,10 @@ extension DiagramPanel {
     private func current(validated: Bool = true) throws(ProtocolError) -> (URL, String) {
         let url: URL
         if let file { url = file } else {
-            guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem pasta de projeto") }
+            guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: tr("painel sem pasta de projeto", "panel has no project folder")) }
             url = try DiagramFile.resolve(requestedFile, panelName: panel.name, projectRoot: root)
         }
-        guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem pasta de projeto") }
+        guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: tr("painel sem pasta de projeto", "panel has no project folder")) }
         let xml = try DiagramFile.read(url, root: root) ?? DiagramFile.empty
         if validated { try DiagramFile.validate(xml: xml) }   // R13: never handed to XMLDocument (or the agent) unchecked
         return (url, xml)
@@ -93,10 +93,10 @@ extension DiagramPanel {
     /// live editor (zoom and scroll kept). `over`: the version it was made from; the file must still be that one.
     private func replace(_ xml: String, over base: String? = nil) async throws(ProtocolError) -> URL {
         guard DiagramFile.mayOverwrite(lastUserEditAt: lastUserEditAt, now: Date()) else {
-            throw ProtocolError(code: .conflict, message: "o usuário está editando; tente de novo")
+            throw ProtocolError(code: .conflict, message: tr("o usuário está editando; tente de novo", "the user is editing; try again"))
         }
         let (url, disk) = try current(validated: base != nil)
-        if let base, disk != base { throw ProtocolError(code: .conflict, message: "o diagrama mudou durante a inserção; tente de novo") }
+        if let base, disk != base { throw ProtocolError(code: .conflict, message: tr("o diagrama mudou durante a inserção; tente de novo", "the diagram changed during the insert; try again")) }
         try writeFile(xml, at: url)
         if editorReady {
             send(["action": "merge", "xml": xml])
@@ -111,14 +111,14 @@ extension DiagramPanel {
         let end = Date().addingTimeInterval(timeout)
         while !editorReady, failure == nil, Date() < end { try? await Task.sleep(for: .milliseconds(50)) }
         if let failure { throw ProtocolError(code: .unavailable, message: failure) }
-        guard editorReady else { throw ProtocolError(code: .timeout, message: "o editor de diagramas não abriu em \(Int(timeout)) s") }
+        guard editorReady else { throw ProtocolError(code: .timeout, message: tr("o editor de diagramas não abriu em \(Int(timeout)) s", "the diagram editor did not open in \(Int(timeout)) s")) }
     }
 
     /// Mermaid → `<mxGraphModel>` by draw.io's own converter, in the editor's frame (offline). R7: an error or a result
     /// without shapes is refused, with the converter's message when it gives one. R13: no answer in `jsTimeout` (a promise
     /// that never settles, or a loop that holds the page) restarts the editor, so the panel's next command isn't stuck.
     private func mermaidModel(_ text: String) async throws(ProtocolError) -> String {
-        guard let web = webView else { throw ProtocolError(code: .unavailable, message: "o editor de diagramas não está aberto") }
+        guard let web = webView else { throw ProtocolError(code: .unavailable, message: tr("o editor de diagramas não está aberto", "the diagram editor is not open")) }
         let js = """
             const w = document.getElementById('f').contentWindow;
             if (!w || !w.mxMermaidToDrawio || !w.mxMermaidToDrawio.parseText) return {error: 'conversor Mermaid indisponível'};
@@ -137,12 +137,12 @@ extension DiagramPanel {
         }
         guard let r = reply else {
             resetEditor()
-            throw ProtocolError(code: .timeout, message: "Mermaid: o conversor não respondeu em \(Int(secs)) s; o editor foi reiniciado")
+            throw ProtocolError(code: .timeout, message: tr("Mermaid: o conversor não respondeu em \(Int(secs)) s; o editor foi reiniciado", "Mermaid: the converter did not answer in \(Int(secs)) s; the editor was restarted"))
         }
         if let e = r["jsError"] { throw ProtocolError(code: .internal, message: "Mermaid: \(e)") }
-        if let e = r["error"] { throw ProtocolError(code: .invalidArgs, message: "Mermaid não reconhecido: \(e)") }
+        if let e = r["error"] { throw ProtocolError(code: .invalidArgs, message: tr("Mermaid não reconhecido: \(e)", "Mermaid not recognized: \(e)")) }
         guard let xml = r["xml"], xml.contains("vertex=\"1\"") else {
-            throw ProtocolError(code: .invalidArgs, message: "Mermaid não reconhecido: nenhuma forma (\(Self.firstLine(text)))")
+            throw ProtocolError(code: .invalidArgs, message: tr("Mermaid não reconhecido: nenhuma forma (\(Self.firstLine(text)))", "Mermaid not recognized: no shapes (\(Self.firstLine(text)))"))
         }
         return xml
     }
@@ -172,20 +172,20 @@ extension DiagramPanel {
         if let page {
             let all = await Self.offMain { Self.pages(xml) }
             guard let i = all.firstIndex(where: { $0.name == page }) else {
-                throw ProtocolError(code: .invalidArgs, message: "página '\(page)' não existe (\(all.map(\.name).joined(separator: ", ")))")
+                throw ProtocolError(code: .invalidArgs, message: tr("página '\(page)' não existe (\(all.map(\.name).joined(separator: ", ")))", "page '\(page)' does not exist (\(all.map(\.name).joined(separator: ", ")))"))
             }
             if format == "png" { msg["pageId"] = all[i].id }
             else if i != currentPage {   // draw.io's SVG export is always of the page on screen
-                throw ProtocolError(code: .invalidArgs, message: "SVG só da página aberta no painel; use --format png para '\(page)'")
+                throw ProtocolError(code: .invalidArgs, message: tr("SVG só da página aberta no painel; use --format png para '\(page)'", "SVG only for the page open in the panel; use --format png for '\(page)'"))
             }
         } else if format == "png" { msg["currentPage"] = true }
         send(msg)
         // the editor's 30 s + this stay within the command's 60 s
         guard let r = await next("export", timeout: 25), case .string(let uri)? = r["data"] else {
-            throw ProtocolError(code: .timeout, message: "a exportação não respondeu")
+            throw ProtocolError(code: .timeout, message: tr("a exportação não respondeu", "the export did not answer"))
         }
         guard let data = Self.decodeDataURI(uri), !data.isEmpty else {
-            throw ProtocolError(code: .internal, message: "exportação vazia ou grande demais (máximo \(Self.exportMaxBytes >> 20) MiB)")
+            throw ProtocolError(code: .internal, message: tr("exportação vazia ou grande demais (máximo \(Self.exportMaxBytes >> 20) MiB)", "export empty or too large (max \(Self.exportMaxBytes >> 20) MiB)"))
         }
         let size = format == "png" ? Self.pngSize(data) : Self.svgSize(data)
         let out = screens.appendingPathComponent("\(panel.id.uuidString)-\(UUID().uuidString).\(format)")
@@ -193,7 +193,7 @@ extension DiagramPanel {
             try FileManager.default.createDirectory(at: screens, withIntermediateDirectories: true)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: screens.path)
             try data.write(to: out, options: .atomic)
-        } catch { throw ProtocolError(code: .internal, message: "exportação: \(error.localizedDescription)") }
+        } catch { throw ProtocolError(code: .internal, message: tr("exportação: \(error.localizedDescription)", "export: \(error.localizedDescription)")) }
         return .object(["path": .string(out.path), "width": .number(size.0), "height": .number(size.1)])
     }
 
@@ -213,15 +213,15 @@ extension DiagramPanel {
     nonisolated static func insert(model: String, into file: String, page: String?, current: Int) throws(ProtocolError) -> (xml: String, cells: Int) {
         func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         guard let src = try? XMLDocument(xmlString: model, options: xmlOptions), let srcRoot = src.rootElement()?.elements(forName: "root").first,
-              let doc = try? XMLDocument(xmlString: file, options: xmlOptions), let top = doc.rootElement() else { throw bad("Mermaid não reconhecido: resultado inválido") }
+              let doc = try? XMLDocument(xmlString: file, options: xmlOptions), let top = doc.rootElement() else { throw bad(tr("Mermaid não reconhecido: resultado inválido", "Mermaid not recognized: invalid result")) }
         let target: XMLElement
         if top.name == "mxGraphModel" { target = top } else {
             let diagrams = top.elements(forName: "diagram")
             let d: XMLElement?
             if let page { d = diagrams.first { $0.attribute(forName: "name")?.stringValue == page } }
             else { d = diagrams.isEmpty ? nil : diagrams[min(max(current, 0), diagrams.count - 1)] }
-            guard let d else { throw bad("página '\(page ?? "")' não existe") }
-            guard let m = d.elements(forName: "mxGraphModel").first else { throw bad("a página está comprimida; abra e salve o diagrama no painel antes") }
+            guard let d else { throw bad(tr("página '\(page ?? "")' não existe", "page '\(page ?? "")' does not exist")) }
+            guard let m = d.elements(forName: "mxGraphModel").first else { throw bad(tr("a página está comprimida; abra e salve o diagrama no painel antes", "the page is compressed; open and save the diagram in the panel first")) }
             target = m
         }
         let dstRoot: XMLElement
@@ -242,7 +242,7 @@ extension DiagramPanel {
         let dstRootId = dstAll.first { attr(cell($0), "parent") == nil }.flatMap { attr($0, "id") } ?? "0"
         let layer = dstAll.first { attr(cell($0), "parent") == dstRootId }.flatMap { attr($0, "id") } ?? "1"
         guard items.contains(where: { (try? $0.nodes(forXPath: "descendant-or-self::*[@vertex='1']").isEmpty) == false }) else {
-            throw bad("Mermaid não reconhecido: nenhuma forma")
+            throw bad(tr("Mermaid não reconhecido: nenhuma forma", "Mermaid not recognized: no shapes"))
         }
         // below the page's current content
         var bottom = 0.0

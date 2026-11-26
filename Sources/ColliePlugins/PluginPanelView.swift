@@ -180,7 +180,7 @@ public extension PluginPanelView {
         // the host call can beat the `.panel` event on ui.events: give the mirror up to 1 s
         for _ in 0..<20 where !panels().contains(where: { $0.id == panel }) { try? await Task.sleep(for: .milliseconds(50)) }
         guard panels().contains(where: { $0.id == panel }) else { throw ProtocolError(code: .notFound, message: "Panel not found") }
-        guard let v = instance(for: panel) else { throw ProtocolError(code: .unavailable, message: "Plug-in indisponível") }
+        guard let v = instance(for: panel) else { throw ProtocolError(code: .unavailable, message: tr("Plug-in indisponível", "Plug-in unavailable")) }
         return try await v.handle(command, args)
     }
 }

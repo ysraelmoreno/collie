@@ -15,7 +15,7 @@ private let caseDir = ProcessInfo.processInfo.environment["COLLIE_IMPORT_CASE"].
 private let cli = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().appendingPathComponent("vendor/figcraft/bin/figcraft-cli")
 
-@MainActor @Suite(.serialized) struct ImportCaseTests {
+@MainActor @Suite(.serialized, .pt) struct ImportCaseTests {
     @Test(.enabled(if: caseDir != nil), .timeLimit(.minutes(10)))
     func importCase() async throws {
         let dir = try #require(caseDir), out = dir.deletingLastPathComponent().appendingPathComponent("out")

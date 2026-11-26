@@ -123,7 +123,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     private func apply() {
         guard let spec, case .external(let v0) = spec.source else {
             teardown("plug-in removido")
-            return box.placeholder("Plug-in \(panel.pluginId) não está instalado")
+            return box.placeholder(tr("Plug-in \(panel.pluginId) não está instalado", "Plug-in \(panel.pluginId) is not installed"))
         }
         let v = spec.uiURL.map { v0 + "|" + $0 } ?? spec.appPin.map { v0 + "|" + $0 } ?? v0   // an app's page moves with its URL or pin too
         guard v != version else { return }
@@ -136,7 +136,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         if let dir = spec.appFolder, let pin = spec.appPin {   // an app do cercado's ui/ file: the bytes the user approved
             guard let (files, sha) = try? PluginManifest.appFiles(URL(fileURLWithPath: dir)), sha == pin,
                   let data = files[PluginManifest.fileName], let m = try? PluginManifest.decode(data), m.id == spec.id, !m.uiIsURL else {
-                return box.placeholder("\(spec.title) mudou depois da aprovação: aprove de novo (collie app attach \(spec.id))")
+                return box.placeholder(tr("\(spec.title) mudou depois da aprovação: aprove de novo (collie app attach \(spec.id))", "\(spec.title) changed after approval: approve it again (collie app attach \(spec.id))"))
             }
             version = v
             return load(title: m.name, id: m.id, page: URL(string: "\(PluginSchemeHandler.scheme)://\(m.id)/\(m.ui.dropFirst("ui/".count))")!,
@@ -144,7 +144,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         let folder = host.root.appendingPathComponent("plugins").appendingPathComponent(spec.id).appendingPathComponent(v)
         guard let m = try? PluginManifest.load(folder: folder), m.id == spec.id, m.version == v else {
-            return box.placeholder("Plug-in \(spec.title) não pôde ser carregado")
+            return box.placeholder(tr("Plug-in \(spec.title) não pôde ser carregado", "Plug-in \(spec.title) could not be loaded"))
         }
         version = v
         load(title: m.name, id: m.id, page: URL(string: "\(PluginSchemeHandler.scheme)://\(m.id)/\(m.ui.dropFirst("ui/".count))")!,
@@ -189,7 +189,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         Task { [weak self] in
             let rules = if let origin { await Self.rules(origin: origin) } else { await Self.rules() }
             guard let self, self.gen == g, let web = self.webView else { return }
-            guard let rules else { self.teardown("bloqueio de rede indisponível"); return self.box.placeholder("Plug-in \(title): bloqueio de rede indisponível") }
+            guard let rules else { self.teardown(tr("bloqueio de rede indisponível", "network block unavailable")); return self.box.placeholder(tr("Plug-in \(title): bloqueio de rede indisponível", "Plug-in \(title): network block unavailable")) }
             web.configuration.userContentController.add(rules)
             // fail closed: the WebRTC switch is private, so check it took before the page exists
             guard await WebLockdown.peerConnectionsOff(web), self.gen == g else {
@@ -220,7 +220,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
         NotificationCenter.default.removeObserver(self, name: .collieThemeChanged, object: nil)
-        teardown("painel fechado")
+        teardown(tr("painel fechado", "panel closed"))
     }
 
     public static func panelRemoved(_ panel: Panel, host: PanelHostContext) {
@@ -293,15 +293,15 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         if command == "app.snapshot" { return try await snapshot() }
         let removed = ProtocolError(code: .unavailable, message: "plug-in removido")
         guard let (p, cmd) = PluginRegistry.command(command), p.id == panel.pluginId, case .external(let v) = p.source else {
-            throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não está instalado")
+            throw ProtocolError(code: .unavailable, message: tr("plug-in \(panel.pluginId) não está instalado", "plug-in \(panel.pluginId) is not installed"))
         }
         // the registry moved on before its notification ran: never the old page (an app's version also carries "|pin")
         if version.map({ $0 != v && !$0.hasPrefix(v + "|") }) ?? true { refresh() }
         await specTask?.value   // an app's own paddock's spec, being fetched
-        guard version != nil else { throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não pôde ser carregado") }
+        guard version != nil else { throw ProtocolError(code: .unavailable, message: tr("plug-in \(panel.pluginId) não pôde ser carregado", "plug-in \(panel.pluginId) could not be loaded")) }
         let seconds = cmd.timeoutSeconds ?? 30
         let deadline = ContinuousClock.now + .seconds(seconds)
-        let timedOut = ProtocolError(code: .timeout, message: "'\(command)' não respondeu em \(Int(seconds)) s")
+        let timedOut = ProtocolError(code: .timeout, message: tr("'\(command)' não respondeu em \(Int(seconds)) s", "'\(command)' did not answer in \(Int(seconds)) s"))
         while !ready {   // the page registers its handler after loading
             guard webView != nil else { throw removed }
             guard ContinuousClock.now < deadline else { throw timedOut }
@@ -314,7 +314,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             web.callAsyncJavaScript("window.__collieDispatch(id, name, JSON.parse(args))",
                                     arguments: ["id": id, "name": name, "args": String(decoding: argsJSON, as: UTF8.self)],
                                     in: nil, in: .page) { [weak self] res in
-                if case .failure = res { self?.finish(id, .failure(ProtocolError(code: .unavailable, message: "a página do plug-in não respondeu"))) }
+                if case .failure = res { self?.finish(id, .failure(ProtocolError(code: .unavailable, message: tr("a página do plug-in não respondeu", "the plug-in page did not answer")))) }
             }
             Task { [weak self] in
                 try? await Task.sleep(until: deadline)
@@ -322,9 +322,9 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             }
         }
         let text = try r.get()
-        guard text.utf8.count <= Self.resultCap else { throw ProtocolError(code: .invalidArgs, message: "resultado do plug-in maior que 1 MiB") }
+        guard text.utf8.count <= Self.resultCap else { throw ProtocolError(code: .invalidArgs, message: tr("resultado do plug-in maior que 1 MiB", "plug-in result larger than 1 MiB")) }
         guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else {
-            throw ProtocolError(code: .internal, message: "resultado do plug-in não é JSON")
+            throw ProtocolError(code: .internal, message: tr("resultado do plug-in não é JSON", "plug-in result is not JSON"))
         }
         return try outputPath(value, outputFile: cmd.outputFile)
     }
@@ -333,25 +333,25 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `.defaultClient` world (the page's JS can't touch it). Payloads and styles are dropped: text, boxes, links,
     /// alt; ≤ 1 MiB.
     func snapshot() async throws(ProtocolError) -> JSONValue {
-        guard isApp, let web = webView else { throw ProtocolError(code: .unavailable, message: "o painel não mostra a página de um app agora") }
-        let late = ProtocolError(code: .timeout, message: "a página não terminou o snapshot em 15 s")
+        guard isApp, let web = webView else { throw ProtocolError(code: .unavailable, message: tr("o painel não mostra a página de um app agora", "the panel is not showing an app page right now")) }
+        let late = ProtocolError(code: .timeout, message: tr("a página não terminou o snapshot em 15 s", "the page did not finish the snapshot in 15 s"))
         let id = UUID().uuidString
         let r: Result<String, ProtocolError> = await withCheckedContinuation { c in
             pending[id] = c
             web.callAsyncJavaScript(HTMLSnapshotScript.source, arguments: [:], in: nil, in: .defaultClient) { [weak self] res in
                 switch res {
                 case .success(let v as String): self?.finish(id, .success(v))
-                default: self?.finish(id, .failure(ProtocolError(code: .internal, message: "o snapshot da página falhou")))
+                default: self?.finish(id, .failure(ProtocolError(code: .internal, message: tr("o snapshot da página falhou", "the page snapshot failed"))))
                 }
             }
             Task { [weak self] in try? await Task.sleep(for: .seconds(15)); self?.finish(id, .failure(late)) }
         }
         guard case .object(var o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(try r.get().utf8)) else {
-            throw ProtocolError(code: .internal, message: "snapshot inválido")
+            throw ProtocolError(code: .internal, message: tr("snapshot inválido", "invalid snapshot"))
         }
         o["root"] = o["root"].map(Self.lean)
         let v = JSONValue.object(o)
-        guard ((try? JSONEncoder().encode(v).count) ?? Int.max) <= Self.resultCap else { throw ProtocolError(code: .invalidArgs, message: "snapshot maior que 1 MiB") }
+        guard ((try? JSONEncoder().encode(v).count) ?? Int.max) <= Self.resultCap else { throw ProtocolError(code: .invalidArgs, message: tr("snapshot maior que 1 MiB", "snapshot larger than 1 MiB")) }
         return v
     }
 
@@ -375,7 +375,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             o["path"] = .string(f.path)
             return .object(o)
         }
-        if outputFile { throw ProtocolError(code: .invalidArgs, message: "o path do resultado precisa vir de collie.files.output") }
+        if outputFile { throw ProtocolError(code: .invalidArgs, message: tr("o path do resultado precisa vir de collie.files.output", "the result path must come from collie.files.output")) }
         return v
     }
 
@@ -388,27 +388,27 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             Self.origin(of: URL(string: "\(so.protocol)://\(so.host.contains(":") ? "[\(so.host)]" : so.host)" + (so.port == 0 ? "" : ":\(so.port)"))) == origin
         } else { so.protocol == PluginSchemeHandler.scheme && so.host == panel.pluginId }
         guard m.frameInfo.isMainFrame, own, m.webView === webView,
-              let body = m.body as? [String: Any], let op = body["op"] as? String else { return (nil, "chamada inválida") }
+              let body = m.body as? [String: Any], let op = body["op"] as? String else { return (nil, tr("chamada inválida", "invalid call")) }
         func str(_ k: String) -> String? { body[k] as? String }
         switch op {
         case "ready":
             ready = true
             return (true, nil)
         case "result":
-            guard let id = str("id"), let ok = body["ok"] as? Bool, let value = str("value") else { return (nil, "resultado inválido") }
+            guard let id = str("id"), let ok = body["ok"] as? Bool, let value = str("value") else { return (nil, tr("resultado inválido", "invalid result")) }
             finish(id, ok ? .success(value)
                        : .failure(ProtocolError(code: .invalidArgs, message: "plug-in: " + String(value.prefix(500)).filter { !$0.isNewline })))
             return (true, nil)
         case "emit":
-            guard let event = str("event"), spec?.events.contains(event) == true else { return (nil, "evento não declarado no manifesto") }
+            guard let event = str("event"), spec?.events.contains(event) == true else { return (nil, tr("evento não declarado no manifesto", "event not declared in the manifest")) }
             guard let raw = str("payload"), raw.utf8.count <= Self.payloadCap,
-                  let payload = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "payload inválido ou maior que 64 KiB") }
+                  let payload = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, tr("payload inválido ou maior que 64 KiB", "invalid payload or larger than 64 KiB")) }
             host.emit(event, payload)
             return (true, nil)
         case "context":   // slice 3: an app's page only; the daemon keeps it for `collie app context`
-            guard isApp else { return (nil, "collie.context é só para apps do cercado") }
+            guard isApp else { return (nil, tr("collie.context é só para apps do cercado", "collie.context is only for paddock apps")) }
             guard let raw = str("value"), raw.utf8.count <= 16 * 1024,
-                  let v = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "contexto inválido ou maior que 16 KiB") }
+                  let v = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, tr("contexto inválido ou maior que 16 KiB", "invalid context or larger than 16 KiB")) }
             do throws(ProtocolError) { _ = try await host.call("admin.app.context", ["panel": .string(panel.id.uuidString), "context": v]) }
             catch { return (nil, error.message) }
             return (true, nil)
@@ -417,26 +417,26 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             return (((try? String(contentsOf: f, encoding: .utf8)) ?? "{}"), nil)
         case "state.set":
             guard let raw = str("value"), raw.utf8.count <= Self.stateCap else { return (nil, "estado maior que 256 KiB") }
-            guard case .object? = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "o estado precisa ser um objeto") }
-            do { try Self.writePrivate(Data(raw.utf8), to: Self.stateFile(panel, root: host.root)) } catch { return (nil, "não foi possível gravar o estado") }
+            guard case .object? = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, tr("o estado precisa ser um objeto", "the state must be an object")) }
+            do { try Self.writePrivate(Data(raw.utf8), to: Self.stateFile(panel, root: host.root)) } catch { return (nil, tr("não foi possível gravar o estado", "could not write the state")) }
             return (true, nil)
         case "files.output":
             guard let name = str("name"), Self.validOutputName(name) else {
-                return (nil, "nome inválido: letras, dígitos, . _ -, extensão png|svg|json|txt|md|csv|html")
+                return (nil, tr("nome inválido: letras, dígitos, . _ -, extensão png|svg|json|txt|md|csv|html", "invalid name: letters, digits, . _ -, extension png|svg|json|txt|md|csv|html"))
             }
             guard let b64 = str("data"), b64.utf8.count <= Self.outputCap / 3 * 4 + 4, let data = Data(base64Encoded: b64), data.count <= Self.outputCap else {
-                return (nil, "arquivo inválido (base64) ou maior que 16 MiB")
+                return (nil, tr("arquivo inválido (base64) ou maior que 16 MiB", "invalid file (base64) or larger than 16 MiB"))
             }
-            guard Self.chargeOutput(panel.pluginId, data.count) else { return (nil, "limite de 64 MiB de arquivos por dia atingido") }
+            guard Self.chargeOutput(panel.pluginId, data.count) else { return (nil, tr("limite de 64 MiB de arquivos por dia atingido", "daily limit of 64 MiB of files reached")) }
             let token = UUID().uuidString
             guard let file = Self.writeOutput(data, name: "\(panel.id.uuidString)-\(token)-\(name)", panel: panel, root: host.root) else {
-                return (nil, "não foi possível gravar o arquivo")
+                return (nil, tr("não foi possível gravar o arquivo", "could not write the file"))
             }
             outputs[token] = file
             Self.pruneOutputs(Self.outputDir(panel, root: host.root))
             return ("{\"path\":\"\(Self.outputScheme)\(token)\"}", nil)
         default:
-            return (nil, "operação desconhecida")
+            return (nil, tr("operação desconhecida", "unknown operation"))
         }
     }
 
@@ -541,7 +541,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     final class Box: NSView {
         weak var owner: WebPluginPanel?
         let label = NSTextField(wrappingLabelWithString: "")
-        private let retryButton = NSButton(title: "Tentar de novo", target: nil, action: nil)
+        private let retryButton = NSButton(title: tr("Tentar de novo", "Try again"), target: nil, action: nil)
         private var retry: (() -> Void)?
         private var web: NSView?
         override var isFlipped: Bool { true }
@@ -585,7 +585,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         weak var owner: WebPluginPanel?
         init(_ o: WebPluginPanel) { owner = o }
         @MainActor func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) async -> (Any?, String?) {
-            guard let owner else { return (nil, "painel fechado") }
+            guard let owner else { return (nil, tr("painel fechado", "panel closed")) }
             return await owner.message(m)
         }
     }
@@ -608,7 +608,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
         guard event == "collie.service", origin != nil, case .object(let o) = payload, case .string(let state)? = o["state"] else { return }
         switch state {
         case "starting":
-            box.placeholder("\(title): iniciando o serviço…")   // the web view stays the panel's; running shows it again
+            box.placeholder(tr("\(title): iniciando o serviço…", "\(title): starting the service…"))   // the web view stays the panel's; running shows it again
         case "running":
             guard let web = webView else { return }
             sawRunning = true
@@ -616,7 +616,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
             box.show(web)
             reloadPage(web)
         case "failed":
-            let why: String = if case .string(let r)? = o["reason"] { r } else { "o serviço parou" }
+            let why: String = if case .string(let r)? = o["reason"] { r } else { tr("o serviço parou", "the service stopped") }
             webView?.isHidden = true
             let host = host, panel = panel
             box.placeholder("\(title) parou: \(why)", retry: { Task { _ = try? await host.call("admin.app.restart", ["panel": .string(panel.id.uuidString)]) } })
@@ -634,7 +634,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
         webView.isHidden = true
         // nothing of the page shown yet: the service is still coming up (attach returns while it is `starting`); its
         // `running` event loads the page
-        box.placeholder(committed || sawRunning ? "\(title) não está respondendo em \(at)" : "Iniciando \(title)…", retry: { [weak self, weak webView] in
+        box.placeholder(committed || sawRunning ? tr("\(title) não está respondendo em \(at)", "\(title) is not responding at \(at)") : tr("Iniciando \(title)…", "Starting \(title)…"), retry: { [weak self, weak webView] in
             guard let self, self.gen == g, let webView, webView === self.webView else { return }
             webView.isHidden = false
             self.box.show(webView)
@@ -651,12 +651,12 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard webView === self.webView else { return }
         ready = false
-        for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: "a página do plug-in parou"))) }
+        for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: tr("a página do plug-in parou", "the plug-in page stopped")))) }
         pending = [:]
         crashes += 1
         guard crashes <= Self.crashesAllowed else {
-            teardown("a página do plug-in parou")
-            return box.placeholder("Plug-in \(title): a página parou várias vezes")
+            teardown(tr("a página do plug-in parou", "the plug-in page stopped"))
+            return box.placeholder(tr("Plug-in \(title): a página parou várias vezes", "Plug-in \(title): the page stopped several times"))
         }
         let g = gen, delay = 0.5 * pow(2, Double(crashes - 1))
         Task { [weak self, weak webView] in
@@ -671,7 +671,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
         committed = true
         guard ready else { return }
         ready = false
-        for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: "a página do plug-in recarregou"))) }
+        for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: tr("a página do plug-in recarregou", "the plug-in page reloaded")))) }
         pending = [:]
     }
     /// Camera and microphone: never (motion permission is iOS-only) (the page could hand a recording out through a command result).

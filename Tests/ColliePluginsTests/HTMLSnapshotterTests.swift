@@ -11,7 +11,7 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
     .appendingPathComponent("Fixtures/html-import")
 
 /// Real WKWebView; pages served from a temp `artifacts/<id>/source/` folder through `collie-artifact://app/`.
-@MainActor @Suite(.serialized) struct HTMLSnapshotterTests {
+@MainActor @Suite(.serialized, .pt) struct HTMLSnapshotterTests {
     struct Site { let root: URL; let id: String; let url: URL; var importDir: URL { root.appendingPathComponent("\(id)/.import") } }
 
     /// A temp artifacts root with `files` written under `<id>/source/`.

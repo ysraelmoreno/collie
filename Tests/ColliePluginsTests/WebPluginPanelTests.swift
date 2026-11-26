@@ -65,7 +65,7 @@ collie.onCommand(async (name, args) => {
 
 /// Plug-ins installed into a temp root (the daemon's store, as the user's install would) and registered in this
 /// process, panels hosted in an off-screen window.
-@MainActor @Suite(.serialized) struct WebPluginPanelTests {
+@MainActor @Suite(.serialized, .pt) struct WebPluginPanelTests {
     final class Emits: @unchecked Sendable {
         private let lock = NSLock(); private var list: [String] = []
         func add(_ n: String) { lock.withLock { list.append(n) } }
@@ -379,7 +379,7 @@ collie.onCommand(async (name, args) => {
 
 /// Apps do cercado (spec 2026-11-08): a URL page gets a rule list that lets through only its service's origin, and the
 /// bridge exists only in a document of that origin.
-@MainActor @Suite struct AppPanelRulesTests {
+@MainActor @Suite(.pt) struct AppPanelRulesTests {
     @Test func rulesLetOnlyTheServiceOriginThrough() async throws {
         let json = WebPluginPanel.ruleJSON(origin: "http://127.0.0.1:4100")
         let rules = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: [String: String]]])
@@ -430,7 +430,7 @@ private final class PageServer: @unchecked Sendable {
 
 /// Apps do cercado, slice 3: the page's `collie.context` reaches the daemon through the host; `app.snapshot` reads the
 /// live page in the isolated world, without styles or payloads.
-@MainActor @Suite(.serialized) struct AppPanelContextTests {
+@MainActor @Suite(.serialized, .pt) struct AppPanelContextTests {
     final class Calls: @unchecked Sendable {
         private let lock = NSLock(); private var list: [(String, [String: JSONValue])] = []
         func add(_ c: String, _ a: [String: JSONValue]) { lock.withLock { list.append((c, a)) } }
@@ -510,7 +510,7 @@ private func appFolder(_ dir: URL, greeting: String) throws -> PluginManifest {
 }
 
 /// One app id approved in two paddocks: the panel runs its own paddock's ui and pin, not the registry's (the other's).
-@MainActor @Suite(.serialized) struct AppPanelOwnPaddockTests {
+@MainActor @Suite(.serialized, .pt) struct AppPanelOwnPaddockTests {
     @Test func loadsItsPaddocksApp() async throws {
         try await PluginRegistry.exclusively { () async throws in
             let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()
@@ -525,7 +525,7 @@ private func appFolder(_ dir: URL, greeting: String) throws -> PluginManifest {
 
 /// Apps do cercado, slice 4: an app's `ui/` page is served from the bytes that hash to its pin, read once; a folder
 /// that no longer matches shows a placeholder instead.
-@MainActor @Suite(.serialized) struct AppFilePanelTests {
+@MainActor @Suite(.serialized, .pt) struct AppFilePanelTests {
     @Test func servesThePinnedUIFiles() async throws {
         try await PluginRegistry.exclusively { () async throws in
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()
@@ -564,7 +564,7 @@ private func appFolder(_ dir: URL, greeting: String) throws -> PluginManifest {
 }
 
 /// T2: the tokens handed to plug-in pages come from the active palette, not from the built-in one.
-@MainActor @Suite(.serialized) struct WebPluginThemeTests {
+@MainActor @Suite(.serialized, .pt) struct WebPluginThemeTests {
     @Test func themeJSONCarriesTheActivePalette() async throws {
         try await PluginRegistry.exclusively { () async throws in
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()

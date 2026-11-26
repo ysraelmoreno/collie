@@ -8,7 +8,7 @@ import CollieProtocol
 
 /// A headless browser panel: the store hosts its view in a never-ordered `BrowserInput.HostWindow` (Review Focus 1:
 /// rAF and timers keep running, screenshots aren't blank). Local HTML only.
-@MainActor @Suite(.serialized) struct BrowserHeadlessTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserHeadlessTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("headless-\(UUID().uuidString)")
 
     func obj(_ v: JSONValue) -> [String: JSONValue] { if case .object(let o) = v { return o }; return [:] }

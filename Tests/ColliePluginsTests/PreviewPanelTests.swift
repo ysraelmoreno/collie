@@ -9,7 +9,7 @@ import CollieProtocol
 
 /// The Prévia against a temp project (no app): it serves the page and its folder, nothing else, stays offline, reloads on
 /// change (once per burst, keeping the scroll), shows artifacts, sets the theme and keeps the page's errors.
-@MainActor @Suite(.serialized) struct PreviewPanelTests {
+@MainActor @Suite(.serialized, .pt) struct PreviewPanelTests {
     func project() throws -> URL {
         let u = FileManager.default.temporaryDirectory.appendingPathComponent("preview-panel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)

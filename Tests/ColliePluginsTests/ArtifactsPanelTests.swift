@@ -49,7 +49,7 @@ private actor Fake {
     return (ArtifactsModel(call: { c, a throws(ProtocolError) in try await f.handle(c, a) }, window: window), f)
 }
 
-@MainActor @Suite struct ArtifactsPanelTests {
+@MainActor @Suite(.pt) struct ArtifactsPanelTests {
     @Test func eventsCoalesce() async throws {
         let (m, f) = make(window: .milliseconds(500))
         await m.handleEvent("browser.loaded")   // not ours

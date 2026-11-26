@@ -32,7 +32,7 @@ private final class Calls: @unchecked Sendable {   // `lock` guards `args`
     return (m, calls)
 }
 
-@MainActor @Suite struct MemoryObservabilityPanelTests {
+@MainActor @Suite(.pt) struct MemoryObservabilityPanelTests {
     @Test func tabSitsNextToLearning() {
         #expect(MemoryPanelModel.Tab.allCases.prefix(2) == [.learning, .observability])
         #expect(MemoryPanelModel.Tab.observability.rawValue == "Observabilidade")

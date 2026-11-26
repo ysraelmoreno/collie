@@ -145,7 +145,7 @@ import WebKit
             startIfNeeded()
             let deadline = Date().addingTimeInterval(25)
             while loads == 0, failure == nil, !closed, Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
-            guard let web = webView, loads > 0 else { throw ProtocolError(code: .unavailable, message: failure ?? "a prévia não carregou a página") }
+            guard let web = webView, loads > 0 else { throw ProtocolError(code: .unavailable, message: failure ?? tr("a prévia não carregou a página", "the preview did not load the page")) }
             // DX backlog 13: a panel never shown has a 0x0 view (nothing to capture): give it a size first
             if web.bounds.width < 1 || web.bounds.height < 1 { web.frame = CGRect(x: 0, y: 0, width: 1280, height: 800) }
             let cg = args["full-page"] == .bool(true) ? try await BrowserPanel.fullPage(web) : try await BrowserPanel.snapshot(web, rect: nil)
@@ -190,13 +190,13 @@ import WebKit
     fileprivate func start() {
         started = true; failure = nil
         Task { await comments.refresh() }
-        box.overlay("Abrindo…")
+        box.overlay(tr("Abrindo…", "Opening…"))
         if let id = artifactId {
             header.file = "artifact"
             Task { [weak self] in await self?.show(id) }
             return
         }
-        guard let root = projectRoot else { return fail("Painel sem pasta de projeto: abra-o de novo") }
+        guard let root = projectRoot else { return fail(tr("Painel sem pasta de projeto: abra-o de novo", "Panel has no project folder: open it again")) }
         let url: URL
         do throws(ProtocolError) { url = try PreviewFile.resolve(string("file") ?? "", projectRoot: root) }
         catch { return fail(error.message) }
@@ -207,8 +207,8 @@ import WebKit
         // sibling, same inode) isn't seen: **Recarregar** covers it.
         watcher = FileWatch(file: url, root: root) { [weak self] in self?.fileChanged() }
         guard let path = rel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let page = URL(string: "\(PreviewSchemeHandler.scheme)://app/\(path)") else { return fail("Caminho inválido: \(rel)") }
-        if (try? DiagramFile.readData(url, root: root, noun: "página")) ?? nil == nil { header.status = "Arquivo removido" }
+              let page = URL(string: "\(PreviewSchemeHandler.scheme)://app/\(path)") else { return fail(tr("Caminho inválido: \(rel)", "Invalid path: \(rel)")) }
+        if (try? DiagramFile.readData(url, root: root, noun: "página")) ?? nil == nil { header.status = tr("Arquivo removido", "File removed") }
         open(page)
     }
 
@@ -218,7 +218,7 @@ import WebKit
         do throws(ProtocolError) {
             let a = try await host.call("artifact.get", ["id": .string(id)])
             guard case .object(let o) = a, case .string(let s)? = o["url"], let u = URL(string: s),
-                  u.scheme == BrowserPanel.artifactScheme, u.host == "app" else { return fail("Artifact sem página") }
+                  u.scheme == BrowserPanel.artifactScheme, u.host == "app" else { return fail(tr("Artifact sem página", "Artifact has no page")) }
             if case .string(let t)? = o["title"] { header.file = t }
             let folder: String? = if case .string(let f)? = o["folder"] { f } else { nil }
             header.folder = folder
@@ -287,7 +287,7 @@ import WebKit
         Task { [weak self] in
             let rules = try? await HTMLSnapshotter.ruleList()
             guard let self, !self.closed else { return }
-            guard let rules else { return self.fail("Não consegui bloquear a rede da prévia") }
+            guard let rules else { return self.fail(tr("Não consegui bloquear a rede da prévia", "Could not block the preview's network")) }
             self.makeWebView(rules: rules, url: url)
         }
     }
@@ -311,7 +311,7 @@ import WebKit
         box.card.addSubview(web); box.needsLayout = true
         Task { [weak self] in   // fail closed: the WebRTC switch is private, check it took before loading
             guard let self, !self.closed, self.webView === web else { return }
-            guard await WebLockdown.peerConnectionsOff(web) else { return self.fail("Não consegui bloquear a rede da prévia") }
+            guard await WebLockdown.peerConnectionsOff(web) else { return self.fail(tr("Não consegui bloquear a rede da prévia", "Could not block the preview's network")) }
             guard !self.closed, self.webView === web else { return }
             self.box.overlay(nil)
             web.load(URLRequest(url: url))
@@ -358,7 +358,7 @@ import WebKit
     func fileChanged() {
         guard let file, let root = projectRoot else { return }
         do throws(ProtocolError) {
-            guard try DiagramFile.readData(file, root: root, noun: "página") != nil else { header.status = "Arquivo removido"; return }
+            guard try DiagramFile.readData(file, root: root, noun: "página") != nil else { header.status = tr("Arquivo removido", "File removed"); return }
         } catch { header.status = error.message; return }
         header.status = nil
         saved = nil
@@ -371,11 +371,11 @@ import WebKit
     /// `root` (the files it links) unless that is the project root, and `nofollow`. Refused when the page no longer
     /// resolves to the same file (a folder swapped for a link) or can't be read without following one.
     func saveArgs() throws(ProtocolError) -> [String: JSONValue] {
-        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "a prévia não tem página") }
-        let moved = ProtocolError(code: .invalidArgs, message: "a pasta da página mudou (link simbólico?): reabra a prévia")
+        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: tr("a prévia não tem página", "the preview has no page")) }
+        let moved = ProtocolError(code: .invalidArgs, message: tr("a pasta da página mudou (link simbólico?): reabra a prévia", "the page's folder changed (symlink?): reopen the preview"))
         guard try PreviewFile.resolve(string("file") ?? "", projectRoot: root) == file,
               DiagramFile.real(file.deletingLastPathComponent()) == file.deletingLastPathComponent() else { throw moved }
-        guard let data = try DiagramFile.readData(file, root: root, noun: "página") else { throw ProtocolError(code: .notFound, message: "Arquivo removido") }
+        guard let data = try DiagramFile.readData(file, root: root, noun: "página") else { throw ProtocolError(code: .notFound, message: tr("Arquivo removido", "File removed")) }
         var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent), "nofollow": .bool(true)]
         if let f = string("folder") { args["folder"] = .string(f) }   // `artifact new --folder`
         if let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {
@@ -394,10 +394,10 @@ import WebKit
         defer { header.busy = false }
         do throws(ProtocolError) {
             guard case .object(let o) = try await host.call("artifact.add", try saveArgs()), case .string(let id)? = o["id"] else {
-                header.error = "Resposta inválida do Collie"; return nil
+                header.error = tr("Resposta inválida do Collie", "Invalid response from Collie"); return nil
             }
             saved = id
-            flash("Salvo como artifact")
+            flash(tr("Salvo como artifact", "Saved as artifact"))
             return id
         } catch { header.error = error.message; return nil }
     }
@@ -408,14 +408,14 @@ import WebKit
         guard header.canSave, !header.busy else { return }
         let id: String
         if let s = saved { id = s } else { guard let s = await save() else { return }; id = s }
-        header.error = nil; header.busy = true; header.note = "Importando…"
+        header.error = nil; header.busy = true; header.note = tr("Importando…", "Importing…")
         defer { header.busy = false }
         do throws(ProtocolError) {
             guard case .object(let o) = try await host.call("artifact.import", ["id": .string(id)]), case .string(let f)? = o["file"] else {
-                header.note = nil; header.error = "Resposta inválida do Collie"; return
+                header.note = nil; header.error = tr("Resposta inválida do Collie", "Invalid response from Collie"); return
             }
             _ = try await host.call("panel.open", ["plugin": .string("design"), "file": .string(f)])
-            flash("Importado no Design: \(f)")
+            flash(tr("Importado no Design: \(f)", "Imported into Design: \(f)"))
         } catch { header.note = nil; header.error = error.message }
     }
 
@@ -537,27 +537,27 @@ import WebKit
 private struct PreviewHeader: View {
     @ObservedObject var m: PreviewHeaderModel
     var body: some View {
-        PanelHeader("Prévia", subtitle: m.folder.map { "\($0) · \(m.file ?? "")" } ?? m.file) {
+        PanelHeader(tr("Prévia", "Preview"), subtitle: m.folder.map { "\($0) · \(m.file ?? "")" } ?? m.file) {
             HStack(spacing: 8) {
                 if m.canPrevious || m.canNext {
-                    Button("Anterior") { m.onStep(-1) }.disabled(!m.canPrevious).buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Próxima") { m.onStep(1) }.disabled(!m.canNext).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Anterior", "Previous")) { m.onStep(-1) }.disabled(!m.canPrevious).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Próxima", "Next")) { m.onStep(1) }.disabled(!m.canNext).buttonStyle(CollieButtonStyle(.secondary))
                 }
-                if m.canPresent { Button("Apresentar") { m.onPresent() }.buttonStyle(CollieButtonStyle(.secondary)).help("Tela cheia; setas avançam, Esc sai") }
+                if m.canPresent { Button(tr("Apresentar", "Present")) { m.onPresent() }.buttonStyle(CollieButtonStyle(.secondary)).help(tr("Tela cheia; setas avançam, Esc sai", "Full screen; arrows advance, Esc exits")) }
                 if let s = m.status { Text(s).font(.collieMono(11, .medium)).foregroundStyle(Color.collieAttention) }
                 if let e = m.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger).lineLimit(2).help(e) }
                 if m.busy { ProgressView().controlSize(.small) }
                 if let n = m.note { Text(n).font(.collieMono(11, .medium)).foregroundStyle(Color.collieAccent) }
                 if m.canSave {
-                    Button("Salvar como artifact") { m.onSave() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
-                    Button("Importar no Design") { m.onImport() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Salvar como artifact", "Save as artifact")) { m.onSave() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Importar no Design", "Import into Design")) { m.onImport() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
                 }
-                Picker("Tema", selection: Binding(get: { m.theme ?? "" }, set: { m.onTheme($0.isEmpty ? nil : $0) })) {
-                    Text("Página").tag(""); Text("Claro").tag("light"); Text("Escuro").tag("dark")
+                Picker(tr("Tema", "Theme"), selection: Binding(get: { m.theme ?? "" }, set: { m.onTheme($0.isEmpty ? nil : $0) })) {
+                    Text(tr("Página", "Page")).tag(""); Text(tr("Claro", "Light")).tag("light"); Text(tr("Escuro", "Dark")).tag("dark")
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
-                if m.canComment { Button("Comentários (\(m.comments))") { m.onComments() }.buttonStyle(CollieButtonStyle(.secondary)) }
-                Button("Recarregar") { m.onReload() }.buttonStyle(CollieButtonStyle(.secondary))
+                if m.canComment { Button(tr("Comentários (\(m.comments))", "Comments (\(m.comments))")) { m.onComments() }.buttonStyle(CollieButtonStyle(.secondary)) }
+                Button(tr("Recarregar", "Reload")) { m.onReload() }.buttonStyle(CollieButtonStyle(.secondary))
             }
         }
         .background(Color.collieSidebar)
@@ -589,13 +589,13 @@ extension PreviewPanel: WKNavigationDelegate, WKUIDelegate {
         webView.evaluateJavaScript("window.scrollTo(0, \(y))", in: nil, in: Self.world) { _ in }
     }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { header.status = "Não consegui carregar a página" }
+        if !BrowserPanel.isSuperseded(error) { header.status = tr("Não consegui carregar a página", "Could not load the page") }
     }
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { header.status = "Não consegui carregar a página" }
+        if !BrowserPanel.isSuperseded(error) { header.status = tr("Não consegui carregar a página", "Could not load the page") }
     }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         dropWebView(); watcher?.stop(); watcher = nil
-        started = false; fail("A prévia parou: Recarregar")
+        started = false; fail(tr("A prévia parou: Recarregar", "The preview stopped: Reload"))
     }
 }

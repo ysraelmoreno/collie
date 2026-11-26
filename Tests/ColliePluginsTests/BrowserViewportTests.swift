@@ -7,7 +7,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// The page viewport is independent of the slot: bounds = viewport, frame = fitted rect (local HTML only).
-@MainActor @Suite(.serialized) struct BrowserViewportTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserViewportTests {
     func browser(slot: CGSize = CGSize(width: 600, height: 400)) async throws -> (BrowserPanel, NSView) {
         let panel = Panel(id: UUID(), name: "b", pluginId: "browser", placement: .dockRight, state: [:])
         let b = BrowserPanel(panel: panel, host: PanelHostContext(panel: panel, root: FileManager.default.temporaryDirectory,

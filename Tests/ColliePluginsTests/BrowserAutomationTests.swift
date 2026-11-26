@@ -7,7 +7,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// Real WKWebView, pages from `loadHTMLString` (no network). Generous waits: the machine running these is loaded.
-@MainActor @Suite(.serialized) struct BrowserAutomationTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserAutomationTests {
     final class Events: @unchecked Sendable {   // written from emit on the main actor only
         var all: [(String, JSONValue)] = []
     }
@@ -347,7 +347,7 @@ import CollieProtocol
     }
 }
 
-@Suite struct BrowserNormalizeTests {
+@Suite(.pt) struct BrowserNormalizeTests {
     @Test func normalizesLegacyArtifactURL() {
         #expect(BrowserPanel.normalize("orq-artifact://app/x/index.html") == "collie-artifact://app/x/index.html")
         #expect(BrowserPanel.normalize("orq-design://app/index.html") == "collie-design://app/index.html")

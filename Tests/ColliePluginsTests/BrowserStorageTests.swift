@@ -51,7 +51,7 @@ final class LoopServer: @unchecked Sendable {
 }
 
 /// `browser.storage`, `browser.reload`, `browser.init-script`. Local HTML / loopback only.
-@MainActor @Suite(.serialized) struct BrowserStorageTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserStorageTests {
     func browser(storage: String? = nil) -> BrowserPanel {
         let state: [String: JSONValue] = storage.map { ["storage": .string($0)] } ?? [:]
         let panel = Panel(id: UUID(), name: "b", pluginId: "browser", placement: .dockRight, state: state)

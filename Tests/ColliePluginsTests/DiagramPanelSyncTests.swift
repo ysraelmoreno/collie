@@ -7,7 +7,7 @@ import CollieProtocol
 
 /// The panel against the vendored draw.io build (skipped without `scripts/build-drawio.sh`): the file is created and
 /// loaded, an outside change is merged in, and draw.io's own autosaves never count as user edits.
-@MainActor @Suite(.serialized) struct DiagramPanelSyncTests {
+@MainActor @Suite(.serialized, .pt) struct DiagramPanelSyncTests {
     static let web = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("vendor/drawio/web")
 

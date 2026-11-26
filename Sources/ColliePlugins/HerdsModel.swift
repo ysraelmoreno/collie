@@ -50,21 +50,21 @@ public struct HerdPreview: Equatable, Sendable {
     public func refresh() async {
         guard let v = await send("herd.list") else { return }
         do { items = try JSONDecoder().decode([HerdListItem].self, from: JSONEncoder().encode(v)) }
-        catch { self.error = "lista inválida" }
+        catch { self.error = tr("lista inválida", "invalid list") }
     }
 
     public func select(_ id: String) async {
         error = nil
         guard let v = await send("herd.get", ["id": .string(id)]) else { preview = nil; return }
         do { preview = HerdPreview(herd: try JSONDecoder().decode(Herd.self, from: JSONEncoder().encode(v)), imported: false) }
-        catch { preview = nil; self.error = "rebanho inválido" }
+        catch { preview = nil; self.error = tr("rebanho inválido", "invalid herd") }
     }
 
     /// `herd.apply` on `onPaddock` (the paddock on screen; nil: the pasture); nil on success, else the error (the sheet stays
     /// open and shows it).
     public func apply(id: String, name: String, paddock: Bool?, cwd: String, onPaddock: String?, at anchor: CGPoint) async -> String? {
         // always apply exactly what was previewed: without a matching preview there is nothing to `expect`
-        guard let pv = preview, pv.id == id else { let m = "prévia do rebanho não carregada; abra o rebanho de novo"; error = m; return m }
+        guard let pv = preview, pv.id == id else { let m = tr("prévia do rebanho não carregada; abra o rebanho de novo", "herd preview not loaded; open the herd again"); error = m; return m }
         busy = true; error = nil
         defer { busy = false }
         self.anchor = anchor
@@ -115,12 +115,12 @@ public struct HerdPreview: Equatable, Sendable {
         error = nil; pendingImport = nil
         let read = await Task.detached { () -> Result<Data, ProtocolError> in
             func fail(_ m: String) -> Result<Data, ProtocolError> { .failure(ProtocolError(code: .invalidArgs, message: m)) }
-            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return fail("tamanho do arquivo desconhecido") }
-            guard size <= HerdFormat.maxBytes else { return fail("arquivo grande demais (máximo 256 KiB)") }
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return fail(tr("tamanho do arquivo desconhecido", "unknown file size")) }
+            guard size <= HerdFormat.maxBytes else { return fail(tr("arquivo grande demais (máximo 256 KiB)", "file too large (max 256 KiB)")) }
             // at most maxBytes + 1 even if it grew since the check: decode refuses the extra byte
-            guard let h = try? FileHandle(forReadingFrom: url) else { return fail("não foi possível ler o arquivo") }
+            guard let h = try? FileHandle(forReadingFrom: url) else { return fail(tr("não foi possível ler o arquivo", "could not read the file")) }
             defer { try? h.close() }
-            guard let d = try? h.read(upToCount: HerdFormat.maxBytes + 1) else { return fail("não foi possível ler o arquivo") }
+            guard let d = try? h.read(upToCount: HerdFormat.maxBytes + 1) else { return fail(tr("não foi possível ler o arquivo", "could not read the file")) }
             return .success(d)
         }.value
         do throws(ProtocolError) {
@@ -152,7 +152,7 @@ public struct HerdPreview: Equatable, Sendable {
     public func export(id: String, to url: URL) async {
         guard case .object(let o)? = await send("herd.export", ["id": .string(id)]), case .string(let json)? = o["json"] else { return }
         let err = await Task.detached { () -> String? in
-            do { try Data(json.utf8).write(to: url, options: .atomic); return nil } catch { return "não foi possível gravar: \(error.localizedDescription)" }
+            do { try Data(json.utf8).write(to: url, options: .atomic); return nil } catch { return tr("não foi possível gravar: \(error.localizedDescription)", "could not write: \(error.localizedDescription)") }
         }.value
         if let err { error = err }
     }

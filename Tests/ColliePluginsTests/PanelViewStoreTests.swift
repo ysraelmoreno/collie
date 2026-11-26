@@ -21,7 +21,7 @@ import CollieProtocol
     func receive(event: String, payload: JSONValue) { Self.received.append("\(panel.name):\(event)") }
 }
 
-@MainActor @Suite(.serialized) struct PanelViewStoreTests {
+@MainActor @Suite(.serialized, .pt) struct PanelViewStoreTests {
     func store(_ ps: [Panel]) -> (PanelViewStore, () -> Void) {
         PluginViews.register("probe", Probe.self)
         var current = ps

@@ -7,7 +7,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// `browser.emulate`: color scheme (web view appearance) and reduced motion (user script). Local HTML only.
-@MainActor @Suite(.serialized) struct BrowserEmulateTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserEmulateTests {
     func browser() async throws -> BrowserPanel {
         let panel = Panel(id: UUID(), name: "b", pluginId: "browser", placement: .dockRight, state: [:])
         return BrowserPanel(panel: panel, host: PanelHostContext(panel: panel, root: FileManager.default.temporaryDirectory,

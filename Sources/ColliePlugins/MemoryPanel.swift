@@ -69,8 +69,8 @@ public enum MemoryDigestNotice {
         let today = items.filter { calendar.isDate($0.at, inSameDayAs: now) }
         let n = today.filter { !$0.ask }.count, m = today.filter(\.ask).count
         guard n + m > 0 else { return nil }
-        let learned = "Collie aprendeu \(n) \(n == 1 ? "coisa" : "coisas")"
-        return m == 0 ? learned : learned + ", \(m) \(m == 1 ? "precisa" : "precisam") de você"
+        let learned = tr("Collie aprendeu \(n) \(n == 1 ? "coisa" : "coisas")", "Collie learned \(n) \(n == 1 ? "thing" : "things")")
+        return m == 0 ? learned : learned + tr(", \(m) \(m == 1 ? "precisa" : "precisam") de você", ", \(m) \(m == 1 ? "needs" : "need") you")
     }
 }
 
@@ -78,6 +78,12 @@ public enum MemoryDigestNotice {
 @MainActor public final class MemoryPanelModel: ObservableObject {
     public enum Tab: String, CaseIterable, Sendable {
         case learning = "Aprendizado", observability = "Observabilidade", review = "Revisar", decisions = "Decisões", map = "Mapa", cleanup = "Limpeza"
+        public var label: String {
+            switch self {
+            case .learning: tr("Aprendizado", "Learning"); case .observability: tr("Observabilidade", "Observability"); case .review: tr("Revisar", "Review")
+            case .decisions: tr("Decisões", "Decisions"); case .map: tr("Mapa", "Map"); case .cleanup: tr("Limpeza", "Cleanup")
+            }
+        }
     }
 
     @Published public private(set) var repos: [MemoryRepo] = []
@@ -172,12 +178,13 @@ public enum MemoryDigestNotice {
 
     /// "Precisa de você" (open asks) first, then "Hoje" and "Esta semana" (the rest of the 7 days), newest first; empty
     /// groups left out.
+    public static var needsYouTitle: String { tr("Precisa de você", "Needs you") }
     public func learningGroups(now: Date = Date(), calendar: Calendar = .current) -> [(title: String, rows: [DigestRow])] {
         let rows = digest.sorted { $0.at > $1.at }.filter { !$0.isConfirm }
         let groups: [(String, [DigestRow])] = [
-            ("Precisa de você", rows.filter { $0.isAsk && !$0.resolved && !$0.undone }),
-            ("Hoje", rows.filter { !$0.isAsk && calendar.isDate($0.at, inSameDayAs: now) }),
-            ("Esta semana", rows.filter { !$0.isAsk && !calendar.isDate($0.at, inSameDayAs: now) && now.timeIntervalSince($0.at) <= 7 * 86400 }),
+            (Self.needsYouTitle, rows.filter { $0.isAsk && !$0.resolved && !$0.undone }),
+            (tr("Hoje", "Today"), rows.filter { !$0.isAsk && calendar.isDate($0.at, inSameDayAs: now) }),
+            (tr("Esta semana", "This week"), rows.filter { !$0.isAsk && !calendar.isDate($0.at, inSameDayAs: now) && now.timeIntervalSince($0.at) <= 7 * 86400 }),
         ]
         return groups.filter { !$0.1.isEmpty }.map { (title: $0.0, rows: $0.1) }
     }
@@ -187,14 +194,14 @@ public enum MemoryDigestNotice {
     public var curatorLine: String? {
         guard let c = curator else { return nil }
         if !c.available {
-            let why = c.reason ?? "desconhecido"
-            if why.hasPrefix("cota do ") { return why }
+            let why = c.reason ?? tr("desconhecido", "unknown")
+            if why.hasPrefix("cota do ") || why.hasPrefix("quota") { return why }
             let other = c.providers?.first { $0.provider != (c.provider ?? "claude") && $0.installed && ($0.available || $0.consentNeeded) }
-            return "curador indisponível: \(why)" + (other.map { " · \($0.provider.capitalized) instalado: escolha em Preferências › Memória" } ?? "")
+            return tr("curador indisponível: \(why)", "curator unavailable: \(why)") + (other.map { tr(" · \($0.provider.capitalized) instalado: escolha em Preferências › Memória", " · \($0.provider.capitalized) installed: choose it in Preferences › Memory") } ?? "")
         }
         let today = c.cap.map { "\(c.today)/\($0)" } ?? "\(c.today)"   // no cap: just today's count
-        if let p = c.provider, p != "claude" { return "Curador: \(today) hoje · \(c.destination ?? p.capitalized) (sem custo informado)" }
-        return "Curador: \(today) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))"
+        if let p = c.provider, p != "claude" { return tr("Curador: \(today) hoje · \(c.destination ?? p.capitalized) (sem custo informado)", "Curator: \(today) today · \(c.destination ?? p.capitalized) (no cost reported)") }
+        return tr("Curador: \(today) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))", "Curator: \(today) today · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))")
     }
     /// Corrections that are probably the user's, waiting for Confirmar (the top of Aprendizado), newest first.
     public var toConfirm: [DigestRow] { digest.filter { $0.isConfirm && !$0.resolved && !$0.undone }.sorted { $0.at > $1.at } }
@@ -355,21 +362,21 @@ struct MemoryPanelView: View {
             if t == .observability { Task { await model.loadStats() } }
         }
         .sheet(item: $editing) { row in EditSheet(row: row) { t, b, s in Task { await model.edit(row.id, title: t, body: b, subject: s, lot: row.lot) } } }
-        .confirmationDialog("Esvaziar descartadas?", isPresented: $confirmPurge, titleVisibility: .visible) {
-            Button("Apagar \(model.discarded.count) arquivo(s)", role: .destructive) { model.purgeConfirmed = true; Task { await model.purge() } }
-        } message: { Text("\(model.discarded.count) arquivo(s) serão apagados do disco. Isso não pode ser desfeito.") }
+        .confirmationDialog(tr("Esvaziar descartadas?", "Empty discarded?"), isPresented: $confirmPurge, titleVisibility: .visible) {
+            Button(tr("Apagar \(model.discarded.count) arquivo(s)", "Delete \(model.discarded.count) file(s)"), role: .destructive) { model.purgeConfirmed = true; Task { await model.purge() } }
+        } message: { Text(tr("\(model.discarded.count) arquivo(s) serão apagados do disco. Isso não pode ser desfeito.", "\(model.discarded.count) file(s) will be deleted from disk. This cannot be undone.")) }
     }
 
     private var header: some View {
         VStack(spacing: 0) {
-            PanelHeader("Memória") {
-                Picker("Repositório", selection: Binding(get: { model.repo ?? "" }, set: { p in Task { await model.selectRepo(p) } })) {
+            PanelHeader(tr("Memória", "Memory")) {
+                Picker(tr("Repositório", "Repository"), selection: Binding(get: { model.repo ?? "" }, set: { p in Task { await model.selectRepo(p) } })) {
                     ForEach(model.repos) { Text($0.label).tag($0.path) }
                 }.labelsHidden().fixedSize()
             }
             VStack(spacing: 10) {
                 tabs
-                TextField("Buscar na memória", text: $query).collieField()
+                TextField(tr("Buscar na memória", "Search memory"), text: $query).collieField()
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             Rectangle().fill(Color.collieBorder).frame(height: 1)
@@ -383,7 +390,7 @@ struct MemoryPanelView: View {
                 let on = model.tab == t
                 Button { model.tab = t } label: {
                     HStack(spacing: 4) {
-                        Text(t.rawValue).font(.collieUI(13, on ? .semibold : .medium)).foregroundStyle(on ? Color.collieText : .collieTextSecondary)
+                        Text(t.label).font(.collieUI(13, on ? .semibold : .medium)).foregroundStyle(on ? Color.collieText : .collieTextSecondary)
                         if t == .review && !(model.unreviewed.isEmpty && model.proposals.isEmpty && model.lotMemories.isEmpty) {
                             Text("\(model.unreviewed.count + model.proposals.count + model.lotMemories.filter { !$0.record.reviewed }.count)").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                         }
@@ -408,7 +415,7 @@ struct MemoryPanelView: View {
 
     private var problemsBar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(model.problems.count) arquivo(s) com erro").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieAttention)
+            Text(tr("\(model.problems.count) arquivo(s) com erro", "\(model.problems.count) file(s) with errors")).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieAttention)
             ForEach(model.problems) {
                 Text("\(URL(fileURLWithPath: $0.file).lastPathComponent): \($0.error)").font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary)
             }
@@ -438,7 +445,7 @@ struct MemoryPanelView: View {
                 Spacer()
                 // no cap (the default): nothing to step; it is set in Preferências › Memória
                 if let c = model.curator, let cap = c.cap {
-                    Stepper("Limite diário: \(cap)", value: Binding(get: { cap }, set: { n in Task { await model.setCap(n) } }), in: 0...1_000)
+                    Stepper(tr("Limite diário: \(cap)", "Daily limit: \(cap)"), value: Binding(get: { cap }, set: { n in Task { await model.setCap(n) } }), in: 0...1_000)
                         .font(.collieUI(12)).fixedSize()
                 }
             }
@@ -446,39 +453,39 @@ struct MemoryPanelView: View {
         let groups = model.learningGroups(), confirms = model.toConfirm
         // procedures the curator noticed in the works: they wait for the user (approve → active → a skill)
         let noticed = model.proposals.filter { $0.record.kind == .procedure }
-        if groups.isEmpty && noticed.isEmpty && confirms.isEmpty { empty("Nada aprendido nesta semana.") }
+        if groups.isEmpty && noticed.isEmpty && confirms.isEmpty { empty(tr("Nada aprendido nesta semana.", "Nothing learned this week.")) }
         ForEach(confirms) { e in
             VStack(alignment: .leading, spacing: 6) {
-                Text("Parece uma correção sua — confirmar?").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieAttention)
+                Text(tr("Parece uma correção sua — confirmar?", "Looks like a correction of yours — confirm?")).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieAttention)
                 Text("\u{201C}\(e.reason)\u{201D}").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary).lineLimit(3)
                 Text(e.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText)
                 HStack(spacing: 6) {
-                    act("Confirmar", .primary) { Task { await model.confirm(e, true) } }
-                    act("Descartar", .quiet) { Task { await model.confirm(e, false) } }
+                    act(tr("Confirmar", "Confirm"), .primary) { Task { await model.confirm(e, true) } }
+                    act(tr("Descartar", "Discard"), .quiet) { Task { await model.confirm(e, false) } }
                 }.padding(.top, 2)
             }
             .padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .collieCard(highlight: Color.collieAttention)
         }
         if !noticed.isEmpty {
-            section("Precisa de você")
+            section(MemoryPanelModel.needsYouTitle)
             ForEach(noticed) { r in
-                item(r, meta: meta(r), badge: "procedimento novo") {
-                    act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } }
-                    act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                item(r, meta: meta(r), badge: tr("procedimento novo", "new procedure")) {
+                    act(tr("Aprovar", "Approve"), .primary) { Task { await model.approve(r.id, lot: r.lot) } }
+                    act(tr("Descartar", "Discard"), .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
                 }
             }
         }
         ForEach(groups, id: \.title) { g in
-            if !(g.title == "Precisa de você" && !noticed.isEmpty) { section(g.title) }
+            if !(g.title == MemoryPanelModel.needsYouTitle && !noticed.isEmpty) { section(g.title) }
             ForEach(g.rows) { e in
                 digestItem(e) {
                     if e.isAsk {
-                        act("Manter a nova", .primary) { Task { await model.resolve(e, keepNewer: true) } }
-                        act("Manter a antiga") { Task { await model.resolve(e, keepNewer: false) } }
-                        if model.promoteSuggestion(e) != nil { act("Promover ao projeto") { Task { await model.promoteSuggested(e) } } }
+                        act(tr("Manter a nova", "Keep the new one"), .primary) { Task { await model.resolve(e, keepNewer: true) } }
+                        act(tr("Manter a antiga", "Keep the old one")) { Task { await model.resolve(e, keepNewer: false) } }
+                        if model.promoteSuggestion(e) != nil { act(tr("Promover ao projeto", "Promote to project")) { Task { await model.promoteSuggested(e) } } }
                     } else if !e.undone {
-                        act("Desfazer") { Task { await model.undo(e) } }
+                        act(tr("Desfazer", "Undo")) { Task { await model.undo(e) } }
                     }
                 }
             }
@@ -491,51 +498,51 @@ struct MemoryPanelView: View {
         case .observability: MemoryObservabilityView(model: model)
         case .review:
             if !model.proposals.isEmpty {
-                section("Propostas")
+                section(tr("Propostas", "Proposals"))
                 noMatch(model.proposals)
                 ForEach(model.proposalGroups, id: \.lot) { g in
                     HStack {
-                        Text(g.lot.map { "Lote \($0)" } ?? "Projeto").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
+                        Text(g.lot.map { tr("Lote \($0)", "Lot \($0)") } ?? tr("Projeto", "Project")).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
                         Spacer()
-                        act("Aprovar todas") { Task { await model.approveAll(lot: g.lot) } }
+                        act(tr("Aprovar todas", "Approve all")) { Task { await model.approveAll(lot: g.lot) } }
                     }
                     ForEach(shown(g.rows)) { r in
                         item(r, meta: meta(r), badge: "proposta") {
-                            act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } }
-                            act("Editar") { editing = r }
-                            act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                            act(tr("Aprovar", "Approve"), .primary) { Task { await model.approve(r.id, lot: r.lot) } }
+                            act(tr("Editar", "Edit")) { editing = r }
+                            act(tr("Descartar", "Discard"), .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
                         }
                     }
                 }
-                section("Não revisadas")
+                section(tr("Não revisadas", "Unreviewed"))
             }
-            if model.unreviewed.isEmpty { empty("Nada para revisar.") }
+            if model.unreviewed.isEmpty { empty(tr("Nada para revisar.", "Nothing to review.")) }
             noMatch(model.unreviewed)
             ForEach(shown(model.unreviewed)) { r in
                 item(r, meta: meta(r)) {
-                    act("Aprovar", .primary) { Task { await model.approve(r.id) } }
-                    act("Editar") { editing = r }
-                    act("Descartar", .quiet) { Task { await model.discard(r.id) } }
+                    act(tr("Aprovar", "Approve"), .primary) { Task { await model.approve(r.id) } }
+                    act(tr("Editar", "Edit")) { editing = r }
+                    act(tr("Descartar", "Discard"), .quiet) { Task { await model.discard(r.id) } }
                 }
             }
             if !model.lotMemories.isEmpty {
-                section("Memórias dos lotes")
+                section(tr("Memórias dos lotes", "Lot memories"))
                 noMatch(model.lotMemories)
                 ForEach(model.lotMemoryGroups, id: \.lot) { g in
-                    Text("Lote \(g.lot)").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
+                    Text(tr("Lote \(g.lot)", "Lot \(g.lot)")).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
                     ForEach(shown(g.rows)) { r in
-                        item(r, meta: meta(r), badge: r.record.reviewed ? nil : "não revisada") {
-                            if !r.record.reviewed { act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } } }
-                            act("Promover ao projeto") { Task { await model.promote(r.id, lot: g.lot) } }
+                        item(r, meta: meta(r), badge: r.record.reviewed ? nil : tr("não revisada", "unreviewed")) {
+                            if !r.record.reviewed { act(tr("Aprovar", "Approve"), .primary) { Task { await model.approve(r.id, lot: r.lot) } } }
+                            act(tr("Promover ao projeto", "Promote to project")) { Task { await model.promote(r.id, lot: g.lot) } }
                             act(r.record.pinned ? "desafixar" : "fixar") { Task { await model.pin(r.id, !r.record.pinned, lot: r.lot) } }
-                            act("Arquivar") { Task { await model.archive(r.id, lot: r.lot) } }
-                            act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                            act(tr("Arquivar", "Archive")) { Task { await model.archive(r.id, lot: r.lot) } }
+                            act(tr("Descartar", "Discard"), .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
                         }
                     }
                 }
             }
         case .decisions:
-            if model.decisions.isEmpty { empty("Nenhuma decisão vigente.") }
+            if model.decisions.isEmpty { empty(tr("Nenhuma decisão vigente.", "No current decisions.")) }
             noMatch(model.decisions)
             ForEach(shown(model.decisions)) { r in
                 let hist = model.history(of: r)
@@ -543,9 +550,9 @@ struct MemoryPanelView: View {
                     act(r.record.pinned ? "desafixar" : "fixar") { Task { await model.pin(r.id, !r.record.pinned) } }
                 }
                 if !hist.isEmpty {
-                    DisclosureGroup("ver histórico (\(hist.count))") {
+                    DisclosureGroup(tr("ver histórico (\(hist.count))", "show history (\(hist.count))")) {
                         ForEach(hist) { h in
-                            item(h, meta: "substituída · \(relative.localizedString(for: h.record.updatedAt, relativeTo: Date()))") {
+                            item(h, meta: tr("substituída · ", "superseded · ") + relative.localizedString(for: h.record.updatedAt, relativeTo: Date())) {
                                 act("↺ restaurar") { Task { await model.restore(h.id) } }
                             }
                         }
@@ -553,27 +560,27 @@ struct MemoryPanelView: View {
                 }
             }
             if !model.procedures.isEmpty {
-                section("Procedimentos")
+                section(tr("Procedimentos", "Procedures"))
                 ForEach(shown(model.procedures)) { r in
                     item(r, meta: meta(r)) {
                         act(r.record.pinned ? "desafixar" : "fixar") { Task { await model.pin(r.id, !r.record.pinned) } }
-                        act("Arquivar") { Task { await model.archive(r.id) } }
+                        act(tr("Arquivar", "Archive")) { Task { await model.archive(r.id) } }
                     }
                 }
             }
         case .map:
-            if model.maps.isEmpty { empty("Nenhum mapa gravado.") }
+            if model.maps.isEmpty { empty(tr("Nenhum mapa gravado.", "No maps recorded.")) }
             noMatch(model.maps)
             ForEach(shown(model.maps)) { r in
-                item(r, meta: r.record.path ?? "", badge: r.missingSince != nil ? "caminho sumiu" : nil) {
-                    if r.missingSince != nil { act("Arquivar") { Task { await model.archive(r.id) } } }
+                item(r, meta: r.record.path ?? "", badge: r.missingSince != nil ? tr("caminho sumiu", "path is gone") : nil) {
+                    if r.missingSince != nil { act(tr("Arquivar", "Archive")) { Task { await model.archive(r.id) } } }
                 }
             }
         case .cleanup:
             HStack {
-                Text(model.plan.isEmpty ? "Nada a limpar." : "\(model.plan.count) item(ns) no plano").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                Text(model.plan.isEmpty ? tr("Nada a limpar.", "Nothing to clean up.") : tr("\(model.plan.count) item(ns) no plano", "\(model.plan.count) item(s) in the plan")).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
                 Spacer()
-                Button("Aplicar limpeza") { Task { await model.applyCleanup() } }.disabled(model.plan.isEmpty).buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Aplicar limpeza", "Apply cleanup")) { Task { await model.applyCleanup() } }.disabled(model.plan.isEmpty).buttonStyle(CollieButtonStyle(.secondary))
             }
             ForEach(model.plan) { e in
                 VStack(alignment: .leading, spacing: 4) {
@@ -582,30 +589,30 @@ struct MemoryPanelView: View {
                 }.padding(14).frame(maxWidth: .infinity, alignment: .leading).collieCard()
             }
             noMatch(model.archived + model.unchained + model.discarded)
-            section("Arquivadas")
+            section(tr("Arquivadas", "Archived"))
             ForEach(shown(model.archived)) { r in
                 item(r, meta: meta(r)) { act("↺ restaurar") { Task { await model.restore(r.id) } } }
             }
-            section("Substituídas sem cadeia")
+            section(tr("Substituídas sem cadeia", "Superseded without a chain"))
             ForEach(shown(model.unchained)) { r in
                 item(r, meta: meta(r)) { act("↺ restaurar") { Task { await model.restore(r.id) } } }
             }
-            section("Descartadas")
+            section(tr("Descartadas", "Discarded"))
             ForEach(shown(model.discarded)) { r in
                 item(r, meta: meta(r)) { act("↺ restaurar") { Task { await model.restore(r.id) } } }
             }
-            Button("Esvaziar descartadas…") { confirmPurge = true }.disabled(model.discarded.isEmpty).buttonStyle(CollieButtonStyle(.secondary))
+            Button(tr("Esvaziar descartadas…", "Empty discarded…")) { confirmPurge = true }.disabled(model.discarded.isEmpty).buttonStyle(CollieButtonStyle(.secondary))
         }
     }
 
     /// Author and when (the kind is the card's tag).
     private func meta(_ r: MemoryRow) -> String {
-        "gravada por \(r.record.origin) · \(relative.localizedString(for: r.record.createdAt, relativeTo: Date()))"
+        tr("gravada por ", "recorded by ") + "\(r.record.origin) · \(relative.localizedString(for: r.record.createdAt, relativeTo: Date()))"
     }
     private func section(_ s: String) -> some View { Text(s).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).padding(.top, 4) }
     /// The search filtered a non-empty list down to nothing.
     @ViewBuilder private func noMatch(_ rows: [MemoryRow]) -> some View {
-        if !rows.isEmpty && shown(rows).isEmpty { empty("Nada encontrado.") }
+        if !rows.isEmpty && shown(rows).isEmpty { empty(tr("Nada encontrado.", "Nothing found.")) }
     }
     private func empty(_ s: String) -> some View { Text(s).font(.collieUI(13)).foregroundStyle(Color.collieMuted).padding(.vertical, 4) }
     private func act(_ title: String, _ kind: CollieButtonStyle.Kind = .secondary, _ run: @escaping () -> Void) -> some View {
@@ -629,7 +636,7 @@ struct MemoryPanelView: View {
 
 extension MemoryKind {
     /// The card tag's text.
-    var label: String { switch self { case .feedback: "regra"; case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha"; case .procedure: "procedimento" } }
+    var label: String { switch self { case .feedback: tr("regra", "rule"); case .decision: tr("decisão", "decision"); case .map: tr("mapa", "map"); case .pitfall: tr("armadilha", "pitfall"); case .procedure: tr("procedimento", "procedure") } }
 }
 
 private struct EditSheet: View {
@@ -641,16 +648,16 @@ private struct EditSheet: View {
     @State private var subject = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Editar memória").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
-            TextField("Título", text: $title).collieField()
-            TextField("Assunto", text: $subject).collieField()
+            Text(tr("Editar memória", "Edit memory")).font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
+            TextField(tr("Título", "Title"), text: $title).collieField()
+            TextField(tr("Assunto", "Subject"), text: $subject).collieField()
             TextEditor(text: $body_).font(.collieUI(13)).scrollContentBackground(.hidden).padding(6).frame(minHeight: 120)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.collieSunken))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.collieBorder, lineWidth: 1))
             HStack(spacing: 10) {
                 Spacer()
-                Button("Cancelar") { dismiss() }.buttonStyle(CollieButtonStyle(.secondary))
-                Button("Salvar e aprovar") { save(title, body_, subject); dismiss() }
+                Button(tr("Cancelar", "Cancel")) { dismiss() }.buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Salvar e aprovar", "Save and approve")) { save(title, body_, subject); dismiss() }
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || subject.trimmingCharacters(in: .whitespaces).isEmpty)
                     .buttonStyle(CollieButtonStyle(.primary))
             }

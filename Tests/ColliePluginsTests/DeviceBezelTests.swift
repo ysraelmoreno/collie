@@ -3,7 +3,7 @@ import Testing
 import CollieDevice
 @testable import ColliePlugins
 
-@Suite struct DeviceBezelTests {
+@Suite(.pt) struct DeviceBezelTests {
     let area = CGRect(x: 0, y: 0, width: 600, height: 900)
     let portrait = CGSize(width: 1080, height: 2400)
     let landscape = CGSize(width: 2400, height: 1080)

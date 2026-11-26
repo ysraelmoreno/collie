@@ -158,8 +158,8 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     fileprivate func start() {
         started = true
         failure = nil
-        guard let dir = webRoot else { return fail("Editor de diagramas indisponível\nRode scripts/build-drawio.sh", retry: false) }
-        guard let root = projectRoot else { return fail("Painel sem pasta de projeto: abra-o de novo", retry: false) }
+        guard let dir = webRoot else { return fail(tr("Editor de diagramas indisponível\nRode scripts/build-drawio.sh", "Diagram editor unavailable\nRun scripts/build-drawio.sh"), retry: false) }
+        guard let root = projectRoot else { return fail(tr("Painel sem pasta de projeto: abra-o de novo", "Panel has no project folder: open it again"), retry: false) }
         let url: URL, xml: String
         do throws(ProtocolError) {
             url = try DiagramFile.resolve(requestedFile, panelName: panel.name, projectRoot: root)
@@ -172,12 +172,12 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         file = url; known = Data(xml.utf8)
         let rel = String(url.path.dropFirst(DiagramFile.real(root).path.count + 1))
         box.setHeader(file: rel)
-        box.status("Abrindo…", retry: false)
+        box.status(tr("Abrindo…", "Opening…"), retry: false)
         watch()
         Task { [weak self] in
             let rules = try? await HTMLSnapshotter.ruleList()
             guard let self, !self.closed else { return }
-            guard let rules else { return self.fail("Não consegui bloquear a rede do editor", retry: true) }
+            guard let rules else { return self.fail(tr("Não consegui bloquear a rede do editor", "Could not block the editor's network"), retry: true) }
             self.makeWebView(dir: dir, rules: rules)
         }
     }
@@ -197,7 +197,7 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         box.card.addSubview(web); box.needsLayout = true
         Task { [weak self] in   // fail closed: the WebRTC switch is private, check it took before loading
             guard let self, !self.closed, self.webView === web else { return }
-            guard await WebLockdown.peerConnectionsOff(web) else { return self.fail("Não consegui bloquear a rede do editor", retry: false) }
+            guard await WebLockdown.peerConnectionsOff(web) else { return self.fail(tr("Não consegui bloquear a rede do editor", "Could not block the editor's network"), retry: false) }
             guard !self.closed, self.webView === web else { return }
             web.load(URLRequest(url: URL(string: "\(DiagramSchemeHandler.scheme)://app/host.html")!))
         }
@@ -264,12 +264,12 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// The panel's file through DiagramFile's no-follow access from the project root; nil when missing.
     func readFile() throws(ProtocolError) -> String? {
-        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
+        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: tr("painel sem arquivo", "panel has no file")) }
         return try DiagramFile.read(file, root: root)
     }
     /// `at`: the file an agent command resolved, before the view ever started (`file` is still nil then).
     func writeFile(_ xml: String, at url: URL? = nil) throws(ProtocolError) {
-        guard let file = url ?? file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
+        guard let file = url ?? file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: tr("painel sem arquivo", "panel has no file")) }
         try DiagramFile.write(xml, to: file, root: root)
         known = Data(xml.utf8)
         watcher?.rearm()   // the rename replaced the inode the file watch had
@@ -299,7 +299,7 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         let card = NSView()
         private var header: NSView?
         private let label = NSTextField(wrappingLabelWithString: "")
-        private let retry = NSButton(title: "Tentar de novo", target: nil, action: nil)
+        private let retry = NSButton(title: tr("Tentar de novo", "Try again"), target: nil, action: nil)
         private let overlay = NSStackView()
         override var isFlipped: Bool { true }
 
@@ -316,13 +316,13 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
             overlay.addArrangedSubview(label); overlay.addArrangedSubview(retry)
             addSubview(overlay)
             setHeader(file: nil)
-            status("Abrindo…", retry: false)
+            status(tr("Abrindo…", "Opening…"), retry: false)
         }
         required init?(coder: NSCoder) { fatalError() }
 
         func setHeader(file: String?) {
             header?.removeFromSuperview()
-            let h = NSHostingView(rootView: PanelHeader("Diagrama", subtitle: file) { EmptyView() }.background(Color.collieSidebar))
+            let h = NSHostingView(rootView: PanelHeader(tr("Diagrama", "Diagram"), subtitle: file) { EmptyView() }.background(Color.collieSidebar))
             addSubview(h); header = h
             needsLayout = true
         }
@@ -377,10 +377,10 @@ extension DiagramPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { fail("Editor de diagramas indisponível", retry: true) }
+        if !BrowserPanel.isSuperseded(error) { fail(tr("Editor de diagramas indisponível", "Diagram editor unavailable"), retry: true) }
     }
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { fail("Editor de diagramas indisponível", retry: true) }
+        if !BrowserPanel.isSuperseded(error) { fail(tr("Editor de diagramas indisponível", "Diagram editor unavailable"), retry: true) }
     }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         stopWatching(); dropWebView()

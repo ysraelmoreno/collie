@@ -33,7 +33,7 @@ private func tempFile(_ data: Data) throws -> URL {
     return u
 }
 
-@MainActor @Suite struct HerdsModelTests {
+@MainActor @Suite(.pt) struct HerdsModelTests {
     @Test func applySendsNamePaddockCwd() async {
         let (m, f) = make()
         await m.select("investigar-bug")

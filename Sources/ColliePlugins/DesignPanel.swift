@@ -291,7 +291,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let web = webView else { return }
         started = true; gen += 1
         let g = gen
-        box.status("Abrindo…", retry: false)
+        box.status(tr("Abrindo…", "Opening…"), retry: false)
         let call = host.call, name = panel.name
         Task { [weak self] in
             do throws(ProtocolError) {
@@ -307,9 +307,10 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
             } catch {
                 guard let self, self.gen == g else { return }
                 // no engine that runs (`FigcraftServer.unavailable`, admin texts): the download is in Preferences
-                for state in ["Motor de design não instalado", "Motor de design desatualizado"]
-                where error.code == .unavailable && error.message.hasPrefix(state) {
-                    return self.box.status(state, retry: true, action: "Abrir Preferências")
+                for state in [(tr("Motor de design não instalado", "Design engine not installed"), "Motor de design não instalado"), (tr("Motor de design desatualizado", "Design engine out of date"), "Motor de design desatualizado"),
+                              (tr("Motor de design não instalado", "Design engine not installed"), "Design engine not installed"), (tr("Motor de design desatualizado", "Design engine out of date"), "Design engine out of date")]
+                where error.code == .unavailable && error.message.hasPrefix(state.1) {
+                    return self.box.status(state.0, retry: true, action: tr("Abrir Preferências", "Open Preferences"))
                 }
                 self.failed(error.message)   // the daemon scrubs links from errors
             }
@@ -318,12 +319,12 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// WebKit errors are not shown: their text can carry the page URL (and so the link).
     fileprivate func failed(_ detail: String?) {
-        box.status("Motor de design indisponível" + (detail.map { "\n" + $0 } ?? ""), retry: true)
+        box.status(tr("Motor de design indisponível", "Design engine unavailable") + (detail.map { "\n" + $0 } ?? ""), retry: true)
     }
 
     /// The overlay button: **Abrir Preferências** asks the app for the Desenho e sandbox page, else **Reconectar**.
     fileprivate func overlayAction() {
-        if box.retry.title == "Abrir Preferências" {
+        if box.retry.title == tr("Abrir Preferências", "Open Preferences") {
             NotificationCenter.default.post(name: .collieOpenPreferences, object: "desenho")
         } else { connect() }
     }
@@ -337,7 +338,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         private let sync = DesignSync()
         private var header: NSView?
         let label = NSTextField(wrappingLabelWithString: "")
-        let retry = NSButton(title: "Reconectar", target: nil, action: nil)
+        let retry = NSButton(title: tr("Reconectar", "Reconnect"), target: nil, action: nil)
         private let overlay = NSStackView()
         override var isFlipped: Bool { true }
 
@@ -353,7 +354,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
             overlay.orientation = .vertical; overlay.alignment = .centerX
             overlay.addArrangedSubview(label); overlay.addArrangedSubview(retry)
             addSubview(overlay)
-            status("Abrindo…", retry: false)
+            status(tr("Abrindo…", "Opening…"), retry: false)
         }
         required init?(coder: NSCoder) { fatalError() }
 
@@ -373,7 +374,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyChrome() }
 
-        func status(_ text: String?, retry showRetry: Bool, action: String = "Reconectar") {
+        func status(_ text: String?, retry showRetry: Bool, action: String = tr("Reconectar", "Reconnect")) {
             overlay.isHidden = text == nil
             web?.isHidden = text != nil
             sync.synced = text == nil

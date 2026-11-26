@@ -16,7 +16,7 @@ func webLibsFixture() throws -> URL {
     return dir
 }
 
-@MainActor @Suite struct WebLibsTests {
+@MainActor @Suite(.pt) struct WebLibsTests {
     func req(_ u: String, main: String? = "collie-artifact://app/abc/v1/index.html", method: String = "GET") -> URLRequest {
         var r = URLRequest(url: URL(string: u)!); r.mainDocumentURL = main.flatMap(URL.init(string:)); r.httpMethod = method; return r
     }

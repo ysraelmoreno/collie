@@ -6,7 +6,7 @@ import CollieCore
 import CollieProtocol
 @testable import ColliePlugins
 
-@MainActor @Suite(.serialized) struct DesignPanelTests {
+@MainActor @Suite(.serialized, .pt) struct DesignPanelTests {
     /// What the handler sends back for one request.
     final class FakeTask: NSObject, WKURLSchemeTask {
         let request: URLRequest

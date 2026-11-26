@@ -47,7 +47,7 @@ private actor Fake {
     return (DesignSystemsModel(call: { c, a throws(ProtocolError) in try await f.handle(c, a) }), f)
 }
 
-@MainActor @Suite struct DesignSystemsPanelTests {
+@MainActor @Suite(.pt) struct DesignSystemsPanelTests {
     @Test func listsSystemsWithActiveScopes() async {
         let (m, _) = make()
         await m.load()

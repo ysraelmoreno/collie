@@ -148,7 +148,7 @@ private final class FrameSlot: @unchecked Sendable {
         guard !closed, stream == nil else { return }
         gen += 1
         let g = gen, open = host.openStream, id = panel.id
-        screen.status("Conectando…", retry: false)
+        screen.status(tr("Conectando…", "Connecting…"), retry: false)
         Task { [weak self] in
             do throws(ProtocolError) {
                 let s = try await open("ui.device", ["panel": .string(id.uuidString)])
@@ -205,16 +205,16 @@ private final class FrameSlot: @unchecked Sendable {
         switch f {
         case nil:   // closed by the daemon (after `ended`/`error`, or it went away)
             stream = nil; touching = false; pressed = nil
-            if !screen.hasStatus { screen.status("Aparelho desconectado", retry: true) }
+            if !screen.hasStatus { screen.status(tr("Aparelho desconectado", "Device disconnected"), retry: true) }
         case .deviceStatus(let state, let message)?:
             switch state {
-            case "connecting": screen.status("Conectando…", retry: false)
+            case "connecting": screen.status(tr("Conectando…", "Connecting…"), retry: false)
             case "streaming": screen.status(nil, retry: false); retried = false
             case "ended" where message == nil && !retried:   // ended as we joined: the next viewer gets a new session
                 retried = true
                 Task { [weak self] in self?.reconnect() }
-            case "ended": screen.status("Aparelho desconectado", retry: true)
-            default: screen.status(message ?? "Erro no aparelho", retry: true)
+            case "ended": screen.status(tr("Aparelho desconectado", "Device disconnected"), retry: true)
+            default: screen.status(message ?? tr("Erro no aparelho", "Device error"), retry: true)
             }
         case .videoMeta(let w, let h)?:   // iOS: the screen in points (no SPS follows)
             if videoSize == .zero || ios { videoSize = CGSize(width: Int(w), height: Int(h)) }
@@ -320,7 +320,7 @@ private final class FrameSlot: @unchecked Sendable {
     private let backdrop = CAGradientLayer()
     private let bezel = DeviceBezelLayers()
     private let label = NSTextField(wrappingLabelWithString: "")
-    private let retry = NSButton(title: "Reconectar", target: nil, action: nil)
+    private let retry = NSButton(title: tr("Reconectar", "Reconnect"), target: nil, action: nil)
     private let overlay = NSVisualEffectView()
     private let stack = NSStackView()
     private let homeKey = NSButton(title: "", target: nil, action: nil)   // the `classic` frame's round home button
@@ -351,23 +351,23 @@ private final class FrameSlot: @unchecked Sendable {
         overlay.material = .hudWindow; overlay.blendingMode = .withinWindow; overlay.state = .active
         overlay.wantsLayer = true; overlay.layer?.masksToBounds = true
         overlay.addSubview(stack)
-        homeKey.isBordered = false; homeKey.wantsLayer = true; homeKey.toolTip = "Início"
-        homeKey.setAccessibilityLabel("Início"); homeKey.target = self; homeKey.action = #selector(home)
+        homeKey.isBordered = false; homeKey.wantsLayer = true; homeKey.toolTip = tr("Início", "Home")
+        homeKey.setAccessibilityLabel(tr("Início", "Home")); homeKey.target = self; homeKey.action = #selector(home)
         homeKey.layer?.borderWidth = 1.5
         homeKey.layer?.borderColor = CGColor(srgbRed: 0x2F / 255, green: 0x33 / 255, blue: 0x3D / 255, alpha: 1)
         homeKey.isHidden = true
         addSubview(homeKey)
         addSubview(overlay)
         buttons = ios
-            ? [.init(title: "Início", symbol: "circle") { [weak self] in self?.home() },
-               .init(title: "Bloquear", symbol: "lock") { [weak self] in self?.lock() }]
-            : [.init(title: "Voltar", symbol: "chevron.left") { [weak self] in self?.back() },
-               .init(title: "Início", symbol: "circle") { [weak self] in self?.home() },
-               .init(title: "Recentes", symbol: "square") { [weak self] in self?.recents() }]
+            ? [.init(title: tr("Início", "Home"), symbol: "circle") { [weak self] in self?.home() },
+               .init(title: tr("Bloquear", "Lock"), symbol: "lock") { [weak self] in self?.lock() }]
+            : [.init(title: tr("Voltar", "Back"), symbol: "chevron.left") { [weak self] in self?.back() },
+               .init(title: tr("Início", "Home"), symbol: "circle") { [weak self] in self?.home() },
+               .init(title: tr("Recentes", "Recents"), symbol: "square") { [weak self] in self?.recents() }]
         bar = NSHostingView(rootView: footer())
         addSubview(bar)
         applyChrome()
-        status("Conectando…", retry: false)
+        status(tr("Conectando…", "Connecting…"), retry: false)
     }
 
     private func footer() -> DeviceFooter { DeviceFooter(buttons: buttons, transport: ios ? "simctl" : "adb", link: link) }
@@ -497,7 +497,7 @@ private struct DeviceFooter: View {
         .background(Color.collieBackground)
     }
 
-    private var label: String { switch link { case .live: "ao vivo"; case .connecting: "conectando"; case .off: "offline" } }
+    private var label: String { switch link { case .live: tr("ao vivo", "live"); case .connecting: tr("conectando", "connecting"); case .off: "offline" } }
     private var color: Color {
         switch link {
         case .live: Color(nsColor: .systemGreen)

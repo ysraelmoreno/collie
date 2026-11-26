@@ -5,7 +5,7 @@ import CollieProtocol
 
 private let a = "https://claude.ai/artifact/aaa", b = "https://claude.ai/artifact/bbb"
 
-@Suite struct ClaudeImportProgressTests {
+@Suite(.pt) struct ClaudeImportProgressTests {
     @Test func rowsFollowTheEvents() {
         var p = ClaudeImportProgress()
         p.started([a, b], nonce: "n1")
@@ -48,7 +48,7 @@ private let a = "https://claude.ai/artifact/aaa", b = "https://claude.ai/artifac
     }
 }
 
-@Suite struct ArtifactDropTests {
+@Suite(.pt) struct ArtifactDropTests {
     @Test func acceptsPagesFoldersAndZips() throws {
         let d = URL(fileURLWithPath: "/tmp/collie-drop-\(UUID().uuidString.prefix(8))"); defer { try? FileManager.default.removeItem(at: d) }
         try FileManager.default.createDirectory(at: d.appendingPathComponent("site"), withIntermediateDirectories: true)
@@ -75,7 +75,7 @@ private actor Calls {
     func args(_ c: String) -> [[String: JSONValue]] { log.filter { $0.0 == c }.map(\.1) }
 }
 
-@MainActor @Suite struct ClaudeImportModelTests {
+@MainActor @Suite(.pt) struct ClaudeImportModelTests {
     @Test func sendsTheImportAndAddsDrops() async throws {
         let calls = Calls()
         let m = ArtifactsModel(call: { c, a throws(ProtocolError) in try await calls.handle(c, a) })

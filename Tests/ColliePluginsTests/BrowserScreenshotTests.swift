@@ -7,7 +7,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// `browser.screenshot` clip / ref / full page and the CLI's `--out` copy (local HTML only).
-@MainActor @Suite(.serialized) struct BrowserScreenshotTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserScreenshotTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("shots-\(UUID().uuidString)")
 
     func browser(html: String) async throws -> BrowserPanel {

@@ -70,7 +70,7 @@ private actor FakeDaemon {
     return (MemoryPanelModel(call: { c, a throws(ProtocolError) in try await d.handle(c, a) }), d)
 }
 
-@MainActor @Suite struct MemoryPanelTests {
+@MainActor @Suite(.pt) struct MemoryPanelTests {
     func rec(_ title: String, kind: MemoryKind = .decision, status: MemoryStatus = .active, reviewed: Bool = false,
              path: String? = nil, supersedes: UUID? = nil) -> MemoryRecord {
         MemoryRecord(kind: kind, subject: title, title: title, path: path, status: status, reviewed: reviewed, supersedes: supersedes)

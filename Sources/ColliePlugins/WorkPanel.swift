@@ -43,13 +43,13 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
     @Published public private(set) var assistantUnavailable: String?
 
     public var placeholder: String {
-        "Mensagem — @nome para um agente" + (assistantUnavailable.map { " (assistente indisponível: \($0))" } ?? ", ? para perguntar ao assistente")
+        tr("Mensagem — @nome para um agente", "Message — @name for an agent") + (assistantUnavailable.map { tr(" (assistente indisponível: \($0))", " (assistant unavailable: \($0))") } ?? tr(", ? para perguntar ao assistente", ", ? to ask the assistant"))
     }
 
     /// The quick buttons: label, and the exact phrase the registry answers for free (`StatusQuestion`).
-    public static let quickQuestions: [(label: String, phrase: String)] =
-        [("Onde estamos", "onde estamos"), ("O que travou", "o que travou"), ("O que está rodando", "o que está rodando"),
-         ("Resumo", "resumo")]
+    public static var quickQuestions: [(label: String, phrase: String)] =
+        [(tr("Onde estamos", "Where we are"), "onde estamos"), (tr("O que travou", "What is stuck"), "o que travou"), (tr("O que está rodando", "What is running"), "o que está rodando"),
+         (tr("Resumo", "Summary"), "resumo")]
     nonisolated static let pageSize = 50
 
     private let call: PanelHostContext.Call
@@ -82,11 +82,11 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }?.title ?? "?"
-            return LoopBadge(text: "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.max.map { " · \(l.used)/\($0) no total" } ?? "") + (l.phase.map { " · \($0.label)" } ?? ""),
+            return LoopBadge(text: tr("em laço: \(title) (tentativa \(l.attempt)/\(l.tries))", "in loop: \(title) (attempt \(l.attempt)/\(l.tries))") + (l.max.map { tr(" · \(l.used)/\($0) no total", " · \(l.used)/\($0) in total") } ?? "") + (l.phase.map { " · \($0.label)" } ?? ""),
                              running: true)
-        case .stopped: return LoopBadge(text: "laço parado (\(l.used) tentativas)", running: false)
-        case .finished: return LoopBadge(text: "laço terminou (\(l.used) tentativas)", running: false)
-        case .queued: return LoopBadge(text: l.autoLand?.dequeuedAt != nil ? "aprovado, fora da fila (work stop)" : "na fila do auto-land (aprovado)", running: false)
+        case .stopped: return LoopBadge(text: tr("laço parado (\(l.used) tentativas)", "loop stopped (\(l.used) attempts)"), running: false)
+        case .finished: return LoopBadge(text: tr("laço terminou (\(l.used) tentativas)", "loop finished (\(l.used) attempts)"), running: false)
+        case .queued: return LoopBadge(text: l.autoLand?.dequeuedAt != nil ? tr("aprovado, fora da fila (work stop)", "approved, out of the queue (work stop)") : tr("na fila do auto-land (aprovado)", "in the auto-land queue (approved)"), running: false)
         }
     }
     /// One line under a task that a loop ran: "2 tentativas · <lastFailure>" (nil when it has neither).
@@ -135,7 +135,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         await loadApprovals()
         struct Assistant: Decodable { let available: Bool; let reason: String? }
         if let a = try? await fetch(Assistant.self, "work.assistant.status", [:]) {
-            assistantUnavailable = a.available ? nil : a.reason ?? "motivo desconhecido"
+            assistantUnavailable = a.available ? nil : a.reason ?? tr("motivo desconhecido", "unknown reason")
         }
         do throws(ProtocolError) {
             let page = try await fetch([ChatMessage].self, "work.chat.history", ["limit": .number(Double(Self.pageSize))])
@@ -180,7 +180,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
     }
 
     /// The daemon's reasons are Portuguese except the deadline's.
-    static func reasonText(_ r: String) -> String { r == "timeout" ? "o modelo demorou mais de 10 s" : r }
+    static func reasonText(_ r: String) -> String { r == "timeout" ? tr("o modelo demorou mais de 10 s", "the model took longer than 10 s") : r }
 
     private func loadApprovals() async {
         do throws(ProtocolError) {
@@ -286,7 +286,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
 
     private func fetch<T: Decodable>(_ t: T.Type, _ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> T {
         let v = try await call(command, args)
-        guard let r = Self.decode(t, v) else { throw ProtocolError(code: .internal, message: "Resposta inválida de \(command).") }
+        guard let r = Self.decode(t, v) else { throw ProtocolError(code: .internal, message: tr("Resposta inválida de \(command).", "Invalid response from \(command).")) }
         return r
     }
 
@@ -299,34 +299,38 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
     static func describe(_ e: ProtocolError, _ terminal: String?) -> String {
         let m = e.message
         let quoted = m.split(separator: "'", omittingEmptySubsequences: false)
-        let name = terminal ?? (quoted.count >= 3 ? String(quoted[1]) : "O terminal")
-        if m.contains("no active work") { return "Nenhum trabalho ativo." }
-        if m.hasPrefix("no loop is running") { return "Nenhum laço está rodando neste trabalho." }
+        let name = terminal ?? (quoted.count >= 3 ? String(quoted[1]) : tr("O terminal", "The terminal"))
+        if m.contains("no active work") { return tr("Nenhum trabalho ativo.", "No active work.") }
+        if m.hasPrefix("no loop is running") { return tr("Nenhum laço está rodando neste trabalho.", "No loop is running in this work.") }
         if m.hasPrefix("work already open: ") {
-            return "\(terminal ?? "O terminal") já tem um trabalho aberto (\(m.dropFirst("work already open: ".count)))."
+            return tr("\(terminal ?? "O terminal") já tem um trabalho aberto (\(m.dropFirst("work already open: ".count))).", "\(terminal ?? "The terminal") already has an open work (\(m.dropFirst("work already open: ".count))).")
         }
-        if m.hasPrefix("no work ") || (m.hasPrefix("Terminal '") && m.hasSuffix("' not found")) { return "Trabalho ou terminal não encontrado." }
-        if m.contains("already closed") { return "Esse trabalho já foi fechado." }
-        if m.hasPrefix("Multiple terminals named") { return "Mais de um terminal se chama \(name)." }
-        if m.contains("waiting for an approval") { return "\(name) está esperando uma aprovação; nada foi enviado." }
-        if e.code == .notRunning || m.contains("is not running") { return "\(name) não está rodando." }
+        if m.hasPrefix("no work ") || (m.hasPrefix("Terminal '") && m.hasSuffix("' not found")) { return tr("Trabalho ou terminal não encontrado.", "Work or terminal not found.") }
+        if m.contains("already closed") { return tr("Esse trabalho já foi fechado.", "That work is already closed.") }
+        if m.hasPrefix("Multiple terminals named") { return tr("Mais de um terminal se chama \(name).", "More than one terminal is named \(name).") }
+        if m.contains("waiting for an approval") { return tr("\(name) está esperando uma aprovação; nada foi enviado.", "\(name) is waiting for an approval; nothing was sent.") }
+        if e.code == .notRunning || m.contains("is not running") { return tr("\(name) não está rodando.", "\(name) is not running.") }
         if e.code == .timeout {
             return m.contains("not delivered") || m.contains("not accepting input")
-                ? "\(name) ainda não estava pronto; nada foi enviado." : "\(name) demorou demais para responder."
+                ? tr("\(name) ainda não estava pronto; nada foi enviado.", "\(name) was not ready yet; nothing was sent.") : tr("\(name) demorou demais para responder.", "\(name) took too long to answer.")
         }
-        return isPortuguese(m) ? m : "Algo deu errado: \(m)"
+        return isPortuguese(m) ? m : tr("Algo deu errado: \(m)", "Something went wrong: \(m)")
     }
 
     /// The daemon's own Portuguese messages (`work.chat.*`, `work.approve`, `work.rerail`), shown as they are.
     static func isPortuguese(_ m: String) -> Bool {
-        portugueseMessages.contains(m) || m.hasPrefix("Nada para mandar depois de @")
+        portugueseMessages.contains(m) || englishMessages.contains(m) || m.hasPrefix("Nada para mandar depois de @") || m.hasPrefix("Nothing to send after @")
             || portugueseEndings.contains { m.hasSuffix($0) && m.count > $0.count }
     }
     static let portugueseMessages: Set<String> = ["Mensagem não encontrada.", "Mensagem vazia.", "A mensagem passa de 8 000 caracteres.",
                                                   "Trabalho não encontrado.", "Aprovação inválida.",
                                                   "Nada para perguntar depois de ?."]
+    /// The same messages in English (WorkChatCommands in `.en`).
+    static let englishMessages: Set<String> = ["Message not found.", "Message is empty.", "The message is over 8,000 characters.",
+                                               "Work not found.", "Invalid approval.", "Nothing to ask after ?."]
     /// After the terminal's name.
-    static let portugueseEndings = [" está pedindo aprovação; recolocar no trilho depois de responder",
+    static let portugueseEndings = [" is asking for approval; put back on track after answering",
+                                    " does not accept pasted text safely; put back on track only in agents", " está pedindo aprovação; recolocar no trilho depois de responder",
                                     " não aceita colar texto com segurança; recolocar no trilho só em agentes"]
 }
 
@@ -353,11 +357,11 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
 extension TaskState {
     var label: String {
         switch self {
-        case .open: "aberta"
-        case .inProgress: "em andamento"
-        case .done: "feita"
-        case .deferred: "para depois"
-        case .abandoned: "não feita"
+        case .open: tr("aberta", "open")
+        case .inProgress: tr("em andamento", "in progress")
+        case .done: tr("feita", "done")
+        case .deferred: tr("para depois", "deferred")
+        case .abandoned: tr("não feita", "not done")
         }
     }
     var tone: CollieTag.Tone {
@@ -396,11 +400,11 @@ struct WorkView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Trabalho", subtitle: model.works.count == 1 ? "1 ativo" : "\(model.works.count) ativos") {
+            PanelHeader(tr("Trabalho", "Work"), subtitle: model.works.count == 1 ? tr("1 ativo", "1 active") : tr("\(model.works.count) ativos", "\(model.works.count) active")) {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
                     Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                        .buttonStyle(CollieButtonStyle(.quiet)).help("Atualizar").accessibilityLabel("Atualizar")
+                        .buttonStyle(CollieButtonStyle(.quiet)).help(tr("Atualizar", "Refresh")).accessibilityLabel(tr("Atualizar", "Refresh"))
                 }
             }
             ScrollView {
@@ -408,7 +412,7 @@ struct WorkView: View {
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
                     if let n = model.notice { Text(n).font(.collieUI(12)).foregroundStyle(Color.collieAttention) }
                     ForEach(model.approvals) { approvalCard($0) }   // first: what waits for the user
-                    if model.works.isEmpty { Text("Nenhum trabalho ativo.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                    if model.works.isEmpty { Text(tr("Nenhum trabalho ativo.", "No active work.")).font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                     ForEach(model.works, id: \.id) { workRow($0) }
                     if !model.closed.isEmpty { closedGroup }
                 }
@@ -421,10 +425,10 @@ struct WorkView: View {
         }
         .background(Color.collieSidebar)
         .task { await model.refresh() }
-        .confirmationDialog("Fechar \(closing?.title ?? "")?", isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
+        .confirmationDialog(tr("Fechar \(closing?.title ?? "")?", "Close \(closing?.title ?? "")?"), isPresented: Binding(get: { closing != nil }, set: { if !$0 { closing = nil } }),
                             titleVisibility: .visible, presenting: closing) { w in
-            Button("Fechar") { Task { await model.closeWork(w.id) } }
-        } message: { _ in Text("Dá para reabrir depois em Fechados.") }
+            Button(tr("Fechar", "Close")) { Task { await model.closeWork(w.id) } }
+        } message: { _ in Text(tr("Dá para reabrir depois em Fechados.", "You can reopen it later under Closed.")) }
     }
 
     // MARK: works
@@ -440,10 +444,10 @@ struct WorkView: View {
                             if let t = model.terminalName(of: w), model.rerailing.contains(t) { CollieTag("recolocando…", tone: .secondary) }
                             if model.hasAlert(w) {
                                 Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.collieAttention)
-                                    .help(alertText(w)).accessibilityLabel("Alerta: " + alertText(w))
+                                    .help(alertText(w)).accessibilityLabel(tr("Alerta: ", "Alert: ") + alertText(w))
                             }
                         }
-                        Text((model.terminalName(of: w) ?? "terminal removido") + (w.branch.map { " · \($0)" } ?? "")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                        Text((model.terminalName(of: w) ?? tr("terminal removido", "terminal removed")) + (w.branch.map { " · \($0)" } ?? "")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                         if let badge = model.loopBadge(w) { CollieTag(badge.text, tone: badge.running ? .accent : .secondary) }
                         HStack(spacing: 4) { ForEach(model.counts(w), id: \.state) { CollieTag("\($0.n) \($0.state.label)", tone: $0.state.tone) } }
                     }
@@ -453,14 +457,14 @@ struct WorkView: View {
                 .accessibilityAddTraits(sel ? .isSelected : [])
                 Menu {
                     if let t = model.terminalName(of: w) {   // a removed terminal can't be put back on track
-                        Button("Recolocar no trilho") { Task { await model.rerail(t) } }.disabled(model.rerailing.contains(t))
+                        Button(tr("Recolocar no trilho", "Put back on track")) { Task { await model.rerail(t) } }.disabled(model.rerailing.contains(t))
                         if model.loopBadge(w)?.running == true {
-                            Button("Parar laço") { Task { await model.stopLoop(t) } }.help("Para depois do veredito da tentativa atual")
+                            Button(tr("Parar laço", "Stop loop")) { Task { await model.stopLoop(t) } }.help(tr("Para depois do veredito da tentativa atual", "Stops after the current attempt's verdict"))
                         }
                     }
-                    Button("Fechar…") { closing = w }
+                    Button(tr("Fechar…", "Close…")) { closing = w }
                 } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).fixedSize().help("Ações do trabalho").accessibilityLabel("Ações de \(w.title)")
+                    .menuStyle(.borderlessButton).fixedSize().help(tr("Ações do trabalho", "Work actions")).accessibilityLabel(tr("Ações de \(w.title)", "Actions for \(w.title)"))
             }
             if sel { details(w) }
         }
@@ -470,15 +474,15 @@ struct WorkView: View {
 
     private func alertText(_ w: Work) -> String {
         var parts: [String] = []
-        if w.jobs.contains(where: { $0.state == .gone || $0.state == .unknown }) { parts.append("job sumiu ou desconhecido") }
-        if model.pendingApproval(w) { parts.append("esperando aprovação") }
+        if w.jobs.contains(where: { $0.state == .gone || $0.state == .unknown }) { parts.append(tr("job sumiu ou desconhecido", "job gone or unknown")) }
+        if model.pendingApproval(w) { parts.append(tr("esperando aprovação", "waiting for approval")) }
         return parts.joined(separator: ", ")
     }
 
     private func details(_ w: Work) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if let s = model.summary {
-                DisclosureGroup("Resumo") {
+                DisclosureGroup(tr("Resumo", "Summary")) {
                     // the title line ("## …") is already the row's
                     let data = s.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().joined()
                     let body = model.showSummaryData ? data : model.naturalSummary ?? data
@@ -487,10 +491,10 @@ struct WorkView: View {
                         .font(.collieUI(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if model.naturalSummary != nil {
-                        Button(model.showSummaryData ? "Ver resumo" : "Ver dados") { model.showSummaryData.toggle() }
+                        Button(model.showSummaryData ? tr("Ver resumo", "View summary") : tr("Ver dados", "View data")) { model.showSummaryData.toggle() }
                             .buttonStyle(.link).font(.collieUI(11))
                     } else if let why = model.summaryReason {
-                        Text("Resumo sem reescrita: \(why)").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
+                        Text(tr("Resumo sem reescrita: \(why)", "Summary without rewrite: \(why)")).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
                     }
                 }
                 .font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
@@ -527,12 +531,12 @@ struct WorkView: View {
         ForEach(WorkPanelModel.evidenceFiles(e)) { f in
             HStack(spacing: 6) {
                 Text(f.name).font(.collieMono(11)).foregroundStyle(Color.collieText).lineLimit(1)
-                Button("Abrir") { NSWorkspace.shared.open(f.url) }.buttonStyle(.link).font(.collieUI(11))
-                    .accessibilityLabel("Abrir \(f.name)")
+                Button(tr("Abrir", "Open")) { NSWorkspace.shared.open(f.url) }.buttonStyle(.link).font(.collieUI(11))
+                    .accessibilityLabel(tr("Abrir \(f.name)", "Open \(f.name)"))
             }
         }
         if !e.checkTail.isEmpty {
-            DisclosureGroup("Saída do check") {
+            DisclosureGroup(tr("Saída do check", "Check output")) {
                 Text(e.checkTail).font(.collieMono(11)).foregroundStyle(Color.collieText).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -549,10 +553,10 @@ struct WorkView: View {
                         Text(l.terminal).font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                     }
                     Spacer()
-                    Button("Reabrir") { Task { await model.reopenWork(l.id) } }.buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy)
+                    Button(tr("Reabrir", "Reopen")) { Task { await model.reopenWork(l.id) } }.buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy)
                 }
             }
-        } label: { Text("Fechados (\(model.closed.count))").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieTextSecondary) }
+        } label: { Text(tr("Fechados (\(model.closed.count))", "Closed (\(model.closed.count))")).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieTextSecondary) }
     }
 
     // MARK: approvals
@@ -561,12 +565,12 @@ struct WorkView: View {
     private func approvalCard(_ a: Approval) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                CollieTag(a.kind == .unknown ? "olhe o terminal" : "aprovação", tone: .attention)
+                CollieTag(a.kind == .unknown ? tr("olhe o terminal", "check the terminal") : tr("aprovação", "approval"), tone: .attention)
                 Text(a.terminal).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
             }
             if a.kind == .unknown {
                 Text(a.reason).font(.collieUI(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
-                Button("Entendi, vou olhar o terminal") { Task { await model.dismiss(a.id) } }.buttonStyle(CollieButtonStyle(.secondary))
+                Button(tr("Entendi, vou olhar o terminal", "Got it, I'll check the terminal")) { Task { await model.dismiss(a.id) } }.buttonStyle(CollieButtonStyle(.secondary))
                     .disabled(model.approving.contains(a.id))
             } else {
                 ScrollView([.vertical, .horizontal]) {
@@ -574,13 +578,13 @@ struct WorkView: View {
                         .fixedSize().padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 220).background(Color.collieSunken, in: .rect(cornerRadius: 8))
-                .accessibilityLabel("Pedido capturado: " + WorkPanelModel.visible(a.prompt))
+                .accessibilityLabel(tr("Pedido capturado: ", "Captured request: ") + WorkPanelModel.visible(a.prompt))
                 HStack(spacing: 8) {
-                    Button("Aprovar") { Task { await model.approve(a.id, allow: true) } }.buttonStyle(CollieButtonStyle(.primary))
-                    Button("Negar") { Task { await model.approve(a.id, allow: false) } }.buttonStyle(CollieButtonStyle(.secondary))
+                    Button(tr("Aprovar", "Approve")) { Task { await model.approve(a.id, allow: true) } }.buttonStyle(CollieButtonStyle(.primary))
+                    Button(tr("Negar", "Deny")) { Task { await model.approve(a.id, allow: false) } }.buttonStyle(CollieButtonStyle(.secondary))
                     Spacer()
-                    Button("Dispensar") { Task { await model.dismiss(a.id) } }.buttonStyle(CollieButtonStyle(.quiet))
-                        .help("o pedido já não está na tela").accessibilityHint("o pedido já não está na tela; nada é digitado")
+                    Button(tr("Dispensar", "Dismiss")) { Task { await model.dismiss(a.id) } }.buttonStyle(CollieButtonStyle(.quiet))
+                        .help(tr("o pedido já não está na tela", "the request is no longer on screen")).accessibilityHint(tr("o pedido já não está na tela; nada é digitado", "the request is no longer on screen; nothing is typed"))
                 }
                 .disabled(model.approving.contains(a.id))
             }
@@ -588,7 +592,7 @@ struct WorkView: View {
         .padding(12)
         .collieCard(highlight: Color.collieAttention)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Aprovação de \(a.terminal)")
+        .accessibilityLabel(tr("Aprovação de \(a.terminal)", "Approval for \(a.terminal)"))
     }
 
     // MARK: chat
@@ -615,13 +619,13 @@ struct WorkView: View {
             HStack(alignment: .bottom, spacing: 6) {
                 TextField(model.placeholder, text: $draft, axis: .vertical)
                     .lineLimit(1...6).collieField()
-                    .help("Enter envia, Shift+Enter quebra linha")
+                    .help(tr("Enter envia, Shift+Enter quebra linha", "Enter sends, Shift+Enter adds a line"))
                     .onKeyPress(.return, phases: .down) { press in
                         if press.modifiers.contains(.shift) { draft += "\n"; return .handled }
                         submit(); return .handled
                     }
                 Button(action: submit) { Image(systemName: "paperplane") }
-                    .buttonStyle(CollieButtonStyle(.primary)).help("Enviar").accessibilityLabel("Enviar")
+                    .buttonStyle(CollieButtonStyle(.primary)).help(tr("Enviar", "Send")).accessibilityLabel(tr("Enviar", "Send"))
                     .disabled(model.busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(8)

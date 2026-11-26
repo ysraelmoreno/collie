@@ -55,7 +55,7 @@ public struct ClaudeImportProgress: Equatable {
             guard nonces.contains(nonce), let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
             items[i].state = .imported
         case "artifact.import.failed":
-            let why = s("reason") ?? "falhou"
+            let why = s("reason") ?? tr("falhou", "failed")
             if s("url") == "" { guard listing, nonce == listNonce else { return false }; listing = false; listError = why; return true }
             guard nonces.contains(nonce), let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
             items[i].state = .failed(why)
@@ -83,7 +83,7 @@ public enum ArtifactDrop {
             if let v, v.isSymbolicLink != true, v.isDirectory == true || (v.isRegularFile == true && ["html", "htm", "zip"].contains(ext)) {
                 ok.append(u)
             } else {
-                refused.append("\(u.lastPathComponent): só páginas .html, pastas ou .zip")
+                refused.append(tr("\(u.lastPathComponent): só páginas .html, pastas ou .zip", "\(u.lastPathComponent): only .html pages, folders or .zip"))
             }
         }
         return (ok, refused)
@@ -109,47 +109,47 @@ struct ClaudeImportSheet: View {
     var body: some View {
         let p = model.claude
         VStack(alignment: .leading, spacing: 12) {
-            Text("Importar do Claude").font(.collieUI(17, .semibold)).foregroundStyle(Color.collieText)
-            Text("Um terminal Claude já logado lê os artifacts com a ferramenta dele; o Collie guarda as páginas sem precisar de rede.")
+            Text(tr("Importar do Claude", "Import from Claude")).font(.collieUI(17, .semibold)).foregroundStyle(Color.collieText)
+            Text(tr("Um terminal Claude já logado lê os artifacts com a ferramenta dele; o Collie guarda as páginas sem precisar de rede.", "A signed-in Claude terminal reads the artifacts with its own tool; Collie keeps the pages without needing a network."))
                 .font(.collieUI(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
-            Text("Links (um por linha, até \(ClaudeLinks.maxPerImport))").font(.collieUI(12, .medium))
+            Text(tr("Links (um por linha, até \(ClaudeLinks.maxPerImport))", "Links (one per line, up to \(ClaudeLinks.maxPerImport))")).font(.collieUI(12, .medium))
             TextEditor(text: $text).font(.collieMono(12)).frame(height: 90).overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.collieMuted.opacity(0.4)))
-                .accessibilityLabel("Links dos artifacts do claude.ai")
+                .accessibilityLabel(tr("Links dos artifacts do claude.ai", "claude.ai artifact links"))
             if !parsed.bad.isEmpty {
-                Text("Não são links de artifact do claude.ai: " + parsed.bad.prefix(3).joined(separator: ", "))
+                Text(tr("Não são links de artifact do claude.ai: ", "Not claude.ai artifact links: ") + parsed.bad.prefix(3).joined(separator: ", "))
                     .font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
             HStack {
-                Picker("Pasta", selection: $folder) {
-                    Text("Sem pasta").tag("")
+                Picker(tr("Pasta", "Folder"), selection: $folder) {
+                    Text(tr("Sem pasta", "No folder")).tag("")
                     ForEach(model.folders.map(\.path), id: \.self) { Text($0).tag($0) }
                 }
                 Picker("Terminal", selection: $terminal) {
-                    if model.terminals.isEmpty { Text("Nenhum terminal Claude aberto").tag("") }
+                    if model.terminals.isEmpty { Text(tr("Nenhum terminal Claude aberto", "No Claude terminal open")).tag("") }
                     ForEach(model.terminals) { t in Text(t.name + (t.running ? "" : " (parado)")).tag(t.id) }
                 }
             }
             HStack {
-                Button("Importar \(parsed.links.count == 1 ? "1 link" : "\(parsed.links.count) links")") {
+                Button(tr("Importar \(parsed.links.count == 1 ? "1 link" : "\(parsed.links.count) links")", "Import \(parsed.links.count == 1 ? "1 link" : "\(parsed.links.count) links")")) {
                     let links = parsed.links
                     Task { if await model.importClaude(links, folder: folder, terminal: terminal) { text = "" } }
                 }
                 .disabled(parsed.links.isEmpty || parsed.links.count > ClaudeLinks.maxPerImport || terminal.isEmpty || model.busy)
                 .buttonStyle(CollieButtonStyle(.primary))
-                Button(p.listing ? "Listando…" : "Importar meus artifacts…") { Task { await model.listClaude(terminal: terminal) } }
+                Button(p.listing ? tr("Listando…", "Listing…") : tr("Importar meus artifacts…", "Import my artifacts…")) { Task { await model.listClaude(terminal: terminal) } }
                     .disabled(terminal.isEmpty || p.listing || model.busy).buttonStyle(CollieButtonStyle(.secondary))
                 Spacer()
-                Button("Fechar") { shown = false }.buttonStyle(CollieButtonStyle(.quiet)).keyboardShortcut(.cancelAction)
+                Button(tr("Fechar", "Close")) { shown = false }.buttonStyle(CollieButtonStyle(.quiet)).keyboardShortcut(.cancelAction)
             }
-            if let e = p.listError { Text("Lista: \(e)").font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
+            if let e = p.listError { Text(tr("Lista: \(e)", "List: \(e)")).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     if !p.listed.isEmpty {
                         HStack {
-                            Text("Seus artifacts (\(p.listed.count))").font(.collieUI(12, .semibold))
+                            Text(tr("Seus artifacts (\(p.listed.count))", "Your artifacts (\(p.listed.count))")).font(.collieUI(12, .semibold))
                             Spacer()
-                            Button("Importar selecionados (\(p.batch.count))") {
+                            Button(tr("Importar selecionados (\(p.batch.count))", "Import selected (\(p.batch.count))")) {
                                 let links = p.batch
                                 Task { _ = await model.importClaude(links, folder: folder, terminal: terminal) }
                             }.disabled(p.batch.isEmpty || terminal.isEmpty || model.busy).buttonStyle(CollieButtonStyle(.secondary))
@@ -169,8 +169,8 @@ struct ClaudeImportSheet: View {
                             switch i.state {
                             case .pending: ProgressView().controlSize(.small); Text("aguardando").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                             case .imported: Text("importado").font(.collieMono(11, .semibold)).foregroundStyle(Color.collieAccent)
-                            case .failed(let why): Text("falhou").font(.collieMono(11, .semibold)).foregroundStyle(Color.collieDanger).help(why)
-                                .accessibilityLabel("falhou: \(why)")
+                            case .failed(let why): Text(tr("falhou", "failed")).font(.collieMono(11, .semibold)).foregroundStyle(Color.collieDanger).help(why)
+                                .accessibilityLabel(tr("falhou: \(why)", "failed: \(why)"))
                             }
                         }
                     }

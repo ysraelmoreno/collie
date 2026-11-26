@@ -156,11 +156,11 @@ struct DesignSystemsView: View {
             PanelHeader("Design systems")
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    TextField("Motivo (obrigatório)", text: $model.reason).collieField()
+                    TextField(tr("Motivo (obrigatório)", "Reason (required)"), text: $model.reason).collieField()
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
-                    if model.offerForce { Button("Publicar mesmo assim…") { confirmForce = true }.buttonStyle(CollieButtonStyle(.attention)) }
+                    if model.offerForce { Button(tr("Publicar mesmo assim…", "Publish anyway…")) { confirmForce = true }.buttonStyle(CollieButtonStyle(.attention)) }
                     results
-                    if model.systems.isEmpty { Text("Nenhum design system.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                    if model.systems.isEmpty { Text(tr("Nenhum design system.", "No design systems.")).font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                     ForEach(model.systems) { s in
                         let on = model.selected == s.name
                         Button { model.selected = s.name; Task { await model.showHistory() } } label: {
@@ -170,9 +170,9 @@ struct DesignSystemsView: View {
                                         Text(s.name).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
                                         Text("v\(s.version)").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                                     }
-                                    Text(s.active.isEmpty ? "não está ativo" : "ativo: " + s.active.joined(separator: ", "))
+                                    Text(s.active.isEmpty ? tr("não está ativo", "not active") : tr("ativo: ", "active: ") + s.active.joined(separator: ", "))
                                         .font(.collieMono(11)).foregroundStyle(s.active.isEmpty ? Color.collieMuted : .collieAccent)
-                                    if let r = s.reverted { Text("voltou para v\(r)").font(.collieMono(11)).foregroundStyle(Color.collieAttention) }
+                                    if let r = s.reverted { Text(tr("voltou para v\(r)", "reverted to v\(r)")).font(.collieMono(11)).foregroundStyle(Color.collieAttention) }
                                 }
                                 Spacer()
                             }
@@ -183,30 +183,30 @@ struct DesignSystemsView: View {
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                     HStack(spacing: 6) {
-                        Picker("Escopo", selection: $model.scope) { ForEach(model.scopes, id: \.self) { Text($0 == "workspace" ? "Workspace" : "Cercado \($0.dropFirst(8))").tag($0) } }
+                        Picker(tr("Escopo", "Scope"), selection: $model.scope) { ForEach(model.scopes, id: \.self) { Text($0 == "workspace" ? "Workspace" : tr("Cercado \($0.dropFirst(8))", "Paddock \($0.dropFirst(8))")).tag($0) } }
                             .labelsHidden().fixedSize()
-                        Button("Usar neste escopo") { Task { await model.use() } }.disabled(!model.canWrite || model.selected == nil)
+                        Button(tr("Usar neste escopo", "Use in this scope")) { Task { await model.use() } }.disabled(!model.canWrite || model.selected == nil)
                             .buttonStyle(CollieButtonStyle(.primary))
                     }
                     HStack(spacing: 6) {
-                        Button("Desfazer troca") { Task { await model.undo() } }.disabled(!model.canWrite)
-                        Button("Nenhum neste escopo") { Task { await model.clear() } }.disabled(!model.canWrite)
-                        Button("Publicar versão") { Task { await model.publish() } }.disabled(!model.canWrite || model.selected == nil)
+                        Button(tr("Desfazer troca", "Undo switch")) { Task { await model.undo() } }.disabled(!model.canWrite)
+                        Button(tr("Nenhum neste escopo", "None in this scope")) { Task { await model.clear() } }.disabled(!model.canWrite)
+                        Button(tr("Publicar versão", "Publish version")) { Task { await model.publish() } }.disabled(!model.canWrite || model.selected == nil)
                     }.buttonStyle(CollieButtonStyle(.secondary))
-                    DisclosureGroup("Novo design system…", isExpanded: $showNew) {
+                    DisclosureGroup(tr("Novo design system…", "New design system…"), isExpanded: $showNew) {
                         VStack(alignment: .leading, spacing: 8) {
-                            TextField("Nome", text: $model.newName).collieField()
+                            TextField(tr("Nome", "Name"), text: $model.newName).collieField()
                             Picker("A partir de", selection: $model.newFrom) {
                                 Text("(vazio)").tag(""); ForEach(model.systems) { Text($0.name).tag($0.name) }
                             }
-                            Button("Criar") { Task { await model.create() } }
+                            Button(tr("Criar", "Create")) { Task { await model.create() } }
                                 .disabled(!model.canWrite || model.newName.trimmingCharacters(in: .whitespaces).isEmpty)
                                 .buttonStyle(CollieButtonStyle(.secondary))
                         }.padding(.top, 6)
                     }.font(.collieUI(13)).foregroundStyle(Color.collieText)
                     Rectangle().fill(Color.collieBorder).frame(height: 1)
-                    Text("Histórico").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
-                    if model.history.isEmpty { Text("Selecione um design system.").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
+                    Text(tr("Histórico", "History")).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                    if model.history.isEmpty { Text(tr("Selecione um design system.", "Select a design system.")).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
                     ForEach(model.history) { e in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
@@ -216,7 +216,7 @@ struct DesignSystemsView: View {
                             Text("\(when.string(from: e.at)) · \(e.by) · \(e.reason)").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                             ForEach(e.files ?? []) { outcome($0) }
                             if e.canRevert, let v = e.version {
-                                Button("Voltar para esta versão") { Task { await model.revert(to: v) } }
+                                Button(tr("Voltar para esta versão", "Revert to this version")) { Task { await model.revert(to: v) } }
                                     .disabled(!model.canWrite).buttonStyle(CollieButtonStyle(.secondary))
                             }
                         }
@@ -224,19 +224,19 @@ struct DesignSystemsView: View {
                     }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
-            PanelFooter(model.systems.count == 1 ? "1 design system" : "\(model.systems.count) design systems", trailing: model.scope == "workspace" ? "workspace" : "cercado \(model.scope.dropFirst(8))")
+            PanelFooter(model.systems.count == 1 ? "1 design system" : "\(model.systems.count) design systems", trailing: model.scope == "workspace" ? "workspace" : tr("cercado \(model.scope.dropFirst(8))", "paddock \(model.scope.dropFirst(8))"))
         }
         .background(Color.collieSidebar)
         .task { await model.load() }
-        .confirmationDialog("Publicar \(model.selected ?? "") mesmo assim?", isPresented: $confirmForce, titleVisibility: .visible) {
-            Button("Publicar \(model.selected ?? "") mesmo assim", role: .destructive) { Task { await model.publish(force: true) } }
-        } message: { Text("O arquivo será publicado como está e a marca de \"voltou\" será limpa.") }
+        .confirmationDialog(tr("Publicar \(model.selected ?? "") mesmo assim?", "Publish \(model.selected ?? "") anyway?"), isPresented: $confirmForce, titleVisibility: .visible) {
+            Button(tr("Publicar \(model.selected ?? "") mesmo assim", "Publish \(model.selected ?? "") anyway"), role: .destructive) { Task { await model.publish(force: true) } }
+        } message: { Text(tr("O arquivo será publicado como está e a marca de \"voltou\" será limpa.", "The file will be published as is and the \"reverted\" mark will be cleared.")) }
     }
 
     @ViewBuilder private var results: some View {
         if !model.results.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Resultado por arquivo").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieText)
+                Text(tr("Resultado por arquivo", "Result per file")).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieText)
                 ForEach(model.results) { outcome($0) }
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).collieCard()
         }
@@ -245,7 +245,7 @@ struct DesignSystemsView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("\(o.ok ? "✓" : "✕") \(o.file): \(o.detail)").font(.collieMono(11)).foregroundStyle(o.ok ? Color.collieMuted : .collieDanger)
             if let u = o.unmatched, !u.isEmpty {
-                Text("sem par: " + u.joined(separator: ", ")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                Text(tr("sem par: ", "unpaired: ") + u.joined(separator: ", ")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
             }
         }
     }

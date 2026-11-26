@@ -7,7 +7,7 @@ import CollieProtocol
 @testable import ColliePlugins
 
 /// Trusted keyboard and mouse input: the page hosted headless in a `BrowserInput.HostWindow` (local HTML only).
-@MainActor @Suite(.serialized) struct BrowserInputTests {
+@MainActor @Suite(.serialized, .pt) struct BrowserInputTests {
     @MainActor final class Hosted {
         let b: BrowserPanel, window: NSWindow, done: () -> Void
         init(_ b: BrowserPanel, _ w: NSWindow, done: @escaping () -> Void = {}) { self.b = b; window = w; self.done = done }

@@ -86,7 +86,7 @@ private actor Fake {
     return (WorkPanelModel(call: { c, a throws(ProtocolError) in try await f.handle(c, a) }, window: window), f)
 }
 
-@MainActor @Suite struct WorkPanelTests {
+@MainActor @Suite(.pt) struct WorkPanelTests {
     @Test func refreshLoadsWorksChatApprovals() async {
         let (m, f) = make()
         await m.refresh()

@@ -66,6 +66,58 @@ private func withPaddockDevice(_ fx: Fx, flowOn: Bool = true, _ body: (Daemon, P
     }
 }
 
+/// The router's log of paddock `k` (flag in the daemon's folder).
+private func flowLog(_ d: Daemon) async throws -> FlowActionLog {
+    let k = try #require(await d.router.ws.paddocks.first { $0.name == "k" })
+    return try #require(await d.router.flowLog(k.id))
+}
+
+/// b2: the opt-in is the daemon's, a forged `enabled` in the worktree does nothing; a hostile log file never fails the
+/// device action.
+extension DeviceCommandTests.FlowLogHardeningTests {
+    @Test func touchedEnabledInWorktreeDoesNotTurnTheLogOn() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withPaddockDevice(fx, flowOn: false) { d, p, a async throws in
+            let flows = fx.paddock.appendingPathComponent(".collie/flows")
+            try FileManager.default.createDirectory(at: flows, withIntermediateDirectories: true)
+            #expect(FileManager.default.createFile(atPath: flows.appendingPathComponent("enabled").path, contents: Data()))
+            #expect(field(try await admin(d, p, "device.flow", ["action": "status", "paddock": "k"]), "enabled") == .bool(false))
+            #expect(try await call(p, a, "device.tap", ["x": "1", "y": "2"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(fx.lines.isEmpty)
+        }
+    }
+
+    @Test func flowOnAndOffDriveTheDaemonFlag() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withPaddockDevice(fx, flowOn: false) { d, p, a async throws in
+            let log = try await flowLog(d)
+            #expect(field(try await admin(d, p, "device.flow", ["action": "on", "paddock": "k"]), "enabled") == .bool(true))
+            #expect(FileManager.default.fileExists(atPath: log.flag.path) && !log.flag.path.hasPrefix(fx.paddock.path))
+            #expect(try await call(p, a, "device.tap", ["x": "1", "y": "2"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(fx.lines.count == 1)
+            #expect(field(try await admin(d, p, "device.flow", ["action": "off", "paddock": "k"]), "enabled") == .bool(false))
+            #expect(try await call(p, a, "device.tap", ["x": "1", "y": "2"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(fx.lines.count == 1)
+        }
+    }
+
+    @Test func symlinkedLogDoesNotFailTheDeviceAction() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let victim = fx.dir.appendingPathComponent("victim")
+        try Data("keep\n".utf8).write(to: victim)
+        try await withPaddockDevice(fx) { d, p, a async throws in
+            try FileManager.default.createDirectory(at: fx.actions.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: fx.actions, withDestinationURL: victim)
+            #expect(try await call(p, a, "device.tap", ["x": "1", "y": "2"]).ok)
+            await d.router.devices.flowFlushed()
+            #expect(try String(contentsOf: victim, encoding: .utf8) == "keep\n")
+        }
+    }
+}
+
 /// d5: the device actions reach the paddock's `FlowActionLog`. Nested in DeviceCommandTests: serialized with it, since
 /// both drive the fake adb through process-wide environment variables.
 extension DeviceCommandTests {
@@ -113,7 +165,7 @@ extension DeviceCommandTests {
             let fx = try Fx(); defer { fx.cleanup() }
             try await withPaddockDevice(fx) { d, p, a async throws in
                 #expect(try await call(p, a, "device.tap", ["x": "3", "y": "4"]).ok)
-                await d.router.devices.recordPanelTap(panel: UUID(), target: "10,20", log: FlowActionLog(paddock: fx.paddock))
+                await d.router.devices.recordPanelTap(panel: UUID(), target: "10,20", log: try await flowLog(d))
                 await d.router.devices.flowFlushed()
                 #expect(fx.lines.map { $0["origin"] } == ["agent:A", "panel"], "\(fx.lines)")
                 #expect(fx.lines.map { $0["target"] } == ["3,4", "10,20"])

@@ -6,7 +6,7 @@ import Foundation
 @Suite struct FlowActionLogTests {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("flowlog-\(UUID().uuidString.prefix(8))")
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-    var log: FlowActionLog { FlowActionLog(paddock: root) }
+    var log: FlowActionLog { FlowActionLog(paddock: root, flag: root.appendingPathComponent("daemon/enabled")) }
     let tap = FlowAction(origin: "agent:M", action: "tap", target: "text:Entrar", sigBefore: "s1", sigAfter: "s2", app: "com.x", appVersion: "1.2")
 
     func lines(_ name: String = "actions.jsonl") throws -> [[String: String]] {
@@ -58,7 +58,7 @@ import Foundation
         try log.append(tap, now: t0)
         #expect(try perms(log.dir) == 0o700)
         #expect(try perms(log.file) == 0o600)
-        #expect(try perms(log.dir.appendingPathComponent("enabled")) == 0o600)
+        #expect(try perms(log.flag) == 0o600)
     }
 
     @Test func rotatesBySizeAndKeepsThreeFiles() throws {

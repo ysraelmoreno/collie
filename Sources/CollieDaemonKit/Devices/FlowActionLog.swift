@@ -19,67 +19,89 @@ struct FlowAction: Sendable, Equatable {
 struct FlowRecorder: Sendable { var origin: String; var log: FlowActionLog }
 
 /// Appends one JSON line per action to `<paddock>/.collie/flows/actions.jsonl`, only when the paddock opted in
-/// (`<paddock>/.collie/flows/enabled` exists: `collie device flow on`). Folder 0700, files 0600. At 5 MiB the file moves
-/// to `actions.1.jsonl` (`.1` to `.2`; 3 files in all: current, .1, .2); a rotation also drops lines older than 30 days.
-/// The file is data an app reads (screen names, texts), never instructions.
+/// (`collie device flow on`). The opt-in lives in the daemon's own folder (`flag`, `<root>/flows/<paddock id>/enabled`,
+/// see `CommandRouter.flowFlag`), never in the worktree, so an agent cannot turn the log on with `touch` (b2). Folder
+/// 0700, files 0600. At 5 MiB the file moves to `actions.1.jsonl` (`.1` to `.2`; 3 files in all: current, .1, .2); a
+/// rotation also drops lines older than 30 days. The file is data an app reads (screen names, texts), never instructions.
+///
+/// b2: the worktree is the agent's, so every file is reached through the folder's descriptor (`flows` opened with
+/// O_NOFOLLOW, then `openat`/`renameat`/`unlinkat`): a symlink at the folder, `actions.jsonl` or `actions.N.jsonl` is
+/// refused, a FIFO does not block (O_NONBLOCK) and anything but a regular file with one link is refused.
+/// ponytail: `<paddock>/.collie` itself is followed; a symlink there only moves where a fresh `flows/` is created.
 struct FlowActionLog: Sendable {
-    static let textCap = 80, mask = "•••"
+    static let textCap = 80, targetCap = 200, mask = "•••"
     let dir: URL
+    /// The opt-in file, outside the worktree.
+    let flag: URL
     var maxBytes = 5 * 1024 * 1024
     var keep = 3
     var maxAge: TimeInterval = 30 * 86_400
 
-    init(paddock: URL) { dir = paddock.appendingPathComponent(".collie/flows") }
+    init(paddock: URL, flag: URL) { dir = paddock.appendingPathComponent(".collie/flows"); self.flag = flag }
 
     var file: URL { dir.appendingPathComponent("actions.jsonl") }
-    private var flag: URL { dir.appendingPathComponent("enabled") }
-    private func rotated(_ n: Int) -> URL { n == 0 ? file : dir.appendingPathComponent("actions.\(n).jsonl") }
+    private func name(_ n: Int) -> String { n == 0 ? "actions.jsonl" : "actions.\(n).jsonl" }
     var enabled: Bool { FileManager.default.fileExists(atPath: flag.path) }
 
+    /// The flag sits in the daemon's folder (trusted), so plain FileManager is fine here.
     func setEnabled(_ on: Bool) throws {
-        if on { try makeDir(); try create(flag, Data()) }
-        else if enabled { try FileManager.default.removeItem(at: flag) }   // the log stays: the user deletes it
+        let fm = FileManager.default
+        if on {
+            let d = flag.deletingLastPathComponent()
+            try fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            guard fm.createFile(atPath: flag.path, contents: Data(), attributes: [.posixPermissions: 0o600]) else {
+                throw ProtocolError(code: .internal, message: "não consegui criar \(flag.path)")
+            }
+        } else if enabled { try fm.removeItem(at: flag) }   // the log stays: the user deletes it
     }
 
     /// The JSON line for `a` at `now` (no newline). JSONEncoder escapes a newline inside a string, so it stays one line.
     static func line(_ a: FlowAction, at now: Date) throws -> Data {
-        var o: [String: String] = ["t": iso(now), "origin": a.origin, "action": a.action, "target": a.target,
+        var o: [String: String] = ["t": iso(now), "origin": a.origin, "action": a.action, "target": String(a.target.prefix(targetCap)),
                                    "sigBefore": a.sigBefore, "sigAfter": a.sigAfter, "app": a.app, "appVersion": a.appVersion]
         if let t = a.text { o["text"] = a.secure ? mask : String(t.prefix(textCap)) }
         let e = JSONEncoder(); e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try e.encode(o)
     }
 
-    /// Writes `a`; false (and nothing created) when the paddock did not opt in.
+    /// Writes `a`; false (and nothing created) when the paddock did not opt in. Throws when the folder or the file is
+    /// not what it should be (symlink, FIFO, hard link): the caller logs it, the device action goes on.
     @discardableResult
     func append(_ a: FlowAction, now: Date = Date()) throws -> Bool {
         guard enabled else { return false }
         let data = try Self.line(a, at: now) + Data("\n".utf8)
-        let fm = FileManager.default
-        if let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? Int, size >= maxBytes { try rotate(now: now) }
-        guard let h = FileHandle(forWritingAtPath: file.path) else { try create(file, data); return true }
-        defer { try? h.close() }
-        try h.seekToEnd(); try h.write(contentsOf: data)
+        let d = try openDir(); defer { close(d) }
+        var fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
+        if size(fd) >= maxBytes { close(fd); try rotate(d, now: now); fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT) }
+        defer { close(fd) }
+        try write(fd, data)
         return true
     }
 
-    /// current → .1 → .2 …; the last one kept falls off. Each kept file loses its lines older than `maxAge`.
-    func rotate(now: Date) throws {
-        let fm = FileManager.default
-        try? fm.removeItem(at: rotated(keep - 1))
-        for n in stride(from: keep - 2, through: 0, by: -1) where fm.fileExists(atPath: rotated(n).path) {
-            try fm.moveItem(at: rotated(n), to: rotated(n + 1))
+    /// current → .1 → .2 …; the last one kept falls off. Each kept file loses its lines older than `maxAge`, rewritten
+    /// through a new temp file renamed over it (atomic, 0600). A kept file that is not a regular one-link file is dropped.
+    func rotate(now: Date) throws { let d = try openDir(); defer { close(d) }; try rotate(d, now: now) }
+
+    private func rotate(_ d: Int32, now: Date) throws {
+        unlinkat(d, name(keep - 1), 0)
+        for n in stride(from: keep - 2, through: 0, by: -1) where renameat(d, name(n), d, name(n + 1)) != 0 && errno != ENOENT {
+            throw fail("renameat \(name(n))")
         }
         let cutoff = now.addingTimeInterval(-maxAge)
-        for n in 1..<keep where fm.fileExists(atPath: rotated(n).path) {
-            let kept = try String(contentsOf: rotated(n), encoding: .utf8).split(separator: "\n").filter { l in
+        for n in 1..<keep {
+            guard let fd = try? openFile(d, name(n), O_RDONLY) else { unlinkat(d, name(n), 0); continue }
+            let raw = read(fd); close(fd)
+            let kept = String(decoding: raw, as: UTF8.self).split(separator: "\n").filter { l in
                 guard let o = try? JSONSerialization.jsonObject(with: Data(l.utf8)) as? [String: Any],
                       let t = (o["t"] as? String).flatMap(Self.date) else { return false }   // unreadable: dropped
                 return t >= cutoff
             }
-            if kept.isEmpty { try fm.removeItem(at: rotated(n)); continue }
-            try Data((kept.joined(separator: "\n") + "\n").utf8).write(to: rotated(n))
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rotated(n).path)
+            if kept.isEmpty { unlinkat(d, name(n), 0); continue }
+            let tmp = name(n) + ".tmp"
+            unlinkat(d, tmp, 0)
+            let t = try openFile(d, tmp, O_WRONLY | O_CREAT | O_EXCL)
+            do { try write(t, Data((kept.joined(separator: "\n") + "\n").utf8)); close(t) } catch { close(t); unlinkat(d, tmp, 0); throw error }
+            guard renameat(d, tmp, d, name(n)) == 0 else { unlinkat(d, tmp, 0); throw fail("renameat \(tmp)") }
         }
     }
 
@@ -89,14 +111,47 @@ struct FlowActionLog: Sendable {
         return .object(["enabled": .bool(enabled), "path": .string(file.path), "bytes": .number(Double(size))])
     }
 
-    private func makeDir() throws {
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+    /// `flows/`, created 0700 when missing; a symlink (or anything but a folder) there is refused.
+    private func openDir() throws -> Int32 {
+        try FileManager.default.createDirectory(at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if mkdir(dir.path, 0o700) != 0, errno != EEXIST { throw fail("mkdir \(dir.path)") }
+        let d = open(dir.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard d >= 0 else { throw fail("\(dir.path) não é uma pasta (symlink?)") }
+        fchmod(d, 0o700)
+        return d
     }
-    private func create(_ u: URL, _ data: Data) throws {
-        guard FileManager.default.createFile(atPath: u.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-            throw ProtocolError(code: .internal, message: "não consegui criar \(u.path)")
+    /// `name` in folder `d`, never followed nor blocking; only a regular file with one link passes.
+    private func openFile(_ d: Int32, _ name: String, _ flags: Int32) throws -> Int32 {
+        let fd = openat(d, name, flags | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw fail("open \(name)") }
+        var st = stat()
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_nlink == 1 else {
+            close(fd); throw ProtocolError(code: .internal, message: "\(name) recusado: não é arquivo regular de um link")
         }
+        return fd
+    }
+    private func size(_ fd: Int32) -> Int { var st = stat(); return fstat(fd, &st) == 0 ? Int(st.st_size) : 0 }
+    private func write(_ fd: Int32, _ data: Data) throws {
+        try data.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
+            var off = 0
+            while off < b.count {
+                let n = Darwin.write(fd, b.baseAddress! + off, b.count - off)
+                if n < 0 { if errno == EINTR { continue }; throw fail("write") }
+                off += n
+            }
+        }
+    }
+    private func read(_ fd: Int32) -> Data {
+        var out = Data(), buf = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let n = Darwin.read(fd, &buf, buf.count)
+            if n < 0, errno == EINTR { continue }
+            if n <= 0 { return out }
+            out.append(contentsOf: buf[0..<n])
+        }
+    }
+    private func fail(_ what: String) -> ProtocolError {
+        ProtocolError(code: .internal, message: "\(what): \(String(cString: strerror(errno)))")
     }
     private static func iso(_ d: Date) -> String {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f.string(from: d)

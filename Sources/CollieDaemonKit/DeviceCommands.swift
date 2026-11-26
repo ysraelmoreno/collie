@@ -88,7 +88,12 @@ extension CommandRouter {
     /// The flow log of paddock `id` (d5); nil without one. On or off is read when writing.
     func flowLog(_ id: UUID?) -> FlowActionLog? {
         guard let id, let p = ws.paddocks.first(where: { $0.id == id }) else { return nil }
-        return FlowActionLog(paddock: URL(fileURLWithPath: p.path))
+        return FlowActionLog(paddock: URL(fileURLWithPath: p.path), flag: flowFlag(p.id))
+    }
+
+    /// The opt-in of paddock `id` (b2): `<daemon root>/flows/<id>/enabled`, out of the worktree an agent writes to.
+    func flowFlag(_ id: UUID) -> URL {
+        config.paths.root.appendingPathComponent("flows").appendingPathComponent(id.uuidString).appendingPathComponent("enabled")
     }
 
     /// `device.flow on|off|status` (d4): a terminal acts on its own paddock, the user names one with --paddock. Only the
@@ -110,7 +115,7 @@ extension CommandRouter {
         } else {
             paddock = try findPaddock(try need(r, "paddock"))
         }
-        let log = FlowActionLog(paddock: URL(fileURLWithPath: paddock.path))
+        let log = FlowActionLog(paddock: URL(fileURLWithPath: paddock.path), flag: flowFlag(paddock.id))
         if action != "status" { try log.setEnabled(action == "on") }
         guard case .object(var o) = log.status() else { return log.status() }
         o["paddock"] = .string(paddock.name)

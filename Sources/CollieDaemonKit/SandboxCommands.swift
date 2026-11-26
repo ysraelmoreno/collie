@@ -13,7 +13,7 @@ extension CommandRouter {
         let caller = try await principal(r, peer: peer)   // nil = admin (the app)
         func appOnly() throws(ProtocolError) {
             guard caller == nil else {
-                throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is app-only: only the user opens the sandbox (só o usuário, no app)")
+                throw ProtocolError(code: .unauthorized, message: tr("'\(r.command)' é só do app: só o usuário abre o sandbox", "'\(r.command)' is app-only: only the user opens the sandbox"))
             }
         }
         switch r.command {
@@ -30,13 +30,13 @@ extension CommandRouter {
                 let collieOwn = [config.paths.root, SandboxInput.appBundle(of: config.collieExecutable)].compactMap { $0 }
                     .contains { ProjectRoot.contains(path, root: URL(fileURLWithPath: SignedAppCheck.realPath($0))) }
                 return .object(["shown": .bool(false), "message": .string(collieOwn
-                    ? "Nunca liberado: dados e app do Collie ficam fechados também no modo aberto."
-                    : "O sandbox está no modo aberto: acesso já liberado.")])
+                    ? tr("Nunca liberado: dados e app do Collie ficam fechados também no modo aberto.", "Never granted: Collie's data and app stay closed in open mode too.")
+                    : tr("O sandbox está no modo aberto: acesso já liberado.", "The sandbox is in open mode: access is already granted."))])
             }
             if read {   // 2Q: reads are open but for what no click opens: no card, the answer says which
                 let why = SandboxGrantStore.readRefusal(path, home: sandboxHomeDir, collie: config.paths.root)
                 return .object(["shown": .bool(false), "message": .string(why.map { "Nunca liberado: \($0)" }
-                    ?? "Leitura fora do projeto já é livre no sandbox: nada a pedir. Se a leitura falhou, é um caminho que nunca é liberado (segredos, perfis de navegador, e-mail, dados do Collie).")])
+                    ?? tr("Leitura fora do projeto já é livre no sandbox: nada a pedir. Se a leitura falhou, é um caminho que nunca é liberado (segredos, perfis de navegador, e-mail, dados do Collie).", "Reading outside the project is already free in the sandbox: nothing to ask for. If the read failed, it is a path that is never granted (secrets, browser profiles, email, Collie data)."))])
             }
             let secrets = await auth.secrets()
             let reason = str(r, "reason").map { LotBoards.clean(LotBoards.scrub($0, secrets: secrets), max: 300) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -44,8 +44,8 @@ extension CommandRouter {
             let absorbed = accessCards.cards[SandboxCards.key(d)] != nil
             await raise(d)
             return .object(["shown": .bool(!absorbed), "message": .string(absorbed
-                ? "Já há um aviso aberto no app para essa pasta; o pedido foi somado a ele. Nada é liberado sem o clique do usuário."
-                : "Pedido mostrado ao usuário no app; nada é liberado sem o clique dele.")])
+                ? tr("Já há um aviso aberto no app para essa pasta; o pedido foi somado a ele. Nada é liberado sem o clique do usuário.", "There is already a notice open in the app for that folder; the request was added to it. Nothing is granted without the user's click.")
+                : tr("Pedido mostrado ao usuário no app; nada é liberado sem o clique dele.", "Request shown to the user in the app; nothing is granted without their click."))])
         case "access.list":
             if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)) }
             return .object(["grants": try isoJSON(sandboxGrants), "cards": try isoJSON(accessCards.all),
@@ -94,13 +94,13 @@ extension CommandRouter {
     /// the grant saved, covered cards dropped, the terminal relaunched. `by`: the phone it came from.
     func grantAccess(_ t: TerminalRecord, access: SandboxGrant.Access, path raw: String, folder: Bool, scope: SandboxGrant.Scope,
                      by: SandboxGrant.By? = nil) async throws -> JSONValue {
-        guard t.sandbox == .sandboxed else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' é um terminal livre: não tem sandbox") }
+        guard t.sandbox == .sandboxed else { throw ProtocolError(code: .invalidArgs, message: tr("'\(t.name)' é um terminal livre: não tem sandbox", "'\(t.name)' is a free terminal: it has no sandbox")) }
         guard raw.hasPrefix("/") else { throw ProtocolError(code: .invalidArgs, message: "'path' must be absolute") }
         // R26: exactly the card's path (the kernel's, already resolved), or its folder: never resolved here. One that
         // no longer resolves to itself (a symlink swapped in since the card) is refused, not followed
         let path = folder ? (raw as NSString).deletingLastPathComponent : raw   // Liberar a pasta
         guard SignedAppCheck.realPath(URL(fileURLWithPath: path)) == path else {
-            throw ProtocolError(code: .invalidArgs, message: "O caminho mudou desde o cartão (agora é um link): nada foi liberado.")
+            throw ProtocolError(code: .invalidArgs, message: tr("O caminho mudou desde o cartão (agora é um link): nada foi liberado.", "The path changed since the card (it is now a link): nothing was granted."))
         }
         if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root,
                                                app: SandboxInput.appBundle(of: config.collieExecutable), closed: closedPaddocks(sandboxProject(t))) {
@@ -108,7 +108,7 @@ extension CommandRouter {
         }
         let owner: UUID
         if scope == .lot {
-            guard let l = ws.lot(of: t.id) else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' não está em um lote") }
+            guard let l = ws.lot(of: t.id) else { throw ProtocolError(code: .invalidArgs, message: tr("'\(t.name)' não está em um lote", "'\(t.name)' is not in a lot")) }
             owner = l.id
         } else { owner = t.id }
         try reserve(t.name); defer { launching.remove(t.name.lowercased()) }
@@ -151,7 +151,7 @@ extension CommandRouter {
         return .object(["mode": .string(sandboxMode.rawValue)])
     }
 
-    static let reviewerAccessMessage = "revisor do laço: nada é liberado durante a revisão"
+    static var reviewerAccessMessage: String { tr("revisor do laço: nada é liberado durante a revisão", "loop reviewer: nothing is granted during the review") }
 
     var sandboxHomeDir: URL { config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()) }
 
@@ -224,6 +224,8 @@ struct CollieSettings: Codable {
     /// M5.6, Preferences › Laços › "Modelo dos agentes": what `work run` passes as `--model` when given none; nil: none
     /// (the agents run on the Shepherd's model, as before). Set only by `admin.loop-model`.
     var loopModel: String?
+    /// Preferences › Interface › "Idioma": `system|pt|en`, nil: system. A string like `cursorMemory`: an unknown value follows the system.
+    var language: String?
     /// A model id and nothing else (`[A-Za-z0-9._:-]`, 1-64, first an alphanumeric: never read as a flag).
     static func isLoopModel(_ m: String) -> Bool { m.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"#, options: .regularExpression) != nil }
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }

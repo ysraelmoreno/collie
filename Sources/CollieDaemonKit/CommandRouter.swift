@@ -313,6 +313,7 @@ actor CommandRouter {
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
             }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub,
             audit: remoteAudit, limits: remoteLimits))
+        L10n.set(Lang.resolve(.parse(settings.language)))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
@@ -942,6 +943,7 @@ actor CommandRouter {
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.fonts": return try setGoogleFonts(str(r, "download"))
         case "admin.paddock.trust-loops": return try await trustLoops(r)
+        case "admin.language": return try setLanguage(str(r, "language"))
         case "admin.loop-model": return try setLoopModel(str(r, "model"))
         case let c where c == "admin.remote" || c.hasPrefix("admin.remote."): return try await remoteCommand(r)
         case "admin.data.export", "admin.data.import":
@@ -1165,6 +1167,7 @@ actor CommandRouter {
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
             "COLLIE_USAGE_DIR": config.paths.root.appendingPathComponent("usage").path,   // = UsageService's parent of providers/
             "COLLIE_TERMINAL_NAME": rec.name, "COLLIE_WORKSPACE_ID": ws.id.uuidString,
+            "COLLIE_LANG": L10n.current.rawValue,   // fixed at launch: a terminal open before a language change keeps its own
             "TERM": "xterm-256color", "TERM_PROGRAM": "Collie",
             "PATH": env["PATH"] ?? "/usr/bin:/bin",
         ]

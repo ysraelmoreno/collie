@@ -55,6 +55,31 @@ extension CommandRouter {
         return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd, flow: flow)
     }
 
+    /// `device.run --plan <file>` (d6): the plan file read as `--body-file` (a terminal: inside its project, regular,
+    /// one link; at most `FlowPlan.maxBytes`), checked whole, then run by `FlowRunner` through `devices.run`, so each
+    /// step obeys the same reach and lands in the flow log as the agent's own call would. `--serial` without `--panel`:
+    /// the reachable device panel showing that serial.
+    func deviceRunCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
+        let caller = try await principal(r, peer: peer)   // nil = admin
+        let data = try await ruleBodyFile(try need(r, "plan"), r, caller: caller, flag: "--plan", limit: FlowPlan.maxBytes)
+        let plan = try FlowPlan.parse(data)
+        let target: Panel
+        if let serial = str(r, "serial"), str(r, "panel") == nil {
+            let reach = caller.map { ConnectionGraph.reachablePanels(from: $0.id, in: ws) } ?? ws.panels
+            guard let p = reach.first(where: { $0.pluginId == "device" && $0.state["serial"] == .string(serial) }) else {
+                throw ProtocolError(code: .notFound, message: "No device panel showing \(serial) reachable. Open one with `panel open device`.")
+            }
+            target = p
+        } else {
+            target = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: "device", from: caller?.id, in: ws)
+        }
+        let flow = caller.flatMap { me in flowLog(me.paddockId ?? target.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
+        let devices = devices, cwd = r.cwd
+        return try await FlowRunner { c, a async throws(ProtocolError) in
+            try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
+        }.run(plan)
+    }
+
     /// The flow log of paddock `id` (d5); nil without one. On or off is read when writing.
     func flowLog(_ id: UUID?) -> FlowActionLog? {
         guard let id, let p = ws.paddocks.first(where: { $0.id == id }) else { return nil }

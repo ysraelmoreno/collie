@@ -480,6 +480,9 @@ actor CommandRouter {
             if req.command.hasPrefix("app.") {   // list/attach: admin or terminal; approve: admin only
                 return Response(id: req.id, ok: true, result: try await appCommand(req, peer: peer))
             }
+            if req.command == "device.run" {   // d6: the plan executor; reach as the device commands
+                return Response(id: req.id, ok: true, result: try await deviceRunCommand(req, peer: peer))
+            }
             if req.command == "device.flow" {   // on: the user only; off/status: a terminal of the paddock too
                 return Response(id: req.id, ok: true, result: try await deviceFlowCommand(req, peer: peer))
             }

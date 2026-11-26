@@ -80,11 +80,13 @@ extension CommandRouter {
         }
         let flow = caller.flatMap { me in flowLog(me.paddockId ?? target.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
         let devices = devices, cwd = r.cwd
-        return try await FlowRunner(confirmed: confirmed, classify: { s async throws(ProtocolError) in
+        var runner = FlowRunner(confirmed: confirmed, classify: { s async throws(ProtocolError) in
             try await devices.flowDestructive(s, panel: target, cwd: cwd)
         }) { c, a async throws(ProtocolError) in
             try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
-        }.run(plan)
+        }
+        if let gone = ClientHangup.current { runner.hungUp = { gone.isSet } }   // c2: the socket's hangup, read between steps
+        return try await runner.run(plan)
     }
 
     /// The flow log of paddock `id` (d5); nil without one. On or off is read when writing.

@@ -141,8 +141,8 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(fd, &chunk, chunk.count)
-            if let h = handler {   // M3d.1: a request still served: only its client's hangup matters, bytes are dropped
-                if n == 0 || n < 0 && Darwin.errno != EAGAIN && Darwin.errno != EINTR { h.cancel(); halt() }
+            if let h = onHangup {   // M3d.1: a request still served: only its client's hangup matters, bytes are dropped
+                if n == 0 || n < 0 && Darwin.errno != EAGAIN && Darwin.errno != EINTR { onHangup = nil; h(); halt() }
                 return
             }
             if n < 0 { if Darwin.errno == EAGAIN || Darwin.errno == EINTR { return }; return finish() }
@@ -164,8 +164,11 @@ public final class UnixSocketServer: @unchecked Sendable {
         /// M3d.1: the requests cancelled when their client hangs up (the socket stays read while they run): only waits,
         /// whose cancel undoes nothing. A hook or command whose client gave up still finishes its writes.
         static let cancelsOnHangup: Set<String> = ["work.wait"]
-        /// The handler of a `cancelsOnHangup` request while it runs (server.queue).
-        private var handler: Task<Void, Never>?
+        /// c2: the requests told, not cancelled, when their client hangs up: `ClientHangup.current` is set and the handler
+        /// stops at its next safe point (`device.run` between steps, so a step in flight finishes whole).
+        static let flagsOnHangup: Set<String> = ["device.run"]
+        /// What a hangup does to the request still served (server.queue): cancel its Task or set its flag.
+        private var onHangup: (() -> Void)?
 
         func process(_ line: Data) {
             guard let req = try? JSONDecoder().decode(Request.self, from: line) else {
@@ -179,13 +182,21 @@ public final class UnixSocketServer: @unchecked Sendable {
                 return
             }
             let h = server.handler
+            if Self.flagsOnHangup.contains(req.command) {
+                timer?.cancel(); timer = nil   // as `halt`, but the read source stays armed to see the hangup
+                let gone = ClientHangup()
+                onHangup = { gone.set() }
+                Task.detached { [self] in reply(await ClientHangup.$current.withValue(gone) { await h(req, peer) }) }
+                return
+            }
             guard Self.cancelsOnHangup.contains(req.command) else {
                 halt()
                 Task.detached { [self] in reply(await h(req, peer)) }
                 return
             }
             timer?.cancel(); timer = nil   // as `halt`, but the read source stays armed to see the hangup
-            handler = Task.detached { [self] in reply(await h(req, peer)) }
+            let t = Task.detached { [self] in reply(await h(req, peer)) }
+            onHangup = { t.cancel() }
         }
         var suspended = false
         func halt() { src?.suspend(); suspended = true; timer?.cancel(); timer = nil }   // stop reading, drop deadline
@@ -345,4 +356,14 @@ public final class UnixSocketServer: @unchecked Sendable {
             cb?()
         }
     }
+}
+
+/// c2: set when the client of a `flagsOnHangup` request hangs up (`UnixSocket`); its handler reads `current` and stops
+/// at a point of its own choosing instead of being cancelled mid-write.
+final class ClientHangup: @unchecked Sendable {   // `gone` under `lock`
+    @TaskLocal static var current: ClientHangup?
+    private let lock = NSLock()
+    private var gone = false
+    var isSet: Bool { lock.withLock { gone } }
+    func set() { lock.withLock { gone = true } }
 }

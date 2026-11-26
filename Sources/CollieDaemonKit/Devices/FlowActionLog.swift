@@ -68,14 +68,22 @@ struct FlowActionLog: Sendable {
     }
 
     /// Writes `a`; false (and nothing created) when the paddock did not opt in. Throws when the folder or the file is
-    /// not what it should be (symlink, FIFO, hard link): the caller logs it, the device action goes on.
+    /// not what it should be (symlink, FIFO, hard link): the caller logs it, the device action goes on. A rotation that
+    /// fails goes to stderr and the line is written all the same (c2).
     @discardableResult
     func append(_ a: FlowAction, now: Date = Date()) throws -> Bool {
         guard enabled else { return false }
         let data = try Self.line(a, at: now) + Data("\n".utf8)
         let d = try openDir(); defer { close(d) }
         var fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
-        if size(fd) >= maxBytes { close(fd); try rotate(d, now: now); fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT) }
+        if size(fd) >= maxBytes {
+            close(fd)
+            // c2: a failed rotation (a folder at the tmp, ENOSPC) never costs the line: stderr, then write anyway
+            do { try rotate(d, now: now) } catch {
+                FileHandle.standardError.write(Data("collied: flows: rotation of \(dir.path) failed: \(error)\n".utf8))
+            }
+            fd = try openFile(d, name(0), O_WRONLY | O_APPEND | O_CREAT)
+        }
         defer { close(fd) }
         try write(fd, data)
         return true

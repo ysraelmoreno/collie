@@ -170,6 +170,9 @@ enum FlowClassifier {
 /// b4: the `errors` (crashes since the last read) of every read are joined in the result's `errors`, success,
 /// divergence or refusal, when any. A failing command stops the plan with its error, naming the step. A cancelled
 /// plan (the request gone) stops before the next step: a `timeout` error naming how many steps were done.
+/// c2: `hungUp` (the client of `device.run` gone, `ClientHangup`) is read between steps only, so the step in flight (a
+/// tap with `then: screen`) finishes whole; then the plan stops the same way and touches nothing more. A failing step
+/// carries the `errors` joined so far in its message (the crash that explains a later "not found").
 /// d7: a `destructive` step runs only when `confirmed` (the user's `--confirm-destructive`; the router never sets it for
 /// an agent); else the plan stops before it: `{ok:false, refused:"destructive", at (1-based), done}`, the earlier
 /// steps staying run. b3/c1: a step `classify` finds destructive (the device service, `DeviceService.flowDestructive`,
@@ -180,6 +183,8 @@ struct FlowRunner: Sendable {
     var confirmed = false
     let classify: Classify
     let act: Act
+    /// c2: the plan's client is gone; read between steps.
+    var hungUp: @Sendable () -> Bool = { false }
 
     init(confirmed: Bool = false, classify: @escaping Classify = { FlowClassifier.destructive($0, nodes: []) }, act: @escaping Act) {
         self.confirmed = confirmed; self.classify = classify; self.act = act
@@ -205,7 +210,7 @@ struct FlowRunner: Sendable {
         }
         for (i, step) in plan.steps.enumerated() {
             // ponytail: Task.checkCancellation() throws an untyped error; the flag is the same check, typed
-            if Task.isCancelled {
+            if Task.isCancelled || hungUp() {
                 throw ProtocolError(code: .timeout, message: "plan cancelled before step \(i + 1) (done: \(i))")
             }
             let refuse: Bool
@@ -220,7 +225,9 @@ struct FlowRunner: Sendable {
             if step.expectSig != nil { args["then"] = .string("screen"); args["settle"] = .string("stable") }
             let r: JSONValue
             do { r = try await act(command, args) } catch {
-                throw ProtocolError(code: error.code, message: "step \(i + 1) (\(step.action) \(step.target)): \(error.message)")
+                var m = "step \(i + 1) (\(step.action) \(step.target)): \(error.message)"
+                if !errors.isEmpty, let e = try? JSONEncoder().encode(JSONValue.array(errors)) { m += "; errors so far: " + String(decoding: e, as: UTF8.self) }
+                throw ProtocolError(code: error.code, message: m)
             }
             guard let want = step.expectSig else { continue }   // no expectSig: the step runs unchecked
             guard case .object(let o) = r, case .object(let screen)? = o["screen"], case .string(let got)? = screen["sig"] else {

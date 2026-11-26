@@ -119,7 +119,7 @@ actor Curator {
     }
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
-    let dir: URL
+    nonisolated let dir: URL
     private let runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
     /// Each call is a `curatorRun` event (nil: not logged).
     private let events: MemoryEventLog?

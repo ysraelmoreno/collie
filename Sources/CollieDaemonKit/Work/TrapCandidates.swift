@@ -43,7 +43,8 @@ enum TrapCandidates {
             sigs.append("\(what): " + (first.map(normalize) ?? normalize(reason)))
         }
         // the review's vetoes: "revisor recusou: [p] file:line claim; file:line claim | [q] ..."
-        if let r = reason.range(of: "revisor recusou: ") {
+        // either language: the note may have been written before a language switch
+        if let r = ["revisor recusou: ", "reviewer refused: "].lazy.compactMap({ reason.range(of: $0) }).first {
             for veto in reason[r.upperBound...].components(separatedBy: " | ") {
                 guard let pm = veto.firstMatch(of: /^\[([^\]]+)\] (.*)$/) else { continue }
                 for finding in pm.2.components(separatedBy: "; ") {
@@ -79,14 +80,14 @@ enum TrapCandidates {
     static func section(_ w: Work, secrets: Set<String> = []) -> [String] {
         let found = find(w)
         guard !found.isEmpty else { return [] }
-        var l = ["", "## Armadilhas candidatas", ""]
+        var l = ["", tr("## Armadilhas candidatas", "## Candidate pitfalls"), ""]
         for c in found {
             // scrubbed BEFORE the slug (it drops the `=` the scrub looks for); quoted for the shell: no quote left in the title
             let sig = LotBoards.scrub(c.signature, secrets: secrets)
             let title = sig.replacing(/['`]/, with: "")
             let slug = String(sig.lowercased().replacing(/[^a-z0-9]+/, with: "-").trimmingCharacters(in: CharacterSet(charactersIn: "-")).prefix(48))
-            l.append("- \(sig): \(c.count) vezes, tarefas: \(c.tasks.joined(separator: "; "))")
-            l.append("  - para registrar (texto, nunca executado): `collie memory save --kind pitfall --subject 'trap-\(slug)' --title '\(title)'`")
+            l.append(tr("- \(sig): \(c.count) vezes, tarefas: \(c.tasks.joined(separator: "; "))", "- \(sig): \(c.count) times, tasks: \(c.tasks.joined(separator: "; "))"))
+            l.append(tr("  - para registrar (texto, nunca executado): ", "  - to record (text, never run): ") + "`collie memory save --kind pitfall --subject 'trap-\(slug)' --title '\(title)'`")
         }
         return l.map { LotBoards.scrub($0, secrets: secrets) }
     }

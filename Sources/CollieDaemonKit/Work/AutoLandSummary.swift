@@ -13,11 +13,12 @@ enum AutoLandSummary {
     static let vetoMax = 300
 
     /// The land's conditions, in the order `WorkLoop.landConditions` checks them, by the stop each one fails with.
-    static let conditions: [(code: WorkLoopState.Stop.Code, name: String)] = [
-        (.landNotFactory, "cercado fábrica"), (.landGateRed, "portão"), (.landReviewVeto, "revisão limpa de cada tarefa"), (.landAcceptRed, "aceite em runtime"),
-        (.landCiRed, "CI local"), (.landDirty, "árvore limpa, HEAD parado e ninguém trabalhando"),
-        (.landBaseMoved, "base igual à do início da tentativa"), (.landConflict, "land (merge)"),
-    ]
+    static var conditions: [(code: WorkLoopState.Stop.Code, name: String)] { [
+        (.landNotFactory, tr("cercado fábrica", "factory paddock")), (.landGateRed, tr("portão", "gate")),
+        (.landReviewVeto, tr("revisão limpa de cada tarefa", "clean review of each task")), (.landAcceptRed, tr("aceite em runtime", "runtime acceptance")),
+        (.landCiRed, tr("CI local", "local CI")), (.landDirty, tr("árvore limpa, HEAD parado e ninguém trabalhando", "clean tree, HEAD still and nobody working")),
+        (.landBaseMoved, tr("base igual à do início da tentativa", "base same as at the start of the attempt")), (.landConflict, "land (merge)"),
+    ] }
 
     /// `AAAA-MM-DD-HHMMSS`, in the daemon's local time.
     static func fileName(_ at: Date) -> String {
@@ -40,49 +41,52 @@ enum AutoLandSummary {
         // A5: a land made, whatever ended the chain after it (`queueEmpty`, `maxReached`, the daily cap...)
         let landed = al?.after != nil
         var l = ["# Auto-land: \(c(w.title, 120))", "",
-                 "- início: \(iso.string(from: started)) · fim: \(iso.string(from: ended)) · duração: \(duration(max(0, Int(ended.timeIntervalSince(started).rounded()))))",
-                 "- stopReason: " + (stop.map { "\($0.code.rawValue) (\(c($0.label, 300)))" } ?? "nenhum (laço terminou sem integrar)")]
-        if let doctor { l.append("- doctor no momento: \(doctor)") }
+                 tr("- início: \(iso.string(from: started)) · fim: \(iso.string(from: ended)) · duração: \(duration(max(0, Int(ended.timeIntervalSince(started).rounded()))))",
+                    "- start: \(iso.string(from: started)) · end: \(iso.string(from: ended)) · duration: \(duration(max(0, Int(ended.timeIntervalSince(started).rounded()))))"),
+                 "- stopReason: " + (stop.map { "\($0.code.rawValue) (\(c($0.label, 300)))" } ?? tr("nenhum (laço terminou sem integrar)", "none (the loop ended without landing)"))]
+        if let doctor { l.append(tr("- doctor no momento: \(doctor)", "- doctor at the time: \(doctor)")) }
         if let p = PrdStore.line(w) { l.append("- " + p) }   // F5: the PRD's hash and its origin, as the owner gave it
-        l += ["", landed ? "## Trabalho integrado (1)" : "## Trabalhos integrados: 0", ""]
+        l += ["", landed ? tr("## Trabalho integrado (1)", "## Work landed (1)") : tr("## Trabalhos integrados: 0", "## Works landed: 0"), ""]
         if landed, let al {
-            l.append("- título: \(c(w.title, 120))")
-            l.append("- base antes: \(al.before ?? "?") · depois: \(al.after ?? "?")")
+            l.append(tr("- título: \(c(w.title, 120))", "- title: \(c(w.title, 120))"))
+            l.append(tr("- base antes: \(al.before ?? "?") · depois: \(al.after ?? "?")", "- base before: \(al.before ?? "?") · after: \(al.after ?? "?")"))
         }
         // F3: a work with no `--accept` says so (the land had three conditions of the result, not four)
-        if !w.tasks.contains(where: { $0.accept != nil }) { l.append("- sem aceite em runtime") }
-        l += ["", "### Tarefas", ""]
+        if !w.tasks.contains(where: { $0.accept != nil }) { l.append(tr("- sem aceite em runtime", "- no runtime acceptance")) }
+        l += ["", tr("### Tarefas", "### Tasks"), ""]
         for t in w.tasks where w.loop?.tasks?.contains(t.id) ?? true {
             let secs = t.evidence.map { duration($0.seconds) } ?? "?"
-            l.append("- \(c(t.title, 120)) [\(t.state.rawValue)]: tentativas \(t.tries ?? 0), tempo \(secs)")
-            l.append("  - aprovou: " + (t.reviewClean == true ? c(t.review ?? "sim", 300) : "ninguém (\(c(t.review ?? "sem revisão", 300)))"))
-            if t.accept != nil { l.append("  - aceite em runtime: " + c(t.acceptResult ?? "não rodou", 300)) }
+            l.append(tr("- \(c(t.title, 120)) [\(t.state.rawValue)]: tentativas \(t.tries ?? 0), tempo \(secs)", "- \(c(t.title, 120)) [\(t.state.rawValue)]: attempts \(t.tries ?? 0), time \(secs)"))
+            l.append(tr("  - aprovou: ", "  - approved: ") + (t.reviewClean == true ? c(t.review ?? tr("sim", "yes"), 300) : tr("ninguém (\(c(t.review ?? "sem revisão", 300)))", "nobody (\(c(t.review ?? "no review", 300)))")))
+            if t.accept != nil { l.append(tr("  - aceite em runtime: ", "  - runtime acceptance: ") + c(t.acceptResult ?? tr("não rodou", "did not run"), 300)) }
             // the loop's own failure notes of the task: the review's vetoes, "[persona] arquivo:linha ..." each
             let vetoes = w.notes.filter { $0.text.hasPrefix("[loop \(t.id)] ") }.compactMap { n -> String? in
-                guard let r = n.text.split(separator: "\n").first?.range(of: "revisor recusou: ") else { return nil }
+                // either language: the note may have been written before a language switch
+                guard let first = n.text.split(separator: "\n").first,
+                      let r = ["revisor recusou: ", "reviewer refused: "].lazy.compactMap({ first.range(of: $0) }).first else { return nil }
                 return String(n.text.split(separator: "\n")[0][r.upperBound...])
             }
-            for v in vetoes { l.append("  - vetou: \(c(v, vetoMax))") }
+            for v in vetoes { l.append(tr("  - vetou: ", "  - vetoed: ") + c(v, vetoMax)) }
         }
-        l += ["", "## Não feito", ""]
+        l += ["", tr("## Não feito", "## Not done"), ""]
         // C2: a land with no `before` recorded still landed: no push, and the revert line says it does not know the commit
         if landed {
-            l.append("- sem push; pronto para você revisar e dar push")
-            l.append("- para reverter (texto, nunca executado): `git -C \(base ?? "<base>") reset --hard \(al?.before ?? "?")`")
+            l.append(tr("- sem push; pronto para você revisar e dar push", "- not pushed; ready for you to review and push"))
+            l.append(tr("- para reverter (texto, nunca executado): `git -C \(base ?? "<base>") reset --hard \(al?.before ?? "?")`", "- to revert (text, never run): `git -C \(base ?? "<base>") reset --hard \(al?.before ?? "?")`"))
         } else {
-            l.append("- nada integrado; sem push")
+            l.append(tr("- nada integrado; sem push", "- nothing landed; not pushed"))
             if let stop {
                 if let i = conditions.firstIndex(where: { $0.code == stop.code }) {
                     let accepts = w.tasks.contains { $0.accept != nil }
                     let ok = conditions.prefix(i).filter { $0.code != .landAcceptRed || accepts }.map(\.name)
-                    l.append("- condições que passaram: " + (ok.isEmpty ? "nenhuma" : ok.joined(separator: ", ")))
-                    l.append("- parou em: \(conditions[i].name): \(c(stop.label, 300))")
+                    l.append(tr("- condições que passaram: ", "- conditions that passed: ") + (ok.isEmpty ? tr("nenhuma", "none") : ok.joined(separator: ", ")))
+                    l.append(tr("- parou em: ", "- stopped at: ") + "\(conditions[i].name): \(c(stop.label, 300))")
                 } else {
-                    l.append("- parou antes do land: \(c(stop.label, 300))")
+                    l.append(tr("- parou antes do land: ", "- stopped before the land: ") + c(stop.label, 300))
                 }
             }
             let left = w.tasks.filter { $0.state != .done }   // C2: a dropped task is not done (it lands nothing)
-            if !left.isEmpty { l.append("- tarefas não feitas: " + left.map { c($0.title, 80) }.joined(separator: "; ")) }
+            if !left.isEmpty { l.append(tr("- tarefas não feitas: ", "- tasks not done: ") + left.map { c($0.title, 80) }.joined(separator: "; ")) }
         }
         // F1: the same failure in 2+ attempts, for the owner to decide on (nothing is saved to memory)
         l += TrapCandidates.section(w)
@@ -150,18 +154,20 @@ enum AutoLandSummary {
     static func ownerLine(title: String, stop: WorkLoopState.Stop?, left: Int, path: String?, error: String?, landed: Int = 0,
                           secrets: Set<String> = []) -> String {
         func why(_ s: WorkLoopState.Stop) -> String { "\(s.label) [\(s.code.rawValue)]" }
-        let what = landed > 0 ? (landed == 1 ? "integrou 1 trabalho" : "integrou \(landed) trabalhos")
-                + (stop.map { $0.code == .landed ? "" : $0.finishes ? " (\(why($0)))" : "; parou em \(why($0))" } ?? "")
-            : stop.map { "parou em \(why($0))" } ?? "integrou 0 trabalhos (\(left) tarefa(s) não feitas)"
-        let at = path.map { "Resumo: \($0)" } ?? "resumo não gravado (\(error ?? "?"))"
-        return LotBoards.scrub("Collie: laço \"\(title)\": \(what). \(at). Veja: \(WorkLoop.autoLandHint)", secrets: secrets)
+        let what = landed > 0 ? (landed == 1 ? tr("integrou 1 trabalho", "landed 1 work") : tr("integrou \(landed) trabalhos", "landed \(landed) works"))
+                + (stop.map { $0.code == .landed ? "" : $0.finishes ? " (\(why($0)))" : tr("; parou em \(why($0))", "; stopped at \(why($0))") } ?? "")
+            : stop.map { tr("parou em \(why($0))", "stopped at \(why($0))") } ?? tr("integrou 0 trabalhos (\(left) tarefa(s) não feitas)", "landed 0 works (\(left) task(s) not done)")
+        let at = path.map { tr("Resumo: \($0)", "Summary: \($0)") } ?? tr("resumo não gravado (\(error ?? "?"))", "summary not written (\(error ?? "?"))")
+        return LotBoards.scrub(tr("Collie: laço \"\(title)\": \(what). \(at). Veja: \(WorkLoop.autoLandHint)", "Collie: loop \"\(title)\": \(what). \(at). See: \(WorkLoop.autoLandHint)"), secrets: secrets)
     }
 
     /// C2: the owner's line when the registry could not be read at the end (no title, no tasks): the work's id and the stop.
     static func minimalOwnerLine(work: UUID, stop: WorkLoopState.Stop?, error: String, secrets: Set<String> = []) -> String {
-        let what = stop.map { "parou em \($0.label) [\($0.code.rawValue)]" } ?? "terminou"
-        return LotBoards.scrub("Collie: laço do trabalho \(work.uuidString.prefix(8).lowercased()): \(what). Resumo não gravado "
-            + "(o registro não foi lido: \(RerailText.clean(error, max: 200))). Veja: \(WorkLoop.autoLandHint)", secrets: secrets)
+        let what = stop.map { tr("parou em \($0.label) [\($0.code.rawValue)]", "stopped at \($0.label) [\($0.code.rawValue)]") } ?? tr("terminou", "ended")
+        return LotBoards.scrub(tr("Collie: laço do trabalho \(work.uuidString.prefix(8).lowercased()): \(what). Resumo não gravado "
+            + "(o registro não foi lido: \(RerailText.clean(error, max: 200))). Veja: \(WorkLoop.autoLandHint)",
+            "Collie: loop of work \(work.uuidString.prefix(8).lowercased()): \(what). Summary not written "
+            + "(the record could not be read: \(RerailText.clean(error, max: 200))). See: \(WorkLoop.autoLandHint)"), secrets: secrets)
     }
 }
 
@@ -187,7 +193,7 @@ extension WorkLoop {
         // C3a: the doctor of the paddock's HEAD, never of the tree the agent edits
         let doctor: String? = switch await FactoryDoctorReader.headSnapshot(dir: dir) {
         case .success(let s): FactoryDoctor.score(s).layers.map { "\($0.layer.rawValue) \($0.score)/3" }.joined(separator: ", ")
-        case .failure(let e): "não leu (\(e.message))"
+        case .failure(let e): tr("não leu (\(e.message))", "could not read (\(e.message))")
         }
         let secrets = await host.secrets()
         let text = LotBoards.scrub(AutoLandSummary.text(w, started: started, ended: ended, stop: why, base: base, doctor: doctor),
@@ -198,7 +204,7 @@ extension WorkLoop {
                                              name: AutoLandSummary.fileName(ended)).path
         } catch { failure = "\(error)" }
         if let path { try? await store.update(id) { $0.loop?.autoLand?.summary = path } }
-        else { await note(id, "[loop] auto-land: resumo não gravado (\(failure ?? "?"))") }
+        else { await note(id, tr("[loop] auto-land: resumo não gravado (\(failure ?? "?"))", "[loop] auto-land: summary not written (\(failure ?? "?"))")) }
         guard notify else { return }
         let left = w.tasks.filter { $0.state != .done }.count
         let landed = (w.loop?.autoLand?.chained ?? 0) + (w.loop?.autoLand?.after != nil ? 1 : 0)

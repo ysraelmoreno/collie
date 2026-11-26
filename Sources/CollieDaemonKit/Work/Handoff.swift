@@ -8,7 +8,7 @@ import CollieCore
 /// Decision (M10.1): named by the paddock's id, not its name: a name may hold any character, an id is always a safe name.
 enum Handoff {
     static let maxBytes = 4096
-    static let none = "Não há passagem de turno neste cercado: ela é gravada quando um laço termina."
+    static var none: String { tr("Não há passagem de turno neste cercado: ela é gravada quando um laço termina.", "There is no handoff in this paddock: it is written when a loop ends.") }
 
     struct Memory: Equatable, Sendable { var id: UUID; var kind: MemoryKind; var title: String }
 
@@ -19,24 +19,27 @@ enum Handoff {
     static func text(_ w: Work, memories: [Memory], nextWave: String?, now: Date = Date()) -> String {
         let ran = w.tasks.filter { t in w.loop?.tasks?.contains(t.id) ?? true }
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
-        let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
+        let how = w.loop?.stopReason.map { tr("parou (\(RerailText.clean($0.label)))", "stopped (\(RerailText.clean($0.label)))") } ?? tr("terminou", "ended")
         let iso = ISO8601DateFormatter()
-        var lines = ["# Passagem de turno",
-                     "Trabalho «\(RerailText.clean(w.title))» [\(w.id.uuidString.lowercased())]: o laço \(how) em \(iso.string(from: w.loop?.endedAt ?? now)), "
-                        + "\(done.count) feitas, \(deferred.count) adiadas. Estado: collie work status; resumo: collie work history --id <id>."]
-        if let n = nextWave { lines.append("Próxima onda prevista: \(RerailText.clean(n, max: 200))") }
+        var lines = [tr("# Passagem de turno", "# Handoff"),
+                     tr("Trabalho «\(RerailText.clean(w.title))» [\(w.id.uuidString.lowercased())]: o laço \(how) em \(iso.string(from: w.loop?.endedAt ?? now)), "
+                        + "\(done.count) feitas, \(deferred.count) adiadas. Estado: collie work status; resumo: collie work history --id <id>.",
+                        "Work «\(RerailText.clean(w.title))» [\(w.id.uuidString.lowercased())]: the loop \(how) at \(iso.string(from: w.loop?.endedAt ?? now)), "
+                        + "\(done.count) done, \(deferred.count) deferred. State: collie work status; summary: collie work history --id <id>.")]
+        if let n = nextWave { lines.append(tr("Próxima onda prevista: \(RerailText.clean(n, max: 200))", "Next wave planned: \(RerailText.clean(n, max: 200))")) }
         // short shas only: a commit subject is agent text
         var seen = Set<String>()
         let commits: [String] = done.flatMap { t -> [String] in t.evidence?.commits ?? [] }
         let shas = commits.compactMap { $0.split(separator: " ").first.map { String($0) } }
             .filter { (4...40).contains($0.count) && $0.allSatisfy(\.isHexDigit) && seen.insert($0).inserted }
         if !shas.isEmpty { lines.append("Commits: " + shas.prefix(30).joined(separator: " ")) }
-        if !ran.isEmpty { lines.append("## Tarefas") }
-        lines += done.map { WorkStatusText.doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
-        lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
-        if !memories.isEmpty { lines.append("## Memória nova (só títulos; o corpo: collie memory get <id>)") }
+        if !ran.isEmpty { lines.append(tr("## Tarefas", "## Tasks")) }
+        lines += done.map { WorkStatusText.doneLine($0) ?? tr("✓ \(RerailText.clean($0.title)) · marcada à mão, sem check", "✓ \(RerailText.clean($0.title)) · marked by hand, no check") }
+        lines += deferred.map { tr("– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))",
+                                          "– \(RerailText.clean($0.title)) · deferred: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "no reason recorded", max: 200))") }
+        if !memories.isEmpty { lines.append(tr("## Memória nova (só títulos; o corpo: collie memory get <id>)", "## New memory (titles only; the body: collie memory get <id>)")) }
         lines += memories.map { m in
-            "\(m.kind == .pitfall ? "armadilha" : "decisão") \(String(m.id.uuidString.prefix(8)).lowercased()): \(RerailText.clean(m.title, max: 160))"
+            "\(m.kind == .pitfall ? tr("armadilha", "pitfall") : tr("decisão", "decision")) \(String(m.id.uuidString.prefix(8)).lowercased()): \(RerailText.clean(m.title, max: 160))"
         }
         return bounded(lines)
     }
@@ -45,7 +48,7 @@ enum Handoff {
     static func bounded(_ lines: [String]) -> String {
         var out = ""
         for (i, l) in lines.enumerated() {
-            let tail = "\n… e mais \(lines.count - i)\n"
+            let tail = tr("\n… e mais \(lines.count - i)\n", "\n… and \(lines.count - i) more\n")
             if out.utf8.count + l.utf8.count + 1 + tail.utf8.count > maxBytes { return out + tail }
             out += l + "\n"
         }

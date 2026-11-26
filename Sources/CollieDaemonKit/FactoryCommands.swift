@@ -52,7 +52,8 @@ enum FactoryDoctorReader {
     /// C3a: `factoryRefusal` over the paddock's HEAD commit (`headSnapshot`), what the auto-land engine decides by.
     static func headRefusal(dir: URL) async -> String? { refusal(await headSnapshot(dir: dir)) }
 
-    static let treeNotHead = "a árvore do cercado difere do commit HEAD nos arquivos que o doctor lê (o motor lê o HEAD); próxima ação: commite ou descarte a mudança"
+    static var treeNotHead: String { tr("a árvore do cercado difere do commit HEAD nos arquivos que o doctor lê (o motor lê o HEAD); próxima ação: commite ou descarte a mudança",
+        "the paddock's tree differs from the HEAD commit in the files the doctor reads (the engine reads HEAD); next action: commit or discard the change") }
 
     /// C3a: the doctor's snapshot of `dir`'s HEAD commit, never of the tree an agent edits: HEAD is exported (`git
     /// archive`) into a folder of its own and read there. Refused when the tree's profile is not HEAD's (`factoryDirty`)
@@ -72,10 +73,12 @@ enum FactoryDoctorReader {
             do { try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true) }
             catch { throw ProtocolError(code: .internal, message: "\(error)") }
             let a = try await GitRunner.run(["archive", "--format=tar", "-o", tar.path, "HEAD"], in: dir, timeout: .seconds(120))
-            guard a.status == 0 else { throw ProtocolError(code: .internal, message: "git archive HEAD falhou: \(a.stderr.prefix(200))") }
+            guard a.status == 0 else { throw ProtocolError(code: .internal, message: tr("git archive HEAD falhou: \(a.stderr.prefix(200))", "git archive HEAD failed: \(a.stderr.prefix(200))")) }
             let x = try await GitRunner.run(["-xf", tar.path, "-C", tree.path], in: tmp, timeout: .seconds(120), executable: URL(fileURLWithPath: "/usr/bin/tar"))
-            guard x.status == 0 else { throw ProtocolError(code: .internal, message: "o HEAD não pôde ser extraído: \(x.stderr.prefix(200))") }
-        } catch { return .failure(ProtocolError(code: error.code, message: "o doctor não leu o commit HEAD (\(error.message))")) }
+            guard x.status == 0 else { throw ProtocolError(code: .internal, message: tr("o HEAD não pôde ser extraído: \(x.stderr.prefix(200))",
+        "HEAD could not be extracted: \(x.stderr.prefix(200))")) }
+        } catch { return .failure(ProtocolError(code: error.code, message: tr("o doctor não leu o commit HEAD (\(error.message))",
+        "the doctor did not read the HEAD commit (\(error.message))"))) }
         let head = snapshot(root: tree)
         guard case .success(let h) = head else { return head }
         guard case .success(var t) = snapshot(root: dir) else { return .failure(ProtocolError(code: .invalidArgs, message: treeNotHead)) }
@@ -90,36 +93,42 @@ enum FactoryDoctorReader {
     }
 
     static func noGitHead(_ dir: URL) -> String {
-        "\(dir.path) não é um repositório git (sem .git): o doctor do laço lê o commit HEAD, e aqui não há; use um cercado de worktree git"
+        tr("\(dir.path) não é um repositório git (sem .git): o doctor do laço lê o commit HEAD, e aqui não há; use um cercado de worktree git",
+        "\(dir.path) is not a git repository (no .git): the loop's doctor reads the HEAD commit, and there is none here; use a git worktree paddock")
     }
 
     /// C2: `factory doctor`'s line over a root with no `.git` (a folder paddock, or a folder outside any repository).
     static func noGitLine(_ root: URL, folder: Bool) -> String {
-        "aviso: \(root.path) não tem .git (\(folder ? "cercado de pasta" : "pasta fora de um repositório git")): o doctor lê só os "
-            + "arquivos desta pasta; o laço (work run) e o auto-land exigem um cercado de worktree git"
+        tr("aviso: \(root.path) não tem .git (\(folder ? "cercado de pasta" : "pasta fora de um repositório git")): o doctor lê só os "
+            + "arquivos desta pasta; o laço (work run) e o auto-land exigem um cercado de worktree git",
+           "warning: \(root.path) has no .git (\(folder ? "folder paddock" : "folder outside a git repository")): the doctor reads only the "
+            + "files in this folder; the loop (work run) and auto-land require a git worktree paddock")
     }
 
     private static func refusal(_ snapshot: Result<FactoryDoctor.Snapshot, ProtocolError>) -> String? {
         let snap: FactoryDoctor.Snapshot
         switch snapshot {
         case .failure(let e):
-            return RerailText.clean("perfil inválido (\(e.message)); próxima ação: corrija collie-work.json (collie work config mostra o erro)", max: 400)
+            return RerailText.clean(tr("perfil inválido (\(e.message)); próxima ação: corrija collie-work.json (collie work config mostra o erro)",
+        "invalid profile (\(e.message)); next action: fix collie-work.json (collie work config shows the error)"), max: 400)
         case .success(let s): snap = s
         }
         guard let low = FactoryDoctor.score(snap).layers.first(where: { ($0.layer == .static || $0.layer == .judge) && $0.score < 1 }) else { return nil }
         let why = low.evidence.first.map { " (\($0))" } ?? ""
-        let next = low.nextAction.first ?? "rode collie factory doctor"
-        return RerailText.clean("camada \(low.layer.rawValue) \(low.score)/3\(why); próxima ação: \(next)", max: 400)   // repository text
+        let next = low.nextAction.first ?? tr("rode collie factory doctor", "run collie factory doctor")
+        return RerailText.clean(tr("camada \(low.layer.rawValue) \(low.score)/3\(why); próxima ação: \(next)", "layer \(low.layer.rawValue) \(low.score)/3\(why); next action: \(next)"), max: 400)   // repository text
     }
 
     /// A2: `factory doctor`'s lines on the mark: "cercado fábrica: sim/não" and, when the profile asks for
     /// `land = factory-paddock` where there is no mark (or no paddock recognized), a warning; never an error.
     static func factoryPaddockLines(_ paddock: Paddock?, land: FactoryProfile.Land?) -> [String] {
-        var out = ["cercado fábrica: \(paddock?.factory == true ? "sim" : "não")\(paddock == nil ? " (cercado não reconhecido)" : "")"]
+        var out = [tr("cercado fábrica: \(paddock?.factory == true ? "sim" : "não")\(paddock == nil ? " (cercado não reconhecido)" : "")", "factory paddock: \(paddock?.factory == true ? "yes" : "no")\(paddock == nil ? " (paddock not recognized)" : "")")]
         if land == .factoryPaddock, paddock?.factory != true {
             out.append(paddock == nil
-                ? "aviso: guardrails.land = factory-paddock, mas o cercado não foi reconhecido; o laço segue como 'manual'"
-                : "aviso: guardrails.land = factory-paddock, mas o cercado '\(paddock!.name)' não tem a marca; o dono liga com `collie paddock factory \(paddock!.name) on`")
+                ? tr("aviso: guardrails.land = factory-paddock, mas o cercado não foi reconhecido; o laço segue como 'manual'",
+        "warning: guardrails.land = factory-paddock, but the paddock was not recognized; the loop stays 'manual'")
+                : tr("aviso: guardrails.land = factory-paddock, mas o cercado '\(paddock!.name)' não tem a marca; o dono liga com `collie paddock factory \(paddock!.name) on`",
+        "warning: guardrails.land = factory-paddock, but the paddock '\(paddock!.name)' has no mark; the owner turns it on with `collie paddock factory \(paddock!.name) on`"))
         }
         return out
     }
@@ -241,7 +250,8 @@ extension CommandRouter {
         let d: Data
         switch FactoryDoctorReader.data(root, rel) {
         case .failure(let e): throw e
-        case .success(nil): throw ProtocolError(code: .notFound, message: "sem catálogo de iscas: \(rel) não existe no projeto")
+        case .success(nil): throw ProtocolError(code: .notFound, message: tr("sem catálogo de iscas: \(rel) não existe no projeto",
+        "no lure catalog: \(rel) does not exist in the project"))
         case .success(let x?): d = x
         }
         switch FactoryBait.parseCatalog(d) {
@@ -268,7 +278,8 @@ enum FactoryRatchet {
     /// `..`, `.`, empty part, `~`/`$` start, `.git`/`*.git`, `.collie` nor `collie-work.json`. Its folder is opened by `openDir`.
     static func target(root: URL, rel: String) throws(ProtocolError) -> URL {
         guard FactoryProfile.confinedPath(rel)
-        else { throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' fora do projeto ou em lugar proibido (.git, .collie, collie-work.json)") }
+        else { throw ProtocolError(code: .invalidArgs, message: tr("baseline '\(rel)' fora do projeto ou em lugar proibido (.git, .collie, collie-work.json)",
+        "baseline '\(rel)' is outside the project or in a forbidden place (.git, .collie, collie-work.json)")) }
         return root.appendingPathComponent(rel)
     }
 
@@ -279,11 +290,13 @@ enum FactoryRatchet {
         let r = URL(fileURLWithPath: SignedAppCheck.realPath(root))
         let h = URL(fileURLWithPath: SignedAppCheck.realPath(home)).pathComponents.map { $0.lowercased() }
         guard !h.starts(with: r.pathComponents.map { $0.lowercased() }) else {
-            throw ProtocolError(code: .invalidArgs, message: "a raiz do projeto é a pasta pessoal ou fica acima dela: a catraca não usa baseline aí")
+            throw ProtocolError(code: .invalidArgs, message: tr("a raiz do projeto é a pasta pessoal ou fica acima dela: a catraca não usa baseline aí",
+        "the project root is the home folder or above it: the ratchet uses no baseline there"))
         }
         let path = SignedAppCheck.realPath(r.appendingPathComponent(rel))
         guard SandboxGrantStore.mayWrite(path, root: r.path, grants: [], home: home, collie: collie, app: nil, closed: []) else {
-            throw ProtocolError(code: .invalidArgs, message: "baseline '\(rel)' cai num caminho que o sandbox nunca deixa gravar (rc do shell, segredos, launchd, config)")
+            throw ProtocolError(code: .invalidArgs, message: tr("baseline '\(rel)' cai num caminho que o sandbox nunca deixa gravar (rc do shell, segredos, launchd, config)",
+        "baseline '\(rel)' falls on a path the sandbox never lets be written (shell rc, secrets, launchd, config)"))
         }
     }
 
@@ -298,15 +311,16 @@ enum FactoryRatchet {
         let fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if fd < 0 {
             if errno == ENOENT { return "" }
-            throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular")
+            throw ProtocolError(code: .invalidArgs, message: tr("\(rel) não é um arquivo regular", "\(rel) is not a regular file"))
         }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         var st = stat()
-        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "\(rel) não é um arquivo regular") }
+        guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: tr("\(rel) não é um arquivo regular", "\(rel) is not a regular file")) }
         guard st.st_size <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
         let d: Data
         do { d = try h.read(upToCount: maxBaselineBytes + 1) ?? Data() }   // N5: an I/O error is not an empty baseline
-        catch { throw ProtocolError(code: .internal, message: "não consegui ler \(rel): \(error.localizedDescription)") }
+        catch { throw ProtocolError(code: .internal, message: tr("não consegui ler \(rel): \(error.localizedDescription)",
+        "could not read \(rel): \(error.localizedDescription)")) }
         guard d.count <= maxBaselineBytes else { throw ProtocolError(code: .invalidArgs, message: "\(rel) passa de \(maxBaselineBytes) bytes") }
         return String(decoding: d, as: UTF8.self)
     }
@@ -321,7 +335,8 @@ enum FactoryRatchet {
         guard let home = sandboxHome else { return try await run(command, root, nil, RouterLoopHost.checkEnv(user, sandbox: nil)) }
         let profile = SandboxLaunch.profileFile(terminal, root: collieRoot)
         guard sandboxed, FileManager.default.fileExists(atPath: profile.path) else {
-            throw ProtocolError(code: .unavailable, message: "o measure só roda no sandbox do terminal, e este terminal não tem perfil de sandbox; nada foi executado")
+            throw ProtocolError(code: .unavailable, message: tr("o measure só roda no sandbox do terminal, e este terminal não tem perfil de sandbox; nada foi executado",
+        "the measure only runs in the terminal's sandbox, and this terminal has no sandbox profile; nothing was run"))
         }
         return try await run(command, root, profile, RouterLoopHost.checkEnv(user, sandbox: (terminal, collieRoot, shell, home)))
     }
@@ -333,9 +348,10 @@ enum FactoryRatchet {
                       reason: String?, now: Date, home: URL, collie: URL) throws(ProtocolError) -> Outcome {
         func bad(_ e: Ratchet.Refusal, _ what: String) -> ProtocolError {
             switch e {
-            case .badLine(let n, let l): return ProtocolError(code: .invalidArgs, message: "\(what), linha \(n): '\(l)' não é '<chave> <n>'")
+            case .badLine(let n, let l): return ProtocolError(code: .invalidArgs, message: tr("\(what), linha \(n): '\(l)' não é '<chave> <n>'",
+        "\(what), line \(n): '\(l)' is not '<key> <n>'"))
             case .duplicate(let k): return ProtocolError(code: .invalidArgs, message: "\(what): chave repetida '\(k)'")
-            case .badReason: return ProtocolError(code: .invalidArgs, message: "--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle")
+            case .badReason: return ProtocolError(code: .invalidArgs, message: tr("--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle", "--reason: text of 1 to \(Ratchet.maxReason) characters, no control characters"))
             }
         }
         let file = try target(root: root, rel: rel).lastPathComponent
@@ -343,7 +359,8 @@ enum FactoryRatchet {
         let rootFd: Int32
         do { rootFd = try ConfinedDir.openRoot(SignedAppCheck.realPath(root)) } catch { throw ProtocolError(code: .invalidArgs, message: error.message) }
         defer { close(rootFd) }
-        guard let realRoot = ConfinedDir.path(of: rootFd) else { throw ProtocolError(code: .internal, message: "não consegui ler o caminho da raiz do projeto") }
+        guard let realRoot = ConfinedDir.path(of: rootFd) else { throw ProtocolError(code: .internal, message: tr("não consegui ler o caminho da raiz do projeto",
+        "could not read the project root path")) }
         let real = URL(fileURLWithPath: realRoot), path = real.path
         try place(root: real, rel: rel, home: home, collie: collie)
         let dir: Int32
@@ -352,7 +369,7 @@ enum FactoryRatchet {
         let old = try read(dir: dir, file, rel: rel)
         let base: Ratchet.Baseline, cur: Ratchet.Baseline
         do { base = try Ratchet.Baseline.parse(old) } catch { throw bad(error, rel) }
-        do { cur = try Ratchet.Baseline.parse(measured) } catch { throw bad(error, "a medição de '\(name)'") }
+        do { cur = try Ratchet.Baseline.parse(measured) } catch { throw bad(error, tr("a medição de '\(name)'", "the measurement of '\(name)'")) }
         // the file's `#` lines (the raise log) stay on top, in order
         // nit 4 (round 4): a `#` line with a control character (the parser skips comments unchecked) is dropped
         let header = old.split(separator: "\n").filter {
@@ -364,26 +381,34 @@ enum FactoryRatchet {
         let verdict = Ratchet.compare(baseline: base, current: cur)
         // minor 6: a measure that exits 0 with no output would zero the baseline; refused in update, flagged in check
         let empty = cur.counts.isEmpty && !base.counts.isEmpty
-        let emptyNote = "a medição de '\(name)' veio vazia (0 chaves) e \(rel) não está vazio: o measure pode ter quebrado"
+        let emptyNote = tr("a medição de '\(name)' veio vazia (0 chaves) e \(rel) não está vazio: o measure pode ter quebrado",
+        "the measurement of '\(name)' came back empty (0 keys) and \(rel) is not empty: the measure may have broken")
 
         switch action {
         case .check:
             switch verdict {
-            case .same: return Outcome(output: "catraca \(name): igual ao baseline\n", passed: true, root: path, rel: rel)
+            case .same: return Outcome(output: tr("catraca \(name): igual ao baseline\n",
+        "ratchet \(name): same as the baseline\n"), passed: true, root: path, rel: rel)
             case .improved(let cs):
-                if empty { return Outcome(output: "catraca \(name): \(emptyNote)\n", passed: false, root: path, rel: rel) }
-                return Outcome(output: "catraca \(name): melhorou. Rode `collie factory ratchet update \(name)` e commite \(rel):\n\(list(cs))\n", passed: false, root: path, rel: rel)
+                if empty { return Outcome(output: tr("catraca \(name): \(emptyNote)\n",
+        "ratchet \(name): \(emptyNote)\n"), passed: false, root: path, rel: rel) }
+                return Outcome(output: tr("catraca \(name): melhorou. Rode `collie factory ratchet update \(name)` e commite \(rel):\n\(list(cs))\n",
+        "ratchet \(name): improved. Run `collie factory ratchet update \(name)` and commit \(rel):\n\(list(cs))\n"), passed: false, root: path, rel: rel)
             case .worse(let cs):
-                return Outcome(output: "catraca \(name): piorou (passou de \(rel)):\n\(list(cs))\n", passed: false, root: path, rel: rel)
+                return Outcome(output: tr("catraca \(name): piorou (passou de \(rel)):\n\(list(cs))\n",
+        "ratchet \(name): got worse (over \(rel)):\n\(list(cs))\n"), passed: false, root: path, rel: rel)
             }
         case .update:
-            guard !empty else { throw ProtocolError(code: .invalidArgs, message: "\(emptyNote); nada gravado") }
+            guard !empty else { throw ProtocolError(code: .invalidArgs, message: tr("\(emptyNote); nada gravado", "\(emptyNote); nothing written")) }
             guard let low = Ratchet.lowered(baseline: base, current: cur) else {
                 guard case .worse(let cs) = verdict else { preconditionFailure() }
-                return Outcome(output: "catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n", passed: false, root: path, rel: rel)
+                return Outcome(output: tr("catraca \(name): piorou; update só abaixa. Subir: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n",
+        "ratchet \(name): got worse; update only lowers. To raise: `collie factory ratchet raise \(name) --reason`:\n\(list(cs))\n"), passed: false, root: path, rel: rel)
             }
-            guard verdict != .same else { return Outcome(output: "catraca \(name): igual ao baseline; nada a gravar\n", passed: true, root: path, rel: rel) }
-            return Outcome(output: "catraca \(name): baseline abaixado em \(rel)\n", passed: true, newBaseline: log(header) + low.render(), root: path, rel: rel)
+            guard verdict != .same else { return Outcome(output: tr("catraca \(name): igual ao baseline; nada a gravar\n",
+        "ratchet \(name): same as the baseline; nothing to write\n"), passed: true, root: path, rel: rel) }
+            return Outcome(output: tr("catraca \(name): baseline abaixado em \(rel)\n",
+        "ratchet \(name): baseline lowered in \(rel)\n"), passed: true, newBaseline: log(header) + low.render(), root: path, rel: rel)
         case .raise:
             let up: Ratchet.Raised
             do { up = try Ratchet.raise(baseline: base, to: cur, reason: reason ?? "", date: now) } catch { throw bad(error, "") }
@@ -406,12 +431,14 @@ extension CommandRouter {
         case .success(let c): work = c
         }
         guard let r = work?.factory?.ratchets.first(where: { $0.name == name }) else {
-            throw ProtocolError(code: .notFound, message: "catraca '\(name)' não está em factory.static.ratchets de collie-work.json")
+            throw ProtocolError(code: .notFound, message: tr("catraca '\(name)' não está em factory.static.ratchets de collie-work.json",
+        "ratchet '\(name)' is not in factory.static.ratchets of collie-work.json"))
         }
-        guard let rel = r.baseline else { throw ProtocolError(code: .invalidArgs, message: "catraca '\(name)' sem baseline no perfil") }
+        guard let rel = r.baseline else { throw ProtocolError(code: .invalidArgs, message: tr("catraca '\(name)' sem baseline no perfil",
+        "ratchet '\(name)' has no baseline in the profile")) }
         if action == .raise {   // refused before anything runs
             do { _ = try Ratchet.raise(baseline: .init(), to: .init(), reason: reason ?? "", date: Date()) }
-            catch { throw ProtocolError(code: .invalidArgs, message: "--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle") }
+            catch { throw ProtocolError(code: .invalidArgs, message: tr("--reason: texto de 1 a \(Ratchet.maxReason) caracteres, sem controle", "--reason: text of 1 to \(Ratchet.maxReason) characters, no control characters")) }
         }
         _ = try FactoryRatchet.target(root: root, rel: rel)   // refused before anything runs (N1)
         try FactoryRatchet.place(root: root, rel: rel, home: sandboxHomeDir, collie: config.paths.root)
@@ -420,7 +447,7 @@ extension CommandRouter {
             (c, d, p, e) async throws(ProtocolError) in try await RouterLoopHost.runCheck(c, in: d, profile: p, env: e, timeout: FactoryRatchet.measureTimeout)
         }
         guard res.status == 0, !res.truncated else {
-            throw ProtocolError(code: .invalidArgs, message: "measure de '\(name)' falhou (código \(res.status)\(res.truncated ? ", saída cortada" : "")): \(RerailText.clean(String(res.stderr.suffix(300)), max: 300))")
+            throw ProtocolError(code: .invalidArgs, message: tr("measure de '\(name)' falhou (código \(res.status)\(res.truncated ? ", saída cortada" : "")): \(RerailText.clean(String(res.stderr.suffix(300)), max: 300))", "measure of '\(name)' failed (code \(res.status)\(res.truncated ? ", output cut" : "")): \(RerailText.clean(String(res.stderr.suffix(300)), max: 300))"))
         }
         let o = try FactoryRatchet.apply(action, name: name, root: root, baselinePath: rel, measured: res.stdout, reason: reason, now: Date(),
                                         home: sandboxHomeDir, collie: config.paths.root)
@@ -437,7 +464,8 @@ extension CommandRouter {
 public enum RatchetCLI {
     public static func refusal(_ command: String, _ args: [String: JSONValue]) -> String? {
         guard command == "factory.ratchet.update" || command == "factory.ratchet.raise", args["terminal"] != nil else { return nil }
-        return "\(command.dropFirst("factory.ratchet.".count)) com --terminal recusado: o baseline é gravado por este processo, fora do sandbox daquele terminal. Rode o comando de dentro do próprio terminal (sem --terminal); `check` com --terminal segue valendo"
+        return tr("\(command.dropFirst("factory.ratchet.".count)) com --terminal recusado: o baseline é gravado por este processo, fora do sandbox daquele terminal. Rode o comando de dentro do próprio terminal (sem --terminal); `check` com --terminal segue valendo",
+        "\(command.dropFirst("factory.ratchet.".count)) with --terminal refused: the baseline is written by this process, outside that terminal's sandbox. Run the command from inside the terminal itself (without --terminal); `check` with --terminal still works")
     }
 
     /// The daemon's answer -> what to print (`.null`: nothing) and the exit code. `newBaseline` is written (then `wrote: true`)
@@ -449,14 +477,17 @@ public enum RatchetCLI {
         if command != "factory.ratchet.check", case .string(let text)? = o["newBaseline"] {
             if let e = refusal(command, args) { err(e); return (.null, 1) }
             guard case .string(let root)? = o["root"], case .string(let rel)? = o["rel"], FactoryProfile.confinedPath(rel) else {
-                err("baseline não gravado: o daemon devolveu um caminho fora do projeto ou proibido"); return (.null, 1)
+                err(tr("baseline não gravado: o daemon devolveu um caminho fora do projeto ou proibido",
+        "baseline not written: the daemon returned a path outside the project or a forbidden one")); return (.null, 1)
             }
             let mine = ProjectRoot.resolve(cwd: cwd, paddock: nil, home: home).path
             guard SignedAppCheck.realPath(URL(fileURLWithPath: root)) == mine else {
-                err("baseline não gravado: a raiz do daemon (\(root)) não é a raiz do projeto desta pasta (\(mine))"); return (.null, 1)
+                err(tr("baseline não gravado: a raiz do daemon (\(root)) não é a raiz do projeto desta pasta (\(mine))",
+        "baseline not written: the daemon's root (\(root)) is not this folder's project root (\(mine))")); return (.null, 1)
             }
             do { try write(text, mine, rel) } catch {
-                err("baseline não gravado em \(rel): \((error as? BaselineWriter.Failure)?.message ?? "\(error)")"); return (.null, 1)
+                err(tr("baseline não gravado em \(rel): \((error as? BaselineWriter.Failure)?.message ?? "\(error)")",
+        "baseline not written in \(rel): \((error as? BaselineWriter.Failure)?.message ?? "\(error)")")); return (.null, 1)
             }
             o["wrote"] = .bool(true)
         }

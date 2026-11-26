@@ -23,9 +23,9 @@ enum PrdStore {
 
     /// Why `--origin` is refused (already trimmed); nil: taken. Not empty, at most 200 characters, no control character.
     static func originRefusal(_ o: String) -> String? {
-        if o.isEmpty { return "está vazia" }
-        if o.count > originMax { return "tem mais de \(originMax) caracteres" }
-        if o.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) { return "tem caractere de controle" }
+        if o.isEmpty { return tr("está vazia", "is empty") }
+        if o.count > originMax { return tr("tem mais de \(originMax) caracteres", "has more than \(originMax) characters") }
+        if o.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) { return tr("tem caractere de controle", "has a control character") }
         return nil
     }
 
@@ -33,15 +33,15 @@ enum PrdStore {
     static func add(_ text: String, origin: String?, replace: Bool, dir: URL, current: [WorkPrd], at: Date) throws(ProtocolError) -> (prd: [WorkPrd], outcome: Outcome) {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let data = Data(text.utf8)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw invalid("o PRD está vazio") }
-        guard data.count <= maxBytes else { throw invalid("o PRD tem \(data.count) bytes; o limite é \(maxBytes)") }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw invalid(tr("o PRD está vazio", "the PRD is empty")) }
+        guard data.count <= maxBytes else { throw invalid(tr("o PRD tem \(data.count) bytes; o limite é \(maxBytes)", "the PRD has \(data.count) bytes; the limit is \(maxBytes)")) }
         if let origin, let why = originRefusal(origin) { throw invalid("--origin " + why) }
         let sha = sha256(data)
         if let last = current.last {
             // the same content again: nothing changes (its first origin stays: the record is immutable)
             if last.sha256 == sha { try keep(data, sha, in: dir); return (current, .same) }
             guard replace else {
-                throw invalid("o trabalho já tem um PRD com outro conteúdo (sha256 \(last.sha256.prefix(12))); use --replace para trocá-lo (o anterior fica guardado)")
+                throw invalid(tr("o trabalho já tem um PRD com outro conteúdo (sha256 \(last.sha256.prefix(12))); use --replace para trocá-lo (o anterior fica guardado)", "the work already has a PRD with other content (sha256 \(last.sha256.prefix(12))); use --replace to swap it (the previous one is kept)"))
             }
         }
         try keep(data, sha, in: dir)
@@ -87,18 +87,18 @@ enum PrdStore {
 
     /// The audit line the work's notes keep for a PRD added or replaced.
     static func note(_ p: WorkPrd, outcome: Outcome) -> String {
-        "[prd] " + (outcome == .replaced ? "PRD trocado" : "PRD guardado") + ": sha256 \(p.sha256), \(p.bytes) bytes"
-            + (p.origin.map { ", origem: \(RerailText.clean($0, max: originMax))" } ?? ", sem origem")
+        "[prd] " + (outcome == .replaced ? tr("PRD trocado", "PRD replaced") : tr("PRD guardado", "PRD saved")) + ": sha256 \(p.sha256), \(p.bytes) bytes"
+            + (p.origin.map { tr(", origem: \(RerailText.clean($0, max: originMax))", ", origin: \(RerailText.clean($0, max: originMax))") } ?? tr(", sem origem", ", no origin"))
     }
 
     /// The owner's line of a work's PRD and plan (`work status`, the auto-land summary); nil: neither.
     static func line(_ w: Work) -> String? {
         guard w.prd?.last != nil || w.plan != nil else { return nil }
         var s = w.prd?.last.map { p in
-            "PRD: sha256 \(p.sha256.prefix(12))" + (p.origin.map { " · origem: \(RerailText.clean($0, max: originMax))" } ?? " · sem origem")
-                + ((w.prd?.count ?? 0) > 1 ? " · \((w.prd?.count ?? 1) - 1) anterior(es) guardado(s)" : "")
-        } ?? "PRD: nenhum"
-        if let pl = w.plan { s += " · plano \(pl.sha256.prefix(12)) aplicado (\(pl.tasks.count) tarefas)" }
+            "PRD: sha256 \(p.sha256.prefix(12))" + (p.origin.map { tr(" · origem: \(RerailText.clean($0, max: originMax))", " · origin: \(RerailText.clean($0, max: originMax))") } ?? tr(" · sem origem", " · no origin"))
+                + ((w.prd?.count ?? 0) > 1 ? tr(" · \((w.prd?.count ?? 1) - 1) anterior(es) guardado(s)", " · \((w.prd?.count ?? 1) - 1) previous one(s) kept") : "")
+        } ?? tr("PRD: nenhum", "PRD: none")
+        if let pl = w.plan { s += tr(" · plano \(pl.sha256.prefix(12)) aplicado (\(pl.tasks.count) tarefas)", " · plan \(pl.sha256.prefix(12)) applied (\(pl.tasks.count) tasks)") }
         return s
     }
 }

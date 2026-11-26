@@ -13,7 +13,7 @@ extension CommandRouter {
         case "work.chat.send": return try await chatSend(r)
         case "work.chat.history":
             let before = try str(r, "before").map { s throws(ProtocolError) in
-                guard let id = UUID(uuidString: s) else { throw ProtocolError(code: .notFound, message: "Mensagem não encontrada.") }
+                guard let id = UUID(uuidString: s) else { throw ProtocolError(code: .notFound, message: tr("Mensagem não encontrada.", "Message not found.")) }
                 return id
             }
             let limit = Int(try num(r, "limit", max: 200) ?? 50)
@@ -23,10 +23,10 @@ extension CommandRouter {
             return .object([:])
         case "work.approvals": return try isoJSON(await asks.approvals())
         case "work.approve":
-            guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
+            guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: tr("Aprovação inválida.", "Invalid approval.")) }
             return try await approve(id, allow: flag(r, "allow"))
         case "work.approval.dismiss":   // nothing is typed: the user looks at the terminal
-            guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
+            guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: tr("Aprovação inválida.", "Invalid approval.")) }
             return .object(["dismissed": .bool(await asks.dismissApproval(id))])
         default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
         }
@@ -34,14 +34,14 @@ extension CommandRouter {
 
     private func chatSend(_ r: Request) async throws -> JSONValue {
         let text = (str(r, "text") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Mensagem vazia.") }
+        guard !text.isEmpty else { throw ProtocolError(code: .invalidArgs, message: tr("Mensagem vazia.", "Message is empty.")) }
         guard text.count <= ChatMessage.maxText else {
-            throw ProtocolError(code: .invalidArgs, message: "A mensagem passa de 8 000 caracteres.")
+            throw ProtocolError(code: .invalidArgs, message: tr("A mensagem passa de 8 000 caracteres.", "The message is over 8,000 characters."))
         }
         var w: Work?
         if let s = str(r, "work") {
             guard let id = UUID(uuidString: s), let found = try await work.get(id) else {
-                throw ProtocolError(code: .notFound, message: "Trabalho não encontrado.")
+                throw ProtocolError(code: .notFound, message: tr("Trabalho não encontrado.", "Work not found."))
             }
             w = found
         }
@@ -59,9 +59,9 @@ extension CommandRouter {
         // "?": a free question to the on-device assistant (before status phrases and @name); its answer is never typed anywhere
         if text.hasPrefix("?") {
             let question = text.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !question.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Nada para perguntar depois de ?.") }
+            guard !question.isEmpty else { throw ProtocolError(code: .invalidArgs, message: tr("Nada para perguntar depois de ?.", "Nothing to ask after ?.")) }
             if case .unavailable(let why) = await assistant.status() {
-                return try await reply("Perguntas livres precisam do macOS 26 com Apple Intelligence ligada (\(why)).")
+                return try await reply(tr("Perguntas livres precisam do macOS 26 com Apple Intelligence ligada (\(why)).", "Free questions need macOS 26 with Apple Intelligence turned on (\(why))."))
             }
             try await post(user)
             let store = work, view = WorkRegistryView(works: { try await store.list(includeClosed: true) }, names: names,
@@ -70,7 +70,7 @@ extension CommandRouter {
             Task { [weak self] in
                 guard let self else { return }
                 let a = await assistant.answer(question: question, selected: workId, registry: view)
-                let text = a.text.map { "Assistente: " + $0 } ?? Self.questionFailure(a.reason ?? "o modelo não respondeu")
+                let text = a.text.map { tr("Assistente: ", "Assistant: ") + $0 } ?? Self.questionFailure(a.reason ?? tr("o modelo não respondeu", "the model did not answer"))
                 do { try await post(ChatMessage(role: .collie, workId: workId, text: text, replyTo: userId)) }
                 catch { workLog("chat: \((error as? ProtocolError)?.message ?? "\(error)")") }
             }
@@ -78,7 +78,7 @@ extension CommandRouter {
         }
 
         if let q = StatusQuestion.match(text) {
-            guard q != .summary || w != nil else { return try await reply("Escolha um trabalho para ver o resumo.") }
+            guard q != .summary || w != nil else { return try await reply(tr("Escolha um trabalho para ver o resumo.", "Pick a work to see its summary.")) }
             return try await reply(try await statusAnswer(q, w))
         }
 
@@ -89,25 +89,25 @@ extension CommandRouter {
             var name = String(word)
             while let c = name.last, ",.:;!?".contains(c) { name.removeLast() }   // "@Dev, faz isso"
             let hits = ws.terminals.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-            guard hits.count <= 1 else { return try await reply("Mais de um terminal se chama \(name).") }
-            guard !name.isEmpty, let t = hits.first else { return try await reply("Não conheço \(name).") }
-            guard !rest.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Nada para mandar depois de @\(name).") }
+            guard hits.count <= 1 else { return try await reply(tr("Mais de um terminal se chama \(name).", "More than one terminal is named \(name).")) }
+            guard !name.isEmpty, let t = hits.first else { return try await reply(tr("Não conheço \(name).", "I don't know \(name).")) }
+            guard !rest.isEmpty else { throw ProtocolError(code: .invalidArgs, message: tr("Nada para mandar depois de @\(name).", "Nothing to send after @\(name).")) }
             (target, prompt) = (t, rest)
         } else if let w {
             guard let own = ws.terminals.first(where: { $0.id == w.terminalId }) else {
-                return try await reply("O terminal deste trabalho não existe mais.")
+                return try await reply(tr("O terminal deste trabalho não existe mais.", "This work's terminal no longer exists."))
             }
             let shepherd = own.isShepherd ? own : ConnectionGraph.reachable(from: own.id, in: ws)
                 .filter(\.isShepherd).min { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
             (target, prompt) = (shepherd ?? own, text)
         } else {
-            return try await reply("Escolha um trabalho ou comece com @nome.")
+            return try await reply(tr("Escolha um trabalho ou comece com @nome.", "Pick a work or start with @name."))
         }
 
-        guard await registry.process(target.id)?.isRunning == true else { return try await reply("\(target.name) não está rodando.") }
+        guard await registry.process(target.id)?.isRunning == true else { return try await reply(tr("\(target.name) não está rodando.", "\(target.name) is not running.")) }
         // a pasted text ends with Enter: at an approval prompt that Enter would answer it blindly
         if await hub.currentBadges[target.id] == .attention {
-            return try await reply("\(target.name) está esperando uma aprovação; responda o pedido primeiro.")
+            return try await reply(tr("\(target.name) está esperando uma aprovação; responda o pedido primeiro.", "\(target.name) is waiting for an approval; answer the request first."))
         }
         var sent = user; sent.terminal = target.name
         try await deliver(sent, to: target, prompt: prompt)
@@ -146,8 +146,8 @@ extension CommandRouter {
                 answer = ChatMessage(role: .agent, workId: workId, terminal: name, text: a.output, replyTo: sent.id)
             } catch {
                 let text = (error as? ProtocolError) == AskCoordinator.awaitingApproval(name)
-                    ? "\(name) está esperando uma aprovação; a mensagem não foi enviada."
-                    : "\(name) não respondeu (\(Self.reason(error)))."
+                    ? tr("\(name) está esperando uma aprovação; a mensagem não foi enviada.", "\(name) is waiting for an approval; the message was not sent.")
+                    : tr("\(name) não respondeu (\(Self.reason(error))).", "\(name) did not answer (\(Self.reason(error))).")
                 if !typed.lock.withLock({ typed.yes }) { failed?(Self.reason(error)) }
                 answer = ChatMessage(role: .collie, workId: workId, terminal: name, text: text, replyTo: sent.id)
             }
@@ -167,9 +167,9 @@ extension CommandRouter {
         }
         let a: Approval, sent: Bool
         switch await asks.approve(id, allow: allow) {
-        case .stale: return result(false, "pedido não está mais pendente", "stale")
-        case .unknown: return result(false, "saída demais para conferir; olhe o terminal", "unknown")
-        case .failed: return result(false, "o terminal não recebeu a resposta", "failed")
+        case .stale: return result(false, tr("pedido não está mais pendente", "request is no longer pending"), "stale")
+        case .unknown: return result(false, tr("saída demais para conferir; olhe o terminal", "too much output to check; look at the terminal"), "unknown")
+        case .failed: return result(false, tr("o terminal não recebeu a resposta", "the terminal did not receive the answer"), "failed")
         case .sent(let x): (a, sent) = (x, true)
         case .dismissed(let x): (a, sent) = (x, false)
         }
@@ -199,8 +199,8 @@ extension CommandRouter {
         await hub.approvalRaised(a)
         let line = a.kind == .menu ? a.reason : a.prompt.split(separator: "\n").last.map(String.init) ?? a.reason
         let text = a.kind == .unknown
-            ? "\(a.terminal) pode estar esperando você (saída demais para conferir); olhe o terminal."
-            : "\(a.terminal) pede permissão: \(line)"
+            ? tr("\(a.terminal) pode estar esperando você (saída demais para conferir); olhe o terminal.", "\(a.terminal) may be waiting for you (too much output to check); look at the terminal.")
+            : tr("\(a.terminal) pede permissão: \(line)", "\(a.terminal) asks for permission: \(line)")
         do {
             try await post(ChatMessage(role: .collie, workId: try? await work.active(terminal: a.terminalId)?.id, terminal: a.terminal,
                                        text: text))
@@ -215,11 +215,11 @@ extension CommandRouter {
     /// without bracketed paste: each line would run). A Shepherd's own rerail is queued once at a time.
     func rerail(_ t: TerminalRecord, _ w: Work, now: Date, wait: Bool) async throws -> JSONValue {
         let block = RerailText.block(w, now: now), id = t.id, name = t.name
-        let atApproval = ProtocolError(code: .unavailable, message: "\(name) está pedindo aprovação; recolocar no trilho depois de responder")
+        let atApproval = ProtocolError(code: .unavailable, message: tr("\(name) está pedindo aprovação; recolocar no trilho depois de responder", "\(name) is asking for approval; put back on track after answering"))
         guard await !asks.hasPendingApproval(id) else { throw atApproval }
         // ponytail: paste mode as of now; an agent that turns it off before the queued block is written still gets it
         guard t.preset != .shell, await asks.pasteEnabled(id) else {
-            throw ProtocolError(code: .unavailable, message: "\(name) não aceita colar texto com segurança; recolocar no trilho só em agentes")
+            throw ProtocolError(code: .unavailable, message: tr("\(name) não aceita colar texto com segurança; recolocar no trilho só em agentes", "\(name) does not accept pasted text safely; put back on track only in agents"))
         }
         let result = JSONValue.object(["injected": .bool(wait), "chars": .number(Double(block.count))])
         func run() async throws(ProtocolError) {
@@ -227,7 +227,7 @@ extension CommandRouter {
                 guard error == AskCoordinator.awaitingApproval(name) else { throw error }
                 throw atApproval
             }
-            do { try await post(ChatMessage(role: .collie, workId: w.id, terminal: name, text: "Recoloquei \(name) no trilho.\n\n" + block)) }
+            do { try await post(ChatMessage(role: .collie, workId: w.id, terminal: name, text: tr("Recoloquei \(name) no trilho.\n\n", "I put \(name) back on track.\n\n") + block)) }
             catch { workLog("rerail: \((error as? ProtocolError)?.message ?? "\(error)")") }
         }
         if wait { try await run() } else {
@@ -244,18 +244,18 @@ extension CommandRouter {
     /// The chat line for a free question the assistant did not answer.
     static func questionFailure(_ reason: String) -> String {
         reason == WorkAssistant.busy ? reason
-            : "O assistente não respondeu (\(reason == "timeout" ? "o modelo demorou mais de 20 s" : reason))."
+            : tr("O assistente não respondeu (\(reason == "timeout" ? "o modelo demorou mais de 20 s" : reason)).", "The assistant did not answer (\(reason == "timeout" ? "the model took more than 20 s" : reason)).")
     }
 
     /// Why an agent did not answer, for the chat.
     static func reason(_ e: any Error) -> String {
-        guard let p = e as? ProtocolError else { return "erro interno" }
+        guard let p = e as? ProtocolError else { return tr("erro interno", "internal error") }
         switch p.code {
         case .timeout:
             return p.message.contains("not delivered") || p.message.contains("not accepting input")
-                ? "a mensagem não foi entregue" : "sem resposta em 30 min"
-        case .notRunning: return "o terminal parou"
-        default: return "erro interno"
+                ? tr("a mensagem não foi entregue", "the message was not delivered") : tr("sem resposta em 30 min", "no answer in 30 min")
+        case .notRunning: return tr("o terminal parou", "the terminal stopped")
+        default: return tr("erro interno", "internal error")
         }
     }
 
@@ -311,7 +311,7 @@ extension CommandRouter {
             decided("saved")
         } catch {
             decided("failed", (error as? ProtocolError)?.message ?? "\(error)")
-            do { try await post(ChatMessage(role: .collie, workId: w.id, terminal: nil, text: "Não consegui guardar o resumo de \(RerailText.clean(w.title)) na Memória.")) }
+            do { try await post(ChatMessage(role: .collie, workId: w.id, terminal: nil, text: tr("Não consegui guardar o resumo de \(RerailText.clean(w.title)) na Memória.", "I could not save the summary of \(RerailText.clean(w.title)) to Memory."))) }
             catch { workLog("chat: \((error as? ProtocolError)?.message ?? "\(error)")") }
         }
     }
@@ -340,22 +340,22 @@ enum RerailText {
     }
 
     static func block(_ w: Work, now: Date) -> String {
-        let label: [JobKind: String] = [.subagent: "subagente", .shell: "shell"]
+        let label: [JobKind: String] = [.subagent: tr("subagente", "subagent"), .shell: "shell"]
         let sections: [(String, [String])] = [
-            ("Em andamento", w.tasks.filter { $0.state == .inProgress }.map { clean($0.title) }),
-            ("Abertas", w.tasks.filter { $0.state == .open }.map { clean($0.title) }),
-            ("Rodando", w.jobs.filter { $0.state == .running }.map { "\(label[$0.kind]!) \(clean($0.label))" }),
-            ("Decisões recentes", w.notes.filter(\.decision).suffix(5).map { clean($0.text) }),
+            (tr("Em andamento", "In progress"), w.tasks.filter { $0.state == .inProgress }.map { clean($0.title) }),
+            (tr("Abertas", "Open"), w.tasks.filter { $0.state == .open }.map { clean($0.title) }),
+            (tr("Rodando", "Running"), w.jobs.filter { $0.state == .running }.map { "\(label[$0.kind]!) \(clean($0.label))" }),
+            (tr("Decisões recentes", "Recent decisions"), w.notes.filter(\.decision).suffix(5).map { clean($0.text) }),
         ]
         // ponytail: k items per section; over the limit, retry with fewer (k = 0 keeps only the counts)
         for k in [20, 8, 3, 1, 0] {
-            var lines = ["[Collie] Estado atual do trabalho \"\(clean(w.title).replacingOccurrences(of: "\"", with: "'"))\" — considere encerrado tudo o que não está aqui."]
+            var lines = [tr("[Collie] Estado atual do trabalho \"\(clean(w.title).replacingOccurrences(of: "\"", with: "'"))\" — considere encerrado tudo o que não está aqui.", "[Collie] Current state of the work \"\(clean(w.title).replacingOccurrences(of: "\"", with: "'"))\" — consider everything not listed here as closed.")]
             for (head, items) in sections where !items.isEmpty {
                 lines.append("\(head):")
                 lines += items.prefix(k).map { "- " + $0 }
-                if items.count > k { lines.append("- … e mais \(items.count - k)") }
+                if items.count > k { lines.append(tr("- … e mais \(items.count - k)", "- … and \(items.count - k) more")) }
             }
-            lines.append("Continue a partir daqui. Ao adiar use `collie work task defer`, ao desistir `collie work task drop`.")
+            lines.append(tr("Continue a partir daqui. Ao adiar use `collie work task defer`, ao desistir `collie work task drop`.", "Continue from here. To defer use `collie work task defer`, to give up `collie work task drop`."))
             let text = lines.joined(separator: "\n")
             if text.count <= limit || k == 0 { return text }
         }

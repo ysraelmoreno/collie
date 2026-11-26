@@ -29,9 +29,13 @@ public struct LoopStats: Codable, Sendable, Equatable {
     public var line: String {
         let h = seconds / 3600, m = seconds % 3600 / 60
         let time = h > 0 ? "\(h)h" + String(format: "%02d", m) : m > 0 ? "\(m)min" : "\(seconds)s"
-        let mean = String(format: "%.1f", meanTries).replacingOccurrences(of: ".", with: ",")
+        let mean = String(format: "%.1f", meanTries)
+        if L10n.current == .en {
+            return "loop: \(done)/\(ran) done · \(firstTry) on the 1st · \(deferred) deferred · mean \(mean) attempts · \(time)"
+                + (reverted > 0 ? " · \(reverted) reverted" : "")
+        }
         return "laço: \(done)/\(ran) feitas · \(firstTry) na 1ª · \(deferred) " + (deferred == 1 ? "adiada" : "adiadas")
-            + " · média \(mean) tentativas · \(time)"
+            + " · média \(mean.replacingOccurrences(of: ".", with: ",")) tentativas · \(time)"
             + (reverted > 0 ? " · \(reverted) " + (reverted == 1 ? "revertido" : "revertidos") : "")
     }
 }
@@ -97,12 +101,12 @@ public struct WorkSummary: Codable, Sendable, Equatable {
         }
         func jobs(_ s: JobState, _ what: String) -> [String] { w.jobs.filter { $0.state == s }.map { c($0.label) + " — " + what } }
         var done = w.tasks.filter { $0.state == .done }.map { c($0.title) } + w.commits.map(c)
-        if w.closedBy == "merge" { done.append("Mergeado") }
+        if w.closedBy == "merge" { done.append(tr("Mergeado", "Merged")) }
         let later = w.tasks.filter { $0.state == .deferred }.map { titled($0) }
-            + w.notes.filter(\.decision).map { "Decisão: " + c($0.text) }
+            + w.notes.filter(\.decision).map { tr("Decisão: ", "Decision: ") + c($0.text) }
         let notDone = w.tasks.filter { $0.state == .open || $0.state == .inProgress }.map { c($0.title) }
-            + w.tasks.filter { $0.state == .abandoned }.map { c($0.title) + " — abandonada" + ($0.reason.map { ": " + c($0) } ?? "") }
-            + jobs(.gone, "sumiu") + jobs(.unknown, "sem sinal")
+            + w.tasks.filter { $0.state == .abandoned }.map { c($0.title) + tr(" — abandonada", " — abandoned") + ($0.reason.map { ": " + c($0) } ?? "") }
+            + jobs(.gone, tr("sumiu", "gone")) + jobs(.unknown, tr("sem sinal", "no signal"))
         let stopped = w.tasks.filter { $0.state == .inProgress }.max { $0.updatedAt < $1.updatedAt }.map { c($0.title) }
             ?? w.notes.last.map { c($0.text) }
         let reviews = w.tasks.compactMap { t in t.review.map { c(t.title) + ": " + c($0) } }
@@ -129,15 +133,16 @@ public struct WorkSummary: Codable, Sendable, Equatable {
 
     /// `boldTitle`: the title as a `**bold**` line (the chat) instead of a `##` heading (the panel drops that line).
     public func markdown(boldTitle: Bool = false) -> String {
-        let sections = [("Feito", done), ("Para depois", later), (active ? "Em aberto" : "Não feito", notDone),
-                        ("Onde parou", stoppedAt.map { [$0] } ?? []), ("Parecer", reviews ?? [])]
+        let sections = [(tr("Feito", "Done"), done), (tr("Para depois", "For later"), later),
+                        (active ? tr("Em aberto", "Open") : tr("Não feito", "Not done"), notDone),
+                        (tr("Onde parou", "Where it stopped"), stoppedAt.map { [$0] } ?? []), (tr("Parecer", "Review"), reviews ?? [])]
         // ponytail: k items a section; over the limit, retry with fewer (k = 0 keeps only the counts)
         for k in [Self.maxItems, 20, 10, 5, 2, 1, 0] {
             var lines = [boldTitle ? "**\(title)**" : "## " + title] + (loop.map { ["", $0.line] } ?? [])
                 + (tokens.map { ["tokens: " + $0.label] } ?? [])
             for (head, items) in sections where !items.isEmpty {
                 lines += ["", "**\(head)**"] + items.prefix(k).map { "- " + $0 }
-                if items.count > k { lines.append("- … e mais \(items.count - k)") }
+                if items.count > k { lines.append(tr("- … e mais \(items.count - k)", "- … and \(items.count - k) more")) }
             }
             // A6: the file's own text, as it is, in a fence (``` inside it cannot close the fence)
             if let autoLand { lines += ["", "**Auto-land**", "```", autoLand.replacingOccurrences(of: "```", with: "'''"), "```"] }

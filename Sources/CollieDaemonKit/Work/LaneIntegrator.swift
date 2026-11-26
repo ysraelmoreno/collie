@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
 /// M3.4. The loop's single integrator: joins a lane that passed its check and gate to the paddock's branch, one lane at
@@ -152,7 +153,7 @@ actor LaneIntegrator {
             let way = await inTheWay(target, from: before)
             if !way.isEmpty {
                 (blockedBy, kept, f.disturbed) = (s.who, kept + way.filter { !kept.contains($0) }, true)
-                f.detail = "arquivos não rastreados que não são do portão no caminho do merge: "
+                f.detail = tr("arquivos não rastreados que não são do portão no caminho do merge: ", "untracked files that are not the gate's in the merge's way: ")
                     + WorkLoop.eventDetail(way.prefix(10).joined(separator: ", "))
             }
             return await done(f)
@@ -199,7 +200,7 @@ actor LaneIntegrator {
     }
 
     /// M3b.6: why an integration that was cancelled did not go on.
-    static let cancelled = "integração cancelada: o laço parou"
+    static var cancelled: String { tr("integração cancelada: o laço parou", "integration cancelled: the loop stopped") }
 
     /// M3c.2: the tracked files back at `sha` (`reset --hard`) when nobody is in a turn in the worktree (`anyoneWorking`:
     /// not the starter only waiting on this work) and they are as the integrator left them (`at`). Untracked files are

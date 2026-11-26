@@ -101,7 +101,7 @@ extension CommandRouter {
         if let parallel, parallel > 1 {
             // F3: lanes and fields share the paddock's integrator and its tree's rules; never both at once
             let fields = ws.terminals.filter { $0.paddockId == pid && $0.field != nil }.compactMap { $0.field?.name }
-            if !fields.isEmpty { throw invalid("há fields vivos neste cercado: \(fields.sorted().joined(separator: ", ")); --parallel > 1 espera que saiam") }
+            if !fields.isEmpty { throw invalid(tr("há fields vivos neste cercado: \(fields.sorted().joined(separator: ", ")); --parallel > 1 espera que saiam", "there are live fields in this paddock: \(fields.sorted().joined(separator: ", ")); --parallel > 1 waits for them to leave")) }
             guard config.sandboxHome != nil else { throw invalid("--parallel needs the terminal sandbox: a lane's agent, check and git run only sandboxed") }
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
@@ -151,8 +151,8 @@ extension CommandRouter {
             if let b = factory.budgetSeconds, Double(b) > Self.loopBudgetMax, budgetFlag == nil { loop.origins?["budgetCut"] = String(b) }
             // A4: auto-land only by --auto-land; the profile's land alone only warns
             if factory.land == .factoryPaddock, !flag(r, "auto-land") {
-                let w = paddock.factory ? "aviso: factory.guardrails.land é 'factory-paddock'; o auto-land só liga com work run --auto-land; segue manual"
-                    : "aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'"
+                let w = paddock.factory ? tr("aviso: factory.guardrails.land é 'factory-paddock'; o auto-land só liga com work run --auto-land; segue manual", "warning: factory.guardrails.land is 'factory-paddock'; auto-land only turns on with work run --auto-land; it stays manual")
+                    : tr("aviso: factory.guardrails.land é 'factory-paddock', mas o cercado não tem a marca de fábrica; o laço segue como 'manual'", "warning: factory.guardrails.land is 'factory-paddock', but the paddock has no factory mark; the loop stays 'manual'")
                 warning = [warning, w].compactMap { $0 }.joined(separator: "; ")
             }
         }
@@ -194,7 +194,7 @@ extension CommandRouter {
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
             return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("starting")], warning)
         }
-        let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
+        let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: tr("Laço autônomo", "Autonomous loop"),
                            base: nil, call: text, command: "run", by: t.id)
         started = true   // the reservation now belongs to the approval
         loopCards[id] = card.id
@@ -221,9 +221,9 @@ extension CommandRouter {
     /// A4: `--auto-land`'s settings from the profile committed at the base (`config`), or why it is refused.
     static func loopAutoLand(factory: Bool, config: ProjectWorkConfig?, review: Bool, noReview: Bool, max: Int? = nil) throws(ProtocolError) -> WorkLoopState.AutoLand {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        guard factory else { throw invalid("--auto-land: o cercado não está marcado como fábrica (só o dono liga: collie paddock factory <nome> on)") }
-        guard let gate = config?.gate else { throw invalid("--auto-land: o \(ProjectWorkConfig.fileName) commitado não tem 'gate'; o auto-land exige portão") }
-        guard review, !noReview else { throw invalid("--auto-land exige revisão: tire --no-review ou ligue factory.review no perfil (ou use --review)") }
+        guard factory else { throw invalid(tr("--auto-land: o cercado não está marcado como fábrica (só o dono liga: collie paddock factory <nome> on)", "--auto-land: the paddock is not marked as a factory (only the owner turns it on: collie paddock factory <name> on)")) }
+        guard let gate = config?.gate else { throw invalid(tr("--auto-land: o \(ProjectWorkConfig.fileName) commitado não tem 'gate'; o auto-land exige portão", "--auto-land: the committed \(ProjectWorkConfig.fileName) has no 'gate'; auto-land requires a gate")) }
+        guard review, !noReview else { throw invalid(tr("--auto-land exige revisão: tire --no-review ou ligue factory.review no perfil (ou use --review)", "--auto-land requires a review: drop --no-review or turn on factory.review in the profile (or use --review)")) }
         return WorkLoopState.AutoLand(gate: gate, ci: config?.factory?.autolandCI ?? WorkLoopState.AutoLand.defaultCI,
                                       timeout: config?.factory?.autolandTimeout ?? WorkLoopState.AutoLand.defaultTimeout,
                                       max: max, perDay: config?.factory?.autoLandPerDay)
@@ -239,10 +239,11 @@ extension CommandRouter {
         // review A2: the loop reads the commit, so an edit or a new file the owner has not committed is not what runs
         let dirty = (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
                                               in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let uncommitted = dirty.isEmpty ? nil : "aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas"
+        let uncommitted = dirty.isEmpty ? nil : tr("aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas", "warning: \(ProjectWorkConfig.fileName) has uncommitted changes; the loop uses the committed version (HEAD), without them")
         func ignored(_ m: String) -> String? {
-            [uncommitted, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão, pré-check, revisão, orçamento nem tentativas "
-                + "vindos do arquivo): " + RerailText.clean(m, max: 300).replacingOccurrences(of: "\n", with: " ")].compactMap { $0 }.joined(separator: "; ")
+            [uncommitted, tr("aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão, pré-check, revisão, orçamento nem tentativas "
+                + "vindos do arquivo): ", "warning: \(ProjectWorkConfig.fileName) ignored, the loop uses the defaults (no gate, pre-check, review, budget or attempts "
+                + "from the file): ") + RerailText.clean(m, max: 300).replacingOccurrences(of: "\n", with: " ")].compactMap { $0 }.joined(separator: "; ")
         }
         switch await WorkConfigFile.read(base: base, dir: dir) {
         case .absent: return (nil, uncommitted, nil, false)
@@ -293,7 +294,7 @@ extension CommandRouter {
     }
 
     /// C5a: why a loop's agent must end its turns.
-    static let loopAgentRefusal = "o laço precisa de um agente com fim de turno (claude, codex ou cursor); passe --preset claude"
+    static var loopAgentRefusal: String { tr("o laço precisa de um agente com fim de turno (claude, codex ou cursor); passe --preset claude", "the loop needs an agent with an end of turn (claude, codex or cursor); pass --preset claude") }
 
     /// C5a: the attempt's agent, as the summon resolves it (`--preset`, else the Shepherd's, with its command), would be a
     /// shell or a custom preset with no command: nothing that ends a turn. A command given (or the Shepherd's) is a
@@ -350,12 +351,13 @@ extension CommandRouter {
         // F2 X4: no catalog at HEAD is refused now, not after an agent's whole turn
         let known = await committedPersonas(dir)
         guard !known.isEmpty else {
-            throw invalid(fromProfile ? "factory.review do \(ProjectWorkConfig.fileName) liga a revisão, mas não há personas em HEAD (docs/fabrica/personas)"
-                          : "--review: sem personas em docs/fabrica/personas no HEAD")
+            throw invalid(fromProfile ? tr("factory.review do \(ProjectWorkConfig.fileName) liga a revisão, mas não há personas em HEAD (docs/fabrica/personas)", "factory.review in \(ProjectWorkConfig.fileName) turns the review on, but there are no personas at HEAD (docs/fabrica/personas)")
+                          : tr("--review: sem personas em docs/fabrica/personas no HEAD", "--review: no personas in docs/fabrica/personas at HEAD"))
         }
         if let bad = only.first(where: { !known.contains($0) }) {
-            throw invalid("factory.review.personas do \(ProjectWorkConfig.fileName): persona desconhecida '\(RerailText.clean(bad, max: 60))'; "
-                          + "conhecidas (\(personasDir), em HEAD): " + known.sorted().joined(separator: ", "))
+            throw invalid(tr("factory.review.personas do \(ProjectWorkConfig.fileName): persona desconhecida '\(RerailText.clean(bad, max: 60))'; "
+                          + "conhecidas (\(personasDir), em HEAD): ", "factory.review.personas in \(ProjectWorkConfig.fileName): unknown persona '\(RerailText.clean(bad, max: 60))'; "
+                          + "known (\(personasDir), at HEAD): ") + known.sorted().joined(separator: ", "))
         }
         guard let personas, personas != "auto" else { return (true, nil, reviewerModel) }
         let names = TaskScheduler.list(personas)
@@ -391,8 +393,8 @@ extension CommandRouter {
     private func loopDenied(paddock: UUID?, starter: UUID, title: String, withdrawn: Bool) async {
         if let paddock { loopPaddocks.remove(paddock) }
         let t = RerailText.clean(title)
-        let line = withdrawn ? "[collie] O laço de \"\(t)\" foi cancelado antes da aprovação; nada rodou."
-            : "[collie] O dono não aprovou o laço de \"\(t)\"; nada rodou."
+        let line = withdrawn ? tr("[collie] O laço de \"\(t)\" foi cancelado antes da aprovação; nada rodou.", "[collie] The loop of \"\(t)\" was cancelled before approval; nothing ran.")
+            : tr("[collie] O dono não aprovou o laço de \"\(t)\"; nada rodou.", "[collie] The owner did not approve the loop of \"\(t)\"; nothing ran.")
         try? await asks.inject(to: starter, prompt: line, afterQuiet: true)
     }
 
@@ -404,7 +406,7 @@ extension CommandRouter {
         if config.sandboxHome != nil {
             do { _ = try prepareLoopSandbox(id, paddock: paddock) } catch {
                 loopPaddocks.remove(paddock.id)
-                try? await asks.inject(to: starter, prompt: "[collie] O laço não começou: o sandbox dele não pôde ser preparado.", afterQuiet: true)
+                try? await asks.inject(to: starter, prompt: tr("[collie] O laço não começou: o sandbox dele não pôde ser preparado.", "[collie] The loop did not start: its sandbox could not be prepared."), afterQuiet: true)
                 return false
             }
         }
@@ -442,11 +444,11 @@ extension CommandRouter {
     /// any agent of the next work runs. Returns nil when it started, else why not.
     func chainLoop(_ c: WorkLoop.Chain, paddock pid: UUID, starter: UUID) async -> String? {
         let id = c.next
-        let notStarted = "o trabalho não pôde começar"
+        let notStarted = tr("o trabalho não pôde começar", "the work could not start")
         guard workLoops[id] == nil, let p = ws.paddocks.first(where: { $0.id == pid }), !p.isFolder else { return notStarted }
-        guard p.factory else { return "o cercado não está mais marcado como fábrica" }
+        guard p.factory else { return tr("o cercado não está mais marcado como fábrica", "the paddock is no longer marked as a factory") }
         if let why = await FactoryDoctorReader.headRefusal(dir: URL(fileURLWithPath: p.path)) {
-            return "o factory doctor do cercado não passa mais o mínimo (\(why))"
+            return tr("o factory doctor do cercado não passa mais o mínimo (\(why))", "the paddock's factory doctor no longer meets the minimum (\(why))")
         }
         // the doctor's read awaited: the work may have been started (or the paddock changed) meanwhile
         guard workLoops[id] == nil, ws.paddocks.first(where: { $0.id == pid })?.factory == true else { return notStarted }
@@ -505,33 +507,35 @@ extension CommandRouter {
         var review = ""
         if l.review == true {
             let who: String = l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto"
-            let only: String = l.reviewOnly.map { " (só " + $0.map(quoted).joined(separator: " ") + ")" } ?? ""
-            let veto: String = l.reviewThreshold == "blocker" ? ", veto só por blocker" + file : ""
-            let model: String = l.reviewerModel.map { ", revisor " + quoted($0) } ?? ""
-            review = "revisão por personas: " + who + only + veto + model + ". "
+            let only: String = l.reviewOnly.map { tr(" (só ", " (only ") + $0.map(quoted).joined(separator: " ") + ")" } ?? ""
+            let veto: String = l.reviewThreshold == "blocker" ? tr(", veto só por blocker", ", veto only by blocker") + file : ""
+            let model: String = l.reviewerModel.map { tr(", revisor ", ", reviewer ") + quoted($0) } ?? ""
+            review = tr("revisão por personas: ", "review by personas: ") + who + only + veto + model + ". "
         } else if profileReviewOff {
-            review = "sem revisão: --no-review desliga a do perfil" + file + ". "
+            review = tr("sem revisão: --no-review desliga a do perfil", "no review: --no-review turns off the profile's") + file + ". "
         }
-        var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
-            + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
-            + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
-            + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
-            + (l.escalate.map { "escalada de modelo por tentativa: \(quoted($0.joined(separator: ", "))). " } ?? "")
-            + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
-            + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
+        var s = tr("rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
+                   + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. ",
+                   "run unattended \(quoted(w.title)) in the paddock \(quoted(paddock)): up to \(l.max ?? 0) attempts in all "
+                   + "(\(l.tries) per task), turn of up to \(l.timeout) s, budget of \(l.budget ?? 0) s. ")
+            + (l.parallel.flatMap { $0 > 1 ? tr("até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). ", "up to \($0) tasks at the same time, each in its own lane (--parallel \($0)). ") : nil } ?? "")
+            + (l.gate.map { tr("portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). ", "gate\(fromFile.gate ? file : "") after each check: \(quoted($0)). ") } ?? "")
+            + (l.escalate.map { tr("escalada de modelo por tentativa: \(quoted($0.joined(separator: ", "))). ", "model escalation per attempt: \(quoted($0.joined(separator: ", "))). ") } ?? "")
+            + (l.precheck.map { tr("pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). ", "pre-check\(fromFile.precheck ? file : "") at the end of each turn: \(quoted($0)). ") } ?? "")
+            + (l.notify == .end ? tr("avisos: só no fim (--notify end). ", "notices: only at the end (--notify end). ") : "")
             + review
-            + (l.autoLand.map { "AUTO-LAND no fim: portão \(quoted($0.gate)), CI \(quoted($0.ci)) (até \($0.timeout) s), então paddock land por merge local, sem push. " } ?? "")
+            + (l.autoLand.map { tr("AUTO-LAND no fim: portão \(quoted($0.gate)), CI \(quoted($0.ci)) (até \($0.timeout) s), então paddock land por merge local, sem push. ", "AUTO-LAND at the end: gate \(quoted($0.gate)), CI \(quoted($0.ci)) (up to \($0.timeout) s), then paddock land by local merge, no push. ") } ?? "")
             // A5: the chain's limits, and a queued work's wait
-            + (l.autoLand.map { "Até \($0.max ?? 1) trabalho(s) nesta execução, \($0.perDay ?? WorkLoopState.AutoLand.defaultPerDay) por dia no cercado. " } ?? "")
-            + (l.state == .queued ? "NA FILA: nada roda agora; uma corrente do auto-land roda este trabalho depois de um land do cercado. " : "")
-            + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
+            + (l.autoLand.map { tr("Até \($0.max ?? 1) trabalho(s) nesta execução, \($0.perDay ?? WorkLoopState.AutoLand.defaultPerDay) por dia no cercado. ", "Up to \($0.max ?? 1) work(s) in this run, \($0.perDay ?? WorkLoopState.AutoLand.defaultPerDay) per day in the paddock. ") } ?? "")
+            + (l.state == .queued ? tr("NA FILA: nada roda agora; uma corrente do auto-land roda este trabalho depois de um land do cercado. ", "QUEUED: nothing runs now; an auto-land chain runs this work after a land of the paddock. ") : "")
+            + tr("\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:", "\(tasks.count) \(tasks.count == 1 ? "task" : "tasks"), each with its own check:")
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {
             xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
         }
         for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (t.greenOk == true ? " \(GreenCheck.flag)" : "")
-                + (t.accept.map { " aceite \(quoted($0))" + (t.acceptTimeout.map { " até \($0) s" } ?? "") } ?? "")
-                + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
+                + (t.accept.map { tr(" aceite \(quoted($0))", " acceptance \(quoted($0))") + (t.acceptTimeout.map { tr(" até \($0) s", " up to \($0) s") } ?? "") } ?? "")
+                + (t.evidenceGlob.map { tr(" evidência \(quoted($0))", " evidence \(quoted($0))") } ?? "") + list(tr("escopo", "scope"), t.scope) + list(tr("depende de", "depends on"), t.needs)
                 + (i < tasks.count - 1 ? ";" : ".")
         }
         return s.count <= Self.loopCardMax ? s : nil
@@ -555,8 +559,9 @@ extension CommandRouter {
             try await work.update(w.id) { x in
                 guard x.loop?.state == .queued, x.loop?.autoLand?.dequeuedAt == nil else { return }
                 x.loop?.autoLand?.dequeuedAt = now
-                x.notes.append(WorkNote(at: now, text: "[loop] auto-land: tirado da fila (work stop): segue aprovado, fora da fila; "
-                    + "a corrente não o roda; um novo work run o põe de volta"))
+                x.notes.append(WorkNote(at: now, text: tr("[loop] auto-land: tirado da fila (work stop): segue aprovado, fora da fila; "
+                    + "a corrente não o roda; um novo work run o põe de volta", "[loop] auto-land: taken out of the queue (work stop): still approved, out of the queue; "
+                    + "the chain does not run it; a new work run puts it back")))
             }
             // the state as it is now: a chain that activated it during the update is a running loop, stopped below
             if try await work.get(w.id)?.loop?.autoLand?.dequeuedAt == now { return .object(["state": .string("dequeued")]) }
@@ -603,12 +608,12 @@ extension CommandRouter {
         // the engine left the owner's line to the chain's next work: it did not start, so this loop tells, counting its lands
         if let next, !chained, let w = try? await work.get(id) {
             let title = RerailText.clean((try? await work.get(next.next))?.title ?? "?", max: 80)
-            let why = halted ? "a corrente foi parada (work stop)" : refused ?? "o trabalho não pôde começar"
-            try? await work.update(id) { $0.notes.append(WorkNote(at: Date(), text: "[loop] auto-land: \(why); \"\(title)\" segue na fila")) }
+            let why = halted ? tr("a corrente foi parada (work stop)", "the chain was stopped (work stop)") : refused ?? tr("o trabalho não pôde começar", "the work could not start")
+            try? await work.update(id) { $0.notes.append(WorkNote(at: Date(), text: tr("[loop] auto-land: \(why); \"\(title)\" segue na fila", "[loop] auto-land: \(why); \"\(title)\" stays in the queue"))) }
             let line = AutoLandSummary.ownerLine(title: RerailText.clean(w.title, max: 80), stop: halted ? .init(.requested) : w.loop?.stopReason,
                                                  left: 0, path: w.loop?.autoLand?.summary, error: nil, landed: next.chained)
             // C2: the whole line through the scrub, as the engine's own (`AutoLandSummary.ownerLine`)
-            let all = LotBoards.scrub(line + " Próximo da fila: \"\(title)\" não começou (\(why)) e segue na fila.", secrets: await auth.secrets())
+            let all = LotBoards.scrub(line + tr(" Próximo da fila: \"\(title)\" não começou (\(why)) e segue na fila.", " Next in the queue: \"\(title)\" did not start (\(why)) and stays in the queue."), secrets: await auth.secrets())
             await hub.emit(.notify(starter, message: String(all.prefix(2000))))
         }
         if let w = try? await work.get(id) {
@@ -668,8 +673,8 @@ extension CommandRouter {
             ls.filter { l in notedLanes.withLock { $0.insert(l.repoRoot.path + " " + l.branch).inserted } }.map(\.branch).joined(separator: ", ")
         }
         let spared = fresh(s.spared), refused = fresh(s.refused)
-        let parts = [spared.isEmpty ? nil : "faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + spared,
-                     refused.isEmpty ? nil : "faixa marcada não removida (a pasta não é a da faixa: movida ou trocada por symlink): " + refused]
+        let parts = [spared.isEmpty ? nil : tr("faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): ", "lane not removed (without this daemon's mark: from another daemon or the owner): ") + spared,
+                     refused.isEmpty ? nil : tr("faixa marcada não removida (a pasta não é a da faixa: movida ou trocada por symlink): ", "marked lane not removed (the folder is not the lane's: moved or swapped for a symlink): ") + refused]
             .compactMap { $0 }
         return parts.isEmpty ? nil : "[loop] " + parts.joined(separator: "; ")
     }
@@ -927,11 +932,11 @@ extension CommandRouter {
     /// C4a: a land of `paddock` now, in its daily record (`Paddock.autoLands`), persisted. nil: recorded; else why it
     /// could not be written (the record stays in memory, so this daemon still counts it).
     func recordAutoLand(_ paddock: UUID) async -> String? {
-        guard let i = ws.paddocks.firstIndex(where: { $0.id == paddock }) else { return "o cercado sumiu" }
+        guard let i = ws.paddocks.firstIndex(where: { $0.id == paddock }) else { return tr("o cercado sumiu", "the paddock is gone") }
         let now = Date()
         ws.paddocks[i].autoLands = (ws.paddocks[i].autoLands ?? []).filter { $0 > now.addingTimeInterval(-86_400) } + [now]
         do {
-            if landRecordFails { throw ProtocolError(code: .internal, message: "a gravação do registro falhou (teste)") }
+            if landRecordFails { throw ProtocolError(code: .internal, message: tr("a gravação do registro falhou (teste)", "writing the record failed (test)")) }
             try await persist()
             return nil
         } catch { return (error as? ProtocolError)?.message ?? "\(error)" }

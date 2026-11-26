@@ -30,7 +30,7 @@ extension WorkLoop {
 
     /// F2 X4: what the reviewers read instead of a spec when the task has none at the base (no spec, outside the repo
     /// or not committed): said, never the title in silence.
-    static let noSpec = "sem spec no commit base"
+    static var noSpec: String { tr("sem spec no commit base", "no spec at the base commit") }
 
     /// F2 Y1: the parent of every reviewer's folder: `<daemon root>/<AgentNaming.reviewDir>`, inside Collie's own dir,
     /// which every terminal's profile keeps closed (read and write, `SandboxProfile`): no agent, the judged one
@@ -54,7 +54,7 @@ extension WorkLoop {
         }
         return false
     }
-    static let reviewPathLinkedNote = "recusado, symlink no caminho (nada movido nem apagado)"
+    static var reviewPathLinkedNote: String { tr("recusado, symlink no caminho (nada movido nem apagado)", "refused, symlink in the path (nothing moved or deleted)") }
 
     /// F2 Z3a: of the ignored paths new since the review began, the agent configs a reviewer may have left (a path with
     /// one of these names as a component); the rest may be the Shepherd's or the user's (`.env`, a local db) and stays.
@@ -146,10 +146,10 @@ extension WorkLoop {
     static let reviewOneCopyMaxTotal = 48 << 20
     /// T2 f2fix8: the output cap of the copy's own gits (`ls-tree`, `cat-file --batch`); every other `laneGit` keeps 1 MiB.
     static let reviewSnapshotCap = 64 << 20
-    static let reviewSnapshotNotUTF8 = "caminho não UTF-8 no commit"
+    static var reviewSnapshotNotUTF8: String { tr("caminho não UTF-8 no commit", "non-UTF-8 path in the commit") }
     /// T1 f2fix8: the copy has `reviewOneCopyDeadline(turn)` seconds to be made: a fifth of the reviewers' turn, at least 30.
     static func reviewOneCopyDeadline(_ turn: Int) -> Int { Swift.max(30, turn / 5) }
-    static let reviewOneCopyLate = "sem parecer: cópia não ficou pronta a tempo"
+    static var reviewOneCopyLate: String { tr("sem parecer: cópia não ficou pronta a tempo", "no opinion: the copy was not ready in time") }
 
     /// F2 W2: the judged commit (never the live worktree, where a process the judged agent left may swap a file between
     /// the commit and the review) copied to `<scratch>/reviewSnapshot`, read-only. Its agent configs (`agentConfigs`,
@@ -168,21 +168,21 @@ extension WorkLoop {
     func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL,
                         until end: ContinuousClock.Instant = .now + .seconds(600)) async -> Result<Snapshot, SnapshotFailure> {
         func fail(_ why: String) -> Result<Snapshot, SnapshotFailure> {
-            .failure(SnapshotFailure(why: ContinuousClock.now >= end ? Self.reviewOneCopyLate : "cópia do commit: " + why))
+            .failure(SnapshotFailure(why: ContinuousClock.now >= end ? Self.reviewOneCopyLate : tr("cópia do commit: ", "commit copy: ") + why))
         }
         let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
         guard let r = try? await host.laneGit(["rev-parse", "--verify", "--end-of-options", judged + "^{commit}"], in: dir), r.status == 0 else {
-            return fail("o commit não resolveu")
+            return fail(tr("o commit não resolveu", "the commit did not resolve"))
         }
         let hash = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else { return fail("hash inválido") }
-        guard mkdir(snap.path, 0o700) == 0 else { return fail("pasta não criada") }
+        guard [40, 64].contains(hash.count), hash.allSatisfy(\.isHexDigit) else { return fail(tr("hash inválido", "invalid hash")) }
+        guard mkdir(snap.path, 0o700) == 0 else { return fail(tr("pasta não criada", "folder not created")) }
         var dirs: [String] = [snap.path]
         // folders read-only on any way out: a failure leaves nothing writable (`dropScratch` reopens them)
         defer { for d in dirs.reversed() { chmod(d, 0o555) } }
         guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "-l", "--full-tree", hash], stdin: nil, timeout: .seconds(120),
                                                     cap: Self.reviewSnapshotCap, in: dir), ls.status == 0, !ls.truncated else {
-            return fail("git ls-tree falhou")
+            return fail(tr("git ls-tree falhou", "git ls-tree failed"))
         }
         let names = Set(Self.agentConfigs + ["CLAUDE.local.md"])
         // `inline`: a submodule's content, never read from git
@@ -190,20 +190,20 @@ extension WorkLoop {
         // T2 f2fix8: split on NUL in bytes; a path that is not UTF-8 fails the copy by name (decoded, it would become
         // U+FFFD and two such paths collide on O_EXCL)
         for entry in ls.stdoutData.split(separator: 0) {
-            guard let tab = entry.firstIndex(of: 0x09) else { return fail("ls-tree ilegível") }
+            guard let tab = entry.firstIndex(of: 0x09) else { return fail(tr("ls-tree ilegível", "unreadable ls-tree")) }
             let meta = String(decoding: entry[..<tab], as: UTF8.self).split(separator: " ")
             guard let path = String(data: entry[(tab + 1)...], encoding: .utf8) else { return fail(Self.reviewSnapshotNotUTF8) }
-            guard meta.count == 4 else { return fail("ls-tree ilegível") }
+            guard meta.count == 4 else { return fail(tr("ls-tree ilegível", "unreadable ls-tree")) }
             let mode = meta[0], oid = String(meta[2])
-            guard ["100644", "100755", "120000", "160000"].contains(mode) else { return fail("modo \(mode) em \(path)") }
+            guard ["100644", "100755", "120000", "160000"].contains(mode) else { return fail(tr("modo \(mode) em \(path)", "mode \(mode) in \(path)")) }
             let comps = path.split(separator: "/", omittingEmptySubsequences: false)
             guard !path.hasPrefix("/"), comps.allSatisfy({ !["", ".", "..", ".git"].contains($0) }) else {
-                return fail("caminho recusado: \(path)")
+                return fail(tr("caminho recusado: \(path)", "path refused: \(path)"))
             }
             if comps.contains(where: { names.contains(String($0)) }) { continue }
-            guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else { return fail("oid inválido em \(path)") }
+            guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else { return fail(tr("oid inválido em \(path)", "invalid oid in \(path)")) }
             if mode == "160000" { items.append((comps, path, oid, 0, Data((oid + "\n").utf8))); continue }
-            guard let size = Int(meta[3]), size >= 0 else { return fail("tamanho ilegível em \(path)") }
+            guard let size = Int(meta[3]), size >= 0 else { return fail(tr("tamanho ilegível em \(path)", "unreadable size in \(path)")) }
             if size > Self.reviewOneCopyMaxBlob || total + size > Self.reviewOneCopyMaxTotal { skipped.append(path); continue }
             total += size
             items.append((comps, path, oid, size, nil))
@@ -214,39 +214,39 @@ extension WorkLoop {
         if !wanted.isEmpty {
             let input = Data(wanted.map { $0.oid + "\n" }.joined().utf8)
             let left = end - .now
-            guard left > .zero else { return fail("sem tempo") }
+            guard left > .zero else { return fail(tr("sem tempo", "out of time")) }
             guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, timeout: left, cap: Self.reviewSnapshotCap, in: dir), b.status == 0, !b.truncated else {
-                return fail("git cat-file --batch falhou")
+                return fail(tr("git cat-file --batch falhou", "git cat-file --batch failed"))
             }
             let out = b.stdoutData
             var at = out.startIndex
             for w in wanted {
-                guard let nl = out[at...].firstIndex(of: 0x0A) else { return fail("blob ilegível: \(w.path)") }
+                guard let nl = out[at...].firstIndex(of: 0x0A) else { return fail(tr("blob ilegível: \(w.path)", "unreadable blob: \(w.path)")) }
                 let head = String(decoding: out[at..<nl], as: UTF8.self).split(separator: " ")
                 let body = nl + 1, end = body + w.size
                 guard head.count == 3, head[0] == w.oid, head[1] == "blob", Int(head[2]) == w.size,
-                      end < out.endIndex, out[end] == 0x0A else { return fail("blob ilegível: \(w.path)") }
+                      end < out.endIndex, out[end] == 0x0A else { return fail(tr("blob ilegível: \(w.path)", "unreadable blob: \(w.path)")) }
                 blobs.append(out[body..<end])
                 at = end + 1
             }
         }
         var made: Set<String> = [], next = 0
         for item in items {
-            if ContinuousClock.now >= end { return fail("sem tempo") }
+            if ContinuousClock.now >= end { return fail(tr("sem tempo", "out of time")) }
             let data: Data
             if let inline = item.inline { data = inline } else { data = blobs[next]; next += 1 }
             var p = snap.path
             for c in item.comps.dropLast() {
                 p += "/" + c
                 if made.contains(p) { continue }
-                guard mkdir(p, 0o700) == 0 else { return fail("pasta não criada: \(item.path)") }
+                guard mkdir(p, 0o700) == 0 else { return fail(tr("pasta não criada: \(item.path)", "folder not created: \(item.path)")) }
                 made.insert(p); dirs.append(p)
             }
             p += "/" + item.comps.last!
             let fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-            guard fd >= 0 else { return fail("arquivo não criado: \(item.path)") }
+            guard fd >= 0 else { return fail(tr("arquivo não criado: \(item.path)", "file not created: \(item.path)")) }
             let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            guard (try? h.write(contentsOf: data)) != nil, (try? h.close()) != nil else { return fail("arquivo não escrito: \(item.path)") }
+            guard (try? h.write(contentsOf: data)) != nil, (try? h.close()) != nil else { return fail(tr("arquivo não escrito: \(item.path)", "file not written: \(item.path)")) }
             chmod(p, 0o444)
         }
         return .success(Snapshot(url: snap, skipped: skipped))
@@ -259,7 +259,7 @@ extension WorkLoop {
     func reviewOneCopy(_ judged: String, _ dir: URL, agent: String, deadline: Int) async -> (master: URL?, Result<Snapshot, SnapshotFailure>) {
         let end = ContinuousClock.now + .seconds(deadline)
         guard let master = Self.reviewScratch(Self.reviewerName(agent, persona: "copia"), in: host.reviewRoot) else {
-            return (nil, .failure(SnapshotFailure(why: "cópia do commit: pasta não criada")))
+            return (nil, .failure(SnapshotFailure(why: tr("cópia do commit: pasta não criada", "commit copy: folder not created"))))
         }
         return (master, await reviewSnapshot(judged, dir, into: master, until: end))
     }
@@ -273,7 +273,7 @@ extension WorkLoop {
             || copyfile(master.path, dst.path, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW)) == 0 {
             return .success(dst)
         }
-        return .failure(SnapshotFailure(why: "cópia do commit: clone não feito"))
+        return .failure(SnapshotFailure(why: tr("cópia do commit: clone não feito", "commit copy: clone not made")))
     }
 
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
@@ -290,10 +290,10 @@ extension WorkLoop {
 
     /// F2 V2: why every reviewer is mute when the home's `~/.claude.json` changed between the attempt's start and the
     /// reviewers' launch, and the note when it changed during the review (verdicts dropped, `reviewerTouched`).
-    static let reviewGlobalConfigMoved = "configuração global mudou durante a tentativa"
+    static var reviewGlobalConfigMoved: String { tr("configuração global mudou durante a tentativa", "global configuration changed during the attempt") }
     /// F2 U1: the note when `~/.claude.json` holds an `env` key or `autoConnectIde` true the loop's base did not.
-    static let reviewGlobalConfigRiskyNote = "configuração global tem env ou autoConnectIde"
-    static let reviewGlobalConfigTouched = "configuração global (~/.claude.json) mudou durante a revisão"
+    static var reviewGlobalConfigRiskyNote: String { tr("configuração global tem env ou autoConnectIde", "global configuration has env or autoConnectIde") }
+    static var reviewGlobalConfigTouched: String { tr("configuração global (~/.claude.json) mudou durante a revisão", "global configuration (~/.claude.json) changed during the review") }
 
     /// F2 V2 (reviewGlobalConfigHash): `~/.claude.json` is writable by every strict terminal (`EssentialPaths`, R13) and
     /// Claude Code reads more than `mcpServers` from it (`env`: `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, the auto-memory
@@ -348,8 +348,8 @@ extension WorkLoop {
     }
 
     /// F2 V3 (reviewTrust): the notes `trustReviewRoot` leaves.
-    static let reviewTrustWritten = "confiança da pasta dos revisores gravada em ~/.claude.json"
-    static let reviewTrustNotWritten = "confiança da pasta dos revisores não gravada em ~/.claude.json"
+    static var reviewTrustWritten: String { tr("confiança da pasta dos revisores gravada em ~/.claude.json", "reviewers' folder trust written to ~/.claude.json") }
+    static var reviewTrustNotWritten: String { tr("confiança da pasta dos revisores não gravada em ~/.claude.json", "reviewers' folder trust not written to ~/.claude.json") }
 
     /// F2 V3: Claude Code asks "trust this folder" in every reviewer's fresh folder, and only the user answers it
     /// (`81effa13`): `projects[reviewRoot].hasTrustDialogAccepted = true` in `home/.claude.json` covers the folders under
@@ -373,14 +373,14 @@ extension WorkLoop {
         for _ in 0..<2 {
             let seen = mark()
             guard let data = FileManager.default.contents(atPath: file) else { return nil }
-            guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + ": não é um objeto JSON" }
+            guard var all = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return reviewTrustNotWritten + tr(": não é um objeto JSON", ": not a JSON object") }
             let key = SignedAppCheck.realPath(reviewRoot)
             guard var projects = all["projects"] == nil ? [:] : all["projects"] as? [String: Any],
-                  var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + ": projects não é um objeto" }
+                  var entry = projects[key] == nil ? [:] : projects[key] as? [String: Any] else { return reviewTrustNotWritten + tr(": projects não é um objeto", ": projects is not an object") }
             if (entry["hasTrustDialogAccepted"] as? Bool) == true { return nil }
             entry["hasTrustDialogAccepted"] = true; projects[key] = entry; all["projects"] = projects
             guard let out = try? JSONSerialization.data(withJSONObject: all, options: [.prettyPrinted, .withoutEscapingSlashes]) else {
-                return reviewTrustNotWritten + ": não serializa"
+                return reviewTrustNotWritten + tr(": não serializa", ": does not serialize")
             }
             let mode = ((try? FileManager.default.attributesOfItem(atPath: file))?[.posixPermissions] as? NSNumber)?.uint16Value ?? 0o600
             let tmp = file + ".collie-\(UUID().uuidString.prefix(8))"
@@ -407,7 +407,7 @@ extension WorkLoop {
         }
         return reviewTrustNotWritten + ": " + reviewTrustRaced
     }
-    static let reviewTrustRaced = "o arquivo mudou durante a gravação, duas vezes; deixado como está"
+    static var reviewTrustRaced: String { tr("o arquivo mudou durante a gravação, duas vezes; deixado como está", "the file changed during the write, twice; left as it is") }
 
     /// F2 U1 (reviewLoopConfigBase): `~/.claude.json` as the loop takes its base, before any judged agent of the run.
     func reviewLoopConfigBase() async -> (hash: String, risky: String) {
@@ -478,7 +478,7 @@ extension WorkLoop {
     /// A1 (reviewAdvisory): the task's `review` line: "parecer: veto (...)", "parecer: sem veto (...)" or
     /// "parecer: sem parecer (...)" (what `WorkStatusText.loopEnded` counts). Never "aprovado".
     static func reviewAdvisoryLine(_ o: ReviewOutcome, _ detail: String) -> String {
-        "parecer: " + (!o.approved ? "veto" : o.silent != nil ? ReviewVerdict.reviewAdvisoryNone : "sem veto") + " (\(detail))"
+        ReviewVerdict.reviewLabel + (!o.approved ? tr("veto", "veto") : o.silent != nil ? ReviewVerdict.reviewAdvisoryNone : tr("sem veto", "no veto")) + " (\(detail))"
     }
 
     /// P1: why a reviewer gave no answer, said in its note and in the journal (`reviewerMute`). `summonRefused`'s text
@@ -491,12 +491,12 @@ extension WorkLoop {
         case awaitingApproval
         var text: String {
             switch self {
-            case .summonRefused(let why): "summon recusado: " + WorkLoop.eventDetail(why)
-            case .terminalGone: "terminal sumiu"
-            case .timedOut(let s): "passou do tempo do turno (\(s) s)"
-            case .emptyText: "texto vazio"
-            case .promptNotDelivered: "prompt não entregue"
-            case .awaitingApproval: "terminal esperando aprovação"
+            case .summonRefused(let why): tr("summon recusado: ", "summon refused: ") + WorkLoop.eventDetail(why)
+            case .terminalGone: tr("terminal sumiu", "terminal gone")
+            case .timedOut(let s): tr("passou do tempo do turno (\(s) s)", "turn time ran out (\(s) s)")
+            case .emptyText: tr("texto vazio", "empty text")
+            case .promptNotDelivered: tr("prompt não entregue", "prompt not delivered")
+            case .awaitingApproval: tr("terminal esperando aprovação", "terminal waiting for approval")
             }
         }
 
@@ -511,25 +511,25 @@ extension WorkLoop {
 
     /// No answer: invalid, never a veto nor an approval (A1, reviewAdvisory: 'sem parecer'). P1: the cause is said.
     static func mute(_ persona: String, _ cause: ReviewMuteCause) -> PersonaVerdict {
-        PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "revisor \(persona) sem resposta (causa: \(cause.text))")
+        PersonaVerdict(persona: persona, approved: false, findings: [], invalid: tr("revisor \(persona) sem resposta (causa: \(cause.text))", "reviewer \(persona) did not answer (cause: \(cause.text))"))
     }
 
     /// P1: the journal detail of the retry when every persona was mute.
-    static let reviewRetryNote = "todas as personas mudas: revisão repetida uma vez"
+    static var reviewRetryNote: String { tr("todas as personas mudas: revisão repetida uma vez", "all personas mute: review repeated once") }
 
     /// The personas at `before`: the `.md` files of `CommandRouter.personasDir` as committed there.
     func basePersonas(_ before: String, _ dir: URL) async throws -> [Persona] {
         guard let ls = try? await host.git(["ls-tree", "-z", "--name-only", before, "--", CommandRouter.personasDir], in: dir), ls.status == 0 else {
-            throw PersonaError.malformed(file: CommandRouter.personasDir, reason: "git ls-tree falhou no commit base")
+            throw PersonaError.malformed(file: CommandRouter.personasDir, reason: tr("git ls-tree falhou no commit base", "git ls-tree failed at the base commit"))
         }
         var files: [String: String] = [:]
         for path in ls.stdout.split(separator: "\0").map(String.init) where path.hasSuffix(".md") {
             guard let r = try? await host.git(["show", "\(before):\(path)"], in: dir), r.status == 0 else {
-                throw PersonaError.malformed(file: path, reason: "git show falhou no commit base")
+                throw PersonaError.malformed(file: path, reason: tr("git show falhou no commit base", "git show failed at the base commit"))
             }
             files[(path as NSString).lastPathComponent] = r.stdout
         }
-        guard !files.isEmpty else { throw PersonaError.malformed(file: CommandRouter.personasDir, reason: "nenhuma persona no commit base") }
+        guard !files.isEmpty else { throw PersonaError.malformed(file: CommandRouter.personasDir, reason: tr("nenhuma persona no commit base", "no persona at the base commit")) }
         return try PersonaCatalog.parse(files: files)
     }
 
@@ -538,9 +538,9 @@ extension WorkLoop {
     func reviewEvidence(before: String, judged: String, check: Int32?, gate: Int32??, _ dir: URL) async -> String {
         let log = await out(["log", "--format=%h", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
         let stat = await out(["diff", "--shortstat", before, judged], dir) ?? ""
-        func status(_ s: Int32?) -> String { s.map { "saiu com \($0)" } ?? "sem status (não rodou ou passou do tempo)" }
+        func status(_ s: Int32?) -> String { s.map { tr("saiu com \($0)", "exited with \($0)") } ?? tr("sem status (não rodou ou passou do tempo)", "no status (did not run or timed out)") }
         var parts = ["Commits: " + log.split(separator: "\n").joined(separator: " "), "Diffstat: " + stat, "Check: " + status(check)]
-        if let gate { parts.append("Portão: " + status(gate)) }
+        if let gate { parts.append(tr("Portão: ", "Gate: ") + status(gate)) }
         return parts.joined(separator: "\n")
     }
 
@@ -582,21 +582,21 @@ extension WorkLoop {
                         specs: work.tasks.compactMap { $0.spec.map { Self.repoRelative($0, dir) } }, only: loop.reviewOnly)
         } catch {
             // A1 (reviewAdvisory): no catalog to judge with is no opinion, not a veto: the check and the gate decide
-            let outcome = ReviewVerdict.silent("sem personas no commit base (\(error))")
-            return Reviewed(outcome: outcome, line: Self.reviewAdvisoryLine(outcome, "sem personas"),
-                            note: LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): \(outcome.notes.joined(separator: "; "))"))
+            let outcome = ReviewVerdict.silent(tr("sem personas no commit base (\(error))", "no personas at the base commit (\(error))"))
+            return Reviewed(outcome: outcome, line: Self.reviewAdvisoryLine(outcome, tr("sem personas", "no personas")),
+                            note: LotBoards.scrub(tr("[loop] parecer de \"\(task.title)\", tentativa \(n): ", "[loop] review of \"\(task.title)\", attempt \(n): ") + outcome.notes.joined(separator: "; ")))
         }
         // F2 X5: a finding's line is checked in the file as judged
         let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
         let spec = await specText(task.spec, at: before, dir)
         let budgetOut = Reviewed(outcome: .init(approved: false, reason: Self.reviewBudgetNote, notes: []), line: "", note: "", budgetOut: true)
-        let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
+        let specShown = spec.isEmpty ? tr("(\(Self.noSpec); só o título da tarefa) ", "(\(Self.noSpec); only the task's title) ") + task.title : spec
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
         let opened = await host.strictWrites()
         let planted = agentOpen ? nil : Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
-        let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
+        let silenced = configSilenced ?? planted.map { tr("\($0) existe e o agente do laço pode gravá-lo", "\($0) exists and the loop's agent can write it") }
         /// One round of reviewers: fresh folders, one copy, one terminal per persona, all dismissed and their folders gone.
         /// nil: the budget is too short for it (no reviewer summoned).
         func round() async -> (runs: [(Int, PersonaRun, UUID?)], skipped: [String])? {
@@ -637,9 +637,9 @@ extension WorkLoop {
                     let name = Self.reviewerName(agent, persona: p.name), cwd = snapshot == nil ? nil : scratch[i]
                     g.addTask {
                         var id: UUID?
-                        var verdict = Self.mute(p.name, .summonRefused("pasta do revisor não criada"))
-                        if let silenced { verdict.invalid = "revisor \(p.name) mudo: \(silenced)" }
-                        if let why = snapshotFailed { verdict.invalid = "revisor \(p.name) mudo: \(why)" }
+                        var verdict = Self.mute(p.name, .summonRefused(tr("pasta do revisor não criada", "reviewer folder not created")))
+                        if let silenced { verdict.invalid = tr("revisor \(p.name) mudo: \(silenced)", "reviewer \(p.name) mute: \(silenced)") }
+                        if let why = snapshotFailed { verdict.invalid = tr("revisor \(p.name) mudo: \(why)", "reviewer \(p.name) mute: \(why)") }
                         // P1: which of the four ways the reviewer said nothing
                         do throws(ProtocolError) {
                             guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
@@ -685,23 +685,23 @@ extension WorkLoop {
         var firstRound = ""
         if silenced == nil, !runs.isEmpty, runs.allSatisfy({ $0.1.invalid != nil }), !Task.isCancelled {
             events.append(entry(.reviewRetried, task: task.id, attempt: n, detail: Self.reviewRetryNote))
-            firstRound = "\n1ª rodada (\(Self.reviewRetryNote)): " + runs.compactMap(\.1.invalid).joined(separator: "; ")
+            firstRound = tr("\n1ª rodada (\(Self.reviewRetryNote)): ", "\n1st round (\(Self.reviewRetryNote)): ") + runs.compactMap(\.1.invalid).joined(separator: "; ")
             if let again = await round() { (runs, skipped) = again; journal(runs) }
-            else { firstRound += " (repetição sem orçamento)" }
+            else { firstRound += tr(" (repetição sem orçamento)", " (repeat without budget)") }
         }
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
         let outcome = ReviewVerdict.aggregate(verdicts, threshold: loop.reviewThreshold)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }
-        let line = Self.reviewAdvisoryLine(outcome, "personas: \(personas.map(\.name).joined(separator: ", ")); \(found) "
-            + (found == 1 ? "achado" : "achados"))
+        let line = Self.reviewAdvisoryLine(outcome, tr("personas: \(personas.map(\.name).joined(separator: ", ")); \(found) " + (found == 1 ? "achado" : "achados"),
+                                                             "personas: \(personas.map(\.name).joined(separator: ", ")); \(found) " + (found == 1 ? "finding" : "findings")))
         let each = runs.map { r in
-            "\(r.1.persona) (\(r.1.model ?? "modelo do laço")): \(r.1.invalid != nil ? ReviewVerdict.reviewAdvisoryNone : r.1.approved ? "approve" : "reject")"
+            "\(r.1.persona) (\(r.1.model ?? tr("modelo do laço", "loop model"))): \(r.1.invalid != nil ? ReviewVerdict.reviewAdvisoryNone : r.1.approved ? "approve" : "reject")"
                 + (r.1.invalid.map { ", \($0)" } ?? "") + (r.1.findings.isEmpty ? "" : ": " + r.1.findings.map { "[\($0.severity.rawValue)] \($0.text)" }.joined(separator: "; "))
         }
         writeReviewFile(work.id, task: task.id, n: n, runs.map(\.1))
-        let left = skipped.isEmpty ? "" : "\ncópia sem \(skipped.count) arquivo(s) acima do limite de tamanho: " + skipped.prefix(10).joined(separator: ", ")
+        let left = skipped.isEmpty ? "" : tr("\ncópia sem \(skipped.count) arquivo(s) acima do limite de tamanho: ", "\ncopy without \(skipped.count) file(s) over the size limit: ") + skipped.prefix(10).joined(separator: ", ")
             + (skipped.count > 10 ? ", …" : "")
-        let note = LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
+        let note = LotBoards.scrub(tr("[loop] parecer de \"\(task.title)\", tentativa \(n): ", "[loop] review of \"\(task.title)\", attempt \(n): ") + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
             + "\n" + each.joined(separator: "\n") + firstRound + left)
         return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)), events: events)
     }

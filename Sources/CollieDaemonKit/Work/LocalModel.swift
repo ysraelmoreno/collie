@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 #if canImport(FoundationModels)
 import FoundationModels
@@ -51,9 +52,9 @@ struct FoundationLocalModel: LocalModel {
     static func map(_ a: SystemLanguageModel.Availability) -> LocalModelAvailability {
         switch a {
         case .available: return .available
-        case .unavailable(.deviceNotEligible): return .unavailable("este Mac não suporta Apple Intelligence")
-        case .unavailable(.appleIntelligenceNotEnabled): return .unavailable("Apple Intelligence está desligada")
-        case .unavailable(.modelNotReady): return .unavailable("o modelo ainda está sendo baixado")
+        case .unavailable(.deviceNotEligible): return .unavailable(tr("este Mac não suporta Apple Intelligence", "this Mac does not support Apple Intelligence"))
+        case .unavailable(.appleIntelligenceNotEnabled): return .unavailable(tr("Apple Intelligence está desligada", "Apple Intelligence is turned off"))
+        case .unavailable(.modelNotReady): return .unavailable(tr("o modelo ainda está sendo baixado", "the model is still downloading"))
         case .unavailable: return .unavailable(Self.needsMacOS26)   // a reason newer than this SDK
         }
     }

@@ -32,7 +32,7 @@ enum FieldLand {
         case waiting(reason: String)
     }
 
-    static let alreadyLanding = "já integrando"
+    static var alreadyLanding: String { tr("já integrando", "already landing") }
     /// Spec, answer 6: how long a land waits for the paddock to be free.
     static let paddockWait: Duration = .seconds(600)
 
@@ -42,7 +42,7 @@ enum FieldLand {
     static func land(_ lane: Lane, dir: URL, integrators: PaddockIntegrators, integrator: LaneIntegrator, host: any LoopHost,
                      gate: String?, gateTimeout: Duration, patches: URL,
                      wait: Duration = paddockWait, poll: Duration = .seconds(2), tip: String? = nil) async -> Outcome {
-        guard lane.isField else { return .conflict(reason: "'\(lane.branch)' não é branch de field", patch: nil) }
+        guard lane.isField else { return .conflict(reason: tr("'\(lane.branch)' não é branch de field", "'\(lane.branch)' is not a field branch"), patch: nil) }
         guard await integrators.beginLanding(lane.branch) else { return .waiting(reason: alreadyLanding) }
         let out = await landing(lane, dir: dir, integrator: integrator, host: host, gate: gate, gateTimeout: gateTimeout,
                                 patches: patches, wait: wait, poll: poll, tip: tip)
@@ -56,9 +56,9 @@ enum FieldLand {
         while true {
             let st = try? await host.git(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=no"], in: dir)
             var why: String?
-            if st?.status != 0 { why = "git status falhou no cercado" }
-            else if st?.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { why = "árvore do cercado com mudanças não commitadas" }
-            else if let who = await host.othersWorking() { why = "'\(who)' está num turno no cercado" }
+            if st?.status != 0 { why = tr("git status falhou no cercado", "git status failed in the paddock") }
+            else if st?.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false { why = tr("árvore do cercado com mudanças não commitadas", "paddock tree has uncommitted changes") }
+            else if let who = await host.othersWorking() { why = tr("'\(who)' está num turno no cercado", "'\(who)' is in a turn in the paddock") }
             guard let why else { break }
             if ContinuousClock.now >= deadline || Task.isCancelled { return .waiting(reason: why) }
             // ponytail: polled like the loop's `othersStillWorking`; an event per turn's end if 2 s per look bites
@@ -134,7 +134,7 @@ struct FieldLandHost: LoopHost {
     /// Never unsandboxed because the profile went missing.
     private func live() throws(ProtocolError) -> URL? {
         if let profile, !FileManager.default.fileExists(atPath: profile.path) {
-            throw ProtocolError(code: .unavailable, message: "o perfil de sandbox do Pastor sumiu; o land do field não roda sem sandbox")
+            throw ProtocolError(code: .unavailable, message: tr("o perfil de sandbox do Pastor sumiu; o land do field não roda sem sandbox", "the Shepherd's sandbox profile is gone; the field land does not run without a sandbox"))
         }
         return profile
     }
@@ -148,13 +148,13 @@ extension CommandRouter {
     func landField(_ lane: Lane, terminal: UUID, by: UUID?, asRequest: Bool = false, tip: String? = nil) async -> FieldLand.Outcome {
         guard let rec = ws.terminals.first(where: { $0.id == terminal }), let pid = rec.paddockId,
               let p = ws.paddocks.first(where: { $0.id == pid }), !p.isFolder else {
-            return .conflict(reason: "o agente do field ou o cercado dele não existe", patch: nil)
+            return .conflict(reason: tr("o agente do field ou o cercado dele não existe", "the field's agent or its paddock does not exist"), patch: nil)
         }
         let shepherd = by ?? rec.summonedBy, dir = URL(fileURLWithPath: p.path), root = config.paths.root
         var profile: URL?, env = await loopUserEnv()
         if let home = config.sandboxHome {
             guard let s = shepherd.flatMap({ id in ws.terminals.first { $0.id == id } }), sandboxed(s) else {
-                return .conflict(reason: "sem Pastor com sandbox para integrar o field", patch: nil)
+                return .conflict(reason: tr("sem Pastor com sandbox para integrar o field", "no Shepherd with a sandbox to land the field"), patch: nil)
             }
             profile = SandboxLaunch.profileFile(s.id, root: root)
             env = RouterLoopHost.checkEnv(env, sandbox: (s.id, root, config.shell, home))
@@ -164,7 +164,7 @@ extension CommandRouter {
         let gate: String?
         switch await WorkConfigFile.config(base: head, dir: dir) {
         case .success(let c): gate = c?.gate
-        case .failure(let e): return .conflict(reason: "collie-work.json do HEAD: \(e.message)", patch: nil)
+        case .failure(let e): return .conflict(reason: tr("collie-work.json do HEAD: \(e.message)", "collie-work.json at HEAD: \(e.message)"), patch: nil)
         }
         let integrator = await integrators.integrator(paddock: pid) { LaneIntegrator(host: host, dir: dir) }
         if asRequest, let by { fieldLandHolds[by, default: 0] += 1 }

@@ -8,13 +8,13 @@ extension CommandRouter {
     /// M13.2: the check `--area` builds from the project's collie-work.json (`work task add --area`, a plan's `area:`).
     func areaCheck(_ areas: [String], for t: TerminalRecord) throws(ProtocolError) -> String {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        if let empty = areas.firstIndex(where: \.isEmpty) { throw invalid("--area: o nome #\(empty + 1) está vazio") }
+        if let empty = areas.firstIndex(where: \.isEmpty) { throw invalid(tr("--area: o nome #\(empty + 1) está vazio", "--area: name #\(empty + 1) is empty")) }
         let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
         let built: String
         switch WorkConfigFile.config(root: root) {
         case .failure(let e): throw invalid("--area: " + e.message)
         case .success(nil):
-            throw invalid("--area precisa de um \(ProjectWorkConfig.fileName) na raiz do projeto (\(RerailText.clean(root.path, max: 300))); não há nenhum")
+            throw invalid(tr("--area precisa de um \(ProjectWorkConfig.fileName) na raiz do projeto (\(RerailText.clean(root.path, max: 300))); não há nenhum", "--area needs a \(ProjectWorkConfig.fileName) at the project root (\(RerailText.clean(root.path, max: 300))); there is none"))
         case .success(let c?):
             switch c.composeCheck(areas: areas) {
             case .failure(let e): throw invalid("--area: " + RerailText.clean(e.message, max: 1500))
@@ -22,7 +22,7 @@ extension CommandRouter {
             }
         }
         guard built.count <= Self.maxWorkText else {
-            throw invalid("o check montado por --area tem \(built.count) caracteres; o limite de um check é \(Self.maxWorkText)")
+            throw invalid(tr("o check montado por --area tem \(built.count) caracteres; o limite de um check é \(Self.maxWorkText)", "the check built by --area has \(built.count) characters; the limit of a check is \(Self.maxWorkText)"))
         }
         return built
     }
@@ -30,7 +30,7 @@ extension CommandRouter {
     /// `work.prd.add`: the text the owner's CLI read (`content`) kept for work `w`.
     func prdAdd(_ r: Request, _ w: Work, now: Date) async throws -> JSONValue {
         guard let content = str(r, "content") else {
-            throw ProtocolError(code: .invalidArgs, message: "Missing argument 'content': collie work prd add <arquivo.md> lê o arquivo e o envia")
+            throw ProtocolError(code: .invalidArgs, message: tr("Missing argument 'content': collie work prd add <arquivo.md> lê o arquivo e o envia", "Missing argument 'content': collie work prd add <file.md> reads the file and sends it"))
         }
         let origin = str(r, "origin").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let dir = PrdStore.dir(root: config.paths.root, work: w.id)
@@ -41,9 +41,9 @@ extension CommandRouter {
         }
         guard let cur = list.last else { throw ProtocolError(code: .internal, message: "prd: nothing kept") }
         let said = switch outcome {
-        case .added: "PRD guardado"
-        case .replaced: "PRD trocado (o anterior fica guardado)"
-        case .same: "PRD já guardado com este conteúdo; nada mudou"
+        case .added: tr("PRD guardado", "PRD saved")
+        case .replaced: tr("PRD trocado (o anterior fica guardado)", "PRD replaced (the previous one is kept)")
+        case .same: tr("PRD já guardado com este conteúdo; nada mudou", "PRD already saved with this content; nothing changed")
         }
         return .object(["sha256": .string(cur.sha256), "outcome": .string(outcome.rawValue),
                         "file": .string(PrdStore.file(dir, cur.sha256).path), "origin": cur.origin.map { .string($0) } ?? .null,
@@ -54,7 +54,7 @@ extension CommandRouter {
     /// `work.prd.show`: work `w`'s current PRD, its text included (read only).
     func prdShow(_ w: Work) throws(ProtocolError) -> JSONValue {
         guard let cur = w.prd?.last else {
-            throw ProtocolError(code: .notFound, message: "o trabalho \"\(RerailText.clean(w.title))\" não tem PRD; o dono guarda um com collie work prd add <arquivo.md>")
+            throw ProtocolError(code: .notFound, message: tr("o trabalho \"\(RerailText.clean(w.title))\" não tem PRD; o dono guarda um com collie work prd add <arquivo.md>", "the work \"\(RerailText.clean(w.title))\" has no PRD; the owner saves one with collie work prd add <file.md>"))
         }
         let url = PrdStore.file(PrdStore.dir(root: config.paths.root, work: w.id), cur.sha256)
         guard let d = PrdStore.read(url), PrdStore.sha256(d) == cur.sha256, let text = String(data: d, encoding: .utf8) else {
@@ -74,12 +74,12 @@ extension CommandRouter {
         let real = SignedAppCheck.realPath(URL(fileURLWithPath: given, relativeTo: URL(fileURLWithPath: base, isDirectory: true)))
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: real, isDirectory: &isDir), isDir.boolValue else {
-            throw ProtocolError(code: .invalidArgs, message: "\(given) não é uma pasta (o pacote: waves.md e tasks/*.md)")
+            throw ProtocolError(code: .invalidArgs, message: tr("\(given) não é uma pasta (o pacote: waves.md e tasks/*.md)", "\(given) is not a folder (the package: waves.md and tasks/*.md)"))
         }
         if let t, confined || r.command == "work.plan.apply" {
             let root = try await projectRoot(of: t)
             guard ProjectRoot.contains(real, root: root) else {
-                throw ProtocolError(code: .invalidArgs, message: "\(given) está fora do projeto \(root.path)")
+                throw ProtocolError(code: .invalidArgs, message: tr("\(given) está fora do projeto \(root.path)", "\(given) is outside the project \(root.path)"))
             }
         }
         return URL(fileURLWithPath: real, isDirectory: true)
@@ -99,15 +99,15 @@ extension CommandRouter {
         let built = checks
         let (plan, tasks) = try await PlanApply.apply(dir: dir, root: root, approve: try need(r, "approve"), work: w.id, store: work, now: now) { areas in
             guard let c = built[areas.joined(separator: ",")] else {
-                throw ProtocolError(code: .invalidArgs, message: "o plano mudou durante o apply; rode collie work plan lint de novo")
+                throw ProtocolError(code: .invalidArgs, message: tr("o plano mudou durante o apply; rode collie work plan lint de novo", "the plan changed during the apply; run collie work plan lint again"))
             }
             return try c.get()
         }
         let gate = plan.gate.map { " --gate '\(RerailText.clean($0, max: 300))'" } ?? ""
-        let lines = tasks.map { "  - \(RerailText.clean($0.title)) [\($0.id)]" + (($0.needs ?? []).isEmpty ? "" : " precisa de \(($0.needs ?? []).joined(separator: ", "))") }
+        let lines = tasks.map { "  - \(RerailText.clean($0.title)) [\($0.id)]" + (($0.needs ?? []).isEmpty ? "" : tr(" precisa de \(($0.needs ?? []).joined(separator: ", "))", " needs \(($0.needs ?? []).joined(separator: ", "))")) }
         return .object(["tasks": .array(tasks.map { .string($0.id) }), "hash": .string(plan.hash),
-                        "output": .string((["Plano aplicado em \"\(RerailText.clean(w.title))\": \(tasks.count) tarefa(s) em \(plan.waves) onda(s) (pacote \(plan.hash.prefix(12)))."]
-                                           + lines + ["O laço não começou. Quando quiser: collie work run --max <N>\(gate) (o cartão no app confirma as tarefas e os limites)."]).joined(separator: "\n"))])
+                        "output": .string(([tr("Plano aplicado em \"\(RerailText.clean(w.title))\": \(tasks.count) tarefa(s) em \(plan.waves) onda(s) (pacote \(plan.hash.prefix(12))).", "Plan applied in \"\(RerailText.clean(w.title))\": \(tasks.count) task(s) in \(plan.waves) wave(s) (package \(plan.hash.prefix(12))).")]
+                                           + lines + [tr("O laço não começou. Quando quiser: collie work run --max <N>\(gate) (o cartão no app confirma as tarefas e os limites).", "The loop did not start. When you want: collie work run --max <N>\(gate) (the card in the app confirms the tasks and the limits).")]).joined(separator: "\n"))])
     }
 
     /// `work.run` of a work with a PRD: its plan applied, still passing the linter, with the hash the owner approved.
@@ -117,24 +117,24 @@ extension CommandRouter {
     static func prdPlanRefusal(_ w: Work) -> String? {
         guard w.prd?.isEmpty == false else { return nil }
         guard let applied = w.plan else {
-            return "o trabalho tem PRD: o laço roda o plano aprovado; rode collie work plan lint <pasta> e o dono, collie work plan apply <pasta> --approve <hash>"
+            return tr("o trabalho tem PRD: o laço roda o plano aprovado; rode collie work plan lint <pasta> e o dono, collie work plan apply <pasta> --approve <hash>", "the work has a PRD: the loop runs the approved plan; run collie work plan lint <folder> and the owner, collie work plan apply <folder> --approve <hash>")
         }
         let dir = URL(fileURLWithPath: applied.dir, isDirectory: true)
         let p = PlanLint.lint(dir)
-        guard p.passed else { return "o plano do PRD (\(applied.dir)) não passa mais no linter:\n" + p.text }
+        guard p.passed else { return tr("o plano do PRD (\(applied.dir)) não passa mais no linter:\n", "the PRD's plan (\(applied.dir)) no longer passes the linter:\n") + p.text }
         guard p.hash == applied.sha256 else {
-            return "o plano do PRD (\(applied.dir)) mudou depois de aprovado (aprovado \(applied.sha256.prefix(12)), agora \(p.hash.prefix(12))); volte o pacote ao aprovado, ou aplique o novo num trabalho novo"
+            return tr("o plano do PRD (\(applied.dir)) mudou depois de aprovado (aprovado \(applied.sha256.prefix(12)), agora \(p.hash.prefix(12))); volte o pacote ao aprovado, ou aplique o novo num trabalho novo", "the PRD's plan (\(applied.dir)) changed after being approved (approved \(applied.sha256.prefix(12)), now \(p.hash.prefix(12))); put the package back as approved, or apply the new one in a new work")
         }
         let planned = Set(applied.tasks)
         for t in w.tasks where planned.contains(t.id) {
             guard let card = p.tasks.first(where: { $0.id == t.id }), t.spec == SignedAppCheck.realPath(card.url) else {
-                return "a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)] do plano aprovado não aponta mais para o seu cartão (\(applied.dir)/tasks/\(t.id).md): a spec que roda é a do pacote aprovado"
+                return tr("a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)] do plano aprovado não aponta mais para o seu cartão (\(applied.dir)/tasks/\(t.id).md): a spec que roda é a do pacote aprovado", "the task \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)] of the approved plan no longer points to its card (\(applied.dir)/tasks/\(t.id).md): the spec that runs is the approved package's")
             }
         }
         for t in w.tasks where !planned.contains(t.id) && (t.state == .open || t.state == .inProgress) {
             let c = t.check ?? ""
             guard let why = PlanLint.checkRefusal(c) ?? PlanLint.trivialCheck(c, scope: t.scope ?? [], body: "") else { continue }
-            return "a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)], adicionada depois do plano aprovado, tem um check que o linter recusa: \(why)"
+            return tr("a tarefa \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)], adicionada depois do plano aprovado, tem um check que o linter recusa: \(why)", "the task \"\(RerailText.clean(t.title, max: 80))\" [\(t.id)], added after the approved plan, has a check the linter refuses: \(why)")
         }
         return nil
     }

@@ -55,7 +55,7 @@ enum AttemptDecision {
         return reasons.isEmpty ? nil : reasons.joined(separator: "; ")
     }
 
-    static let twiceRefused = "recusada duas vezes pela revisão: chame o dono"
+    static var twiceRefused: String { tr("recusada duas vezes pela revisão: chame o dono", "refused twice by review: call the owner") }
 
     static func decide(_ f: Facts) -> Outcome {
         guard let reason = reason(f) else { return .pass }

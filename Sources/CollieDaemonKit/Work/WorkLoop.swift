@@ -212,9 +212,11 @@ actor WorkLoop {
     /// Where a project keeps its feature map, in order of preference.
     static let featureMaps = ["docs/feature-map.md", "FEATURES.md"]
     /// M2.1: what an agent that ended its turn by hook with no new commit is told, once per attempt.
-    static let nudgePrompt = "Você encerrou o turno sem fazer commit. Ninguém vai responder perguntas neste laço: decida sozinho. Faça commit do que escreveu (ou diga em uma linha o que impede) e encerre."
+    static var nudgePrompt: String { tr("Você encerrou o turno sem fazer commit. Ninguém vai responder perguntas neste laço: decida sozinho. Faça commit do que escreveu (ou diga em uma linha o que impede) e encerre.",
+        "You ended the turn without committing. Nobody will answer questions in this loop: decide on your own. Commit what you wrote (or say in one line what stops you) and end the turn.") }
     /// M10.2: what an agent whose commit failed the pre-check is told, once per attempt, before its output's tail.
-    static let precheckPromptHead = "O pré-check do laço falhou no seu commit. Ninguém vai responder perguntas neste laço: corrija, faça commit e encerre o turno. Fim da saída:"
+    static var precheckPromptHead: String { tr("O pré-check do laço falhou no seu commit. Ninguém vai responder perguntas neste laço: corrija, faça commit e encerre o turno. Fim da saída:",
+        "The loop's pre-check failed on your commit. Nobody will answer questions in this loop: fix it, commit and end the turn. End of the output:") }
     static func precheckPrompt(_ tail: String) -> String { precheckPromptHead + "\n" + tail }
     /// M10.2: the pre-check's own limit (the budget's rest bounds it too) and its tail's size.
     static let precheckTimeout = 180, precheckLines = 40, precheckChars = 3000
@@ -290,7 +292,7 @@ actor WorkLoop {
     private func graceOver(_ id: UUID, _ token: UUID) async {
         guard stopTokens[id] == token, stopping.contains(id), !forcing.contains(id) else { return }
         forcing.insert(id)
-        await note(id, "[loop] stop forçado depois de \(stopGrace.components.seconds) s")
+        await note(id, tr("[loop] stop forçado depois de \(stopGrace.components.seconds) s", "[loop] forced stop after \(stopGrace.components.seconds) s"))
     }
 
     /// Runs `work`'s open tasks until all are done/deferred, `max` is used or `stop` is asked. `work.loop` must be set
@@ -335,7 +337,7 @@ actor WorkLoop {
             guard let task = w.tasks.first(where: { $0.state == .open && (loop.tasks?.contains($0.id) ?? true) }) else { end = .finished; break }
             if let max = loop.max, loop.used >= max { stop = .init(.maxReached); break }
             if let b = loop.budget, (loop.spent ?? 0) >= b {
-                await note(id, "[loop] orçamento de tempo usado (\(loop.spent ?? 0) de \(b) s); laço parado")
+                await note(id, tr("[loop] orçamento de tempo usado (\(loop.spent ?? 0) de \(b) s); laço parado", "[loop] time budget used (\(loop.spent ?? 0) of \(b) s); loop stopped"))
                 stop = .init(.budgetSpent); break
             }
             let t0 = host.now()
@@ -394,12 +396,13 @@ actor WorkLoop {
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
               let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {
-            await note(w.id, "[loop] git falhou em \(dir.path); laço parado")
+            await note(w.id, tr("[loop] git falhou em \(dir.path); laço parado", "[loop] git failed in \(dir.path); loop stopped"))
             return .stop(.init(.gitFailed))
         }
         // tracked changes now are someone else's (each attempt ends on a clean tree): never the loop's to reset
         guard pending.isEmpty else {
-            let at = host.now(), text = "[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))"
+            let at = host.now(), text = tr("[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))",
+                                                 "[loop] modified tracked files (dirty) before the attempt of \"\(task.title)\", and they are not the loop's; loop stopped, worktree untouched:\n\(pending.prefix(500))")
             // M2.2a: nothing is adopted over a dirty tree, and what the task resumed from is forgotten
             try? await store.update(w.id) { Self.forget(&$0, task.id); $0.notes.append(WorkNote(at: at, text: text)) }
             return .stop(.init(.dirtyTree))
@@ -481,10 +484,11 @@ actor WorkLoop {
         if let agent = state.agent { await host.dismiss(agent) }
         await record(w.id, &run) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
-            Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
+            Self.endJob(&x, name, tr("loop: estado inesperado do motor", "loop: unexpected engine state"), at: at)
             Self.forget(&x, task.id)
             if let lane { x.loop?.showLane(lane, nil) } else { x.loop?.show(nil) }
-            x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
+            x.notes.append(WorkNote(at: at, text: tr("[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado",
+                                                    "[loop] unexpected engine state\(what) in \"\(task.title)\": this is a loop bug; task reopened, attempt not counted, worktree untouched; loop stopped")))
         }
         return .stop(.init(.internal))
     }
@@ -542,7 +546,7 @@ actor WorkLoop {
     /// F2 X3: the least of the budget a review needs (seconds): with less, the attempt ends for want of budget and the
     /// mute reviewers are no refusal.
     static let reviewMinTurn = 20
-    static let reviewBudgetNote = "[loop] orçamento de tempo sem folga para a revisão (menos de \(reviewMinTurn) s): tentativa não contada, nem como recusa"
+    static var reviewBudgetNote: String { tr("[loop] orçamento de tempo sem folga para a revisão (menos de \(reviewMinTurn) s): tentativa não contada, nem como recusa", "[loop] time budget has no room for the review (less than \(reviewMinTurn) s): attempt not counted, not even as a refusal") }
 
     /// M2.2b: the events that carry a verdict's facts out of a long wait: a cancel during it replaces them.
     private static func judges(_ e: AttemptMachine.Event) -> Bool {
@@ -579,7 +583,7 @@ actor WorkLoop {
     static let shortTurn = 60
 
     /// The `discarded` event's detail when no patch was written (the diff failed or was empty).
-    static let noPatch = "sem alterações"
+    static var noPatch: String { tr("sem alterações", "no changes") }
 
     /// Carries one effect of `AttemptMachine` out, with the host, store and git calls the attempt always made, and
     /// returns the event it observed (nil: the effect answers with none). `state`: the machine's, after it asked.
@@ -663,8 +667,9 @@ actor WorkLoop {
             return await talk(agent, Self.precheckPrompt(tail), .seconds(rest), work: id)
         case .promptRetry(let used):
             // P2: the task's count, not the attempt's (it crosses attempts); the note is the summary's line of it
-            let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))"
-                + (r.lostScreen.isEmpty ? "" : "\ntela do agente:\n" + r.lostScreen)
+            let at = host.now(), text = tr("[loop] \"\(task.title)\", tentativa \(n): prompt não entregue, agente descartado; refeita \(used) sem contar tentativa (agente \(name))",
+                                                 "[loop] \"\(task.title)\", attempt \(n): prompt not delivered, agent discarded; redone \(used) without counting an attempt (agent \(name))")
+                + (r.lostScreen.isEmpty ? "" : tr("\ntela do agente:\n", "\nagent's screen:\n") + r.lostScreen)
             r.lostScreen = ""
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].promptRetries = (x.tasks[i].promptRetries ?? 0) + 1 }
@@ -678,8 +683,8 @@ actor WorkLoop {
                 let res = try await host.check(r.loop.precheck ?? "false", in: dir, timeout: .seconds(limit))
                 return .precheckDone(status: res.status, tail: Self.evidenceTail(check: res.stdout + res.stderr, gate: nil, lines: Self.precheckLines, chars: Self.precheckChars))
             } catch where error.code == .timeout {
-                return .precheckDone(status: nil, tail: "o pré-check passou de \(limit) s")
-            } catch { return .precheckDone(status: nil, tail: "o pré-check não rodou: \(error.message)") }
+                return .precheckDone(status: nil, tail: tr("o pré-check passou de \(limit) s", "the pre-check ran over \(limit) s"))
+            } catch { return .precheckDone(status: nil, tail: tr("o pré-check não rodou: \(error.message)", "the pre-check did not run: \(error.message)")) }
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline, work: id)
@@ -695,8 +700,9 @@ actor WorkLoop {
                 if let looked, looked.busy, looked.secs < Self.shortTurn {
                     // P2: what the agent's screen showed, read before the dismiss
                     let screen = if let agent = r.agent, let lines = await host.screen(agent) { Self.screenTail(lines, secrets: await host.secrets()) } else { "" }
-                    let at = host.now(), text = "[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))"
-                        + (screen.isEmpty ? "" : "\ntela do agente:\n" + screen)
+                    let at = host.now(), text = tr("[loop] \"\(task.title)\", tentativa \(n): o turno acabou em \(looked.secs) s com o agente ainda ocupado e sem commit, e o commit não veio (agente \(name))",
+                                                     "[loop] \"\(task.title)\", attempt \(n): the turn ended after \(looked.secs) s with the agent still busy and no commit, and the commit did not come (agent \(name))")
+                        + (screen.isEmpty ? "" : tr("\ntela do agente:\n", "\nagent's screen:\n") + screen)
                     await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
                 }
                 return .waitExpired
@@ -769,9 +775,9 @@ actor WorkLoop {
             }
         case .guardAccept:
             // F3: the agent may not rewrite what judges its result, as for the gate
-            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: "o aceite", refuseNew: true) else { return .acceptClear }
+            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: tr("o aceite", "the acceptance"), refuseNew: true) else { return .acceptClear }
             await record(id, &r) { x in
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = false; x.tasks[i].acceptResult = "não rodou: " + why }
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = false; x.tasks[i].acceptResult = tr("não rodou: ", "did not run: ") + why }
             }
             return .acceptSkipped(why)
         case .runAccept:
@@ -789,7 +795,7 @@ actor WorkLoop {
                 ran = .acceptDone(status: nil, broken: nil); line = "falhou (timeout)"
             } catch {
                 r.acceptOutput = ""
-                ran = .acceptDone(status: nil, broken: "accept could not run: \(error.message)"); line = "não rodou: \(error.message)"
+                ran = .acceptDone(status: nil, broken: "accept could not run: \(error.message)"); line = tr("não rodou: \(error.message)", "did not run: \(error.message)")
             }
             r.output = r.acceptOutput ?? ""
             let ok = line.hasPrefix("passou"), said = LotBoards.scrub(String(line.prefix(200)))
@@ -856,11 +862,11 @@ actor WorkLoop {
                 if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
                     let (drop, keep) = Self.reviewerLeftovers(fresh)
                     if !drop.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + drop, in: dir) }
-                    said += String(((drop.isEmpty ? "" : "\napagados (config de agente): " + drop.joined(separator: ", "))
-                        + (keep.isEmpty ? "" : "\nmantidos (ignorados novos, de quem não se sabe): " + keep.joined(separator: ", "))).prefix(400))
+                    said += String(((drop.isEmpty ? "" : tr("\napagados (config de agente): ", "\ndeleted (agent config): ") + drop.joined(separator: ", "))
+                        + (keep.isEmpty ? "" : tr("\nmantidos (ignorados novos, de quem não se sabe): ", "\nkept (new ignored files, owner unknown): ") + keep.joined(separator: ", "))).prefix(400))
                 }
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
-                ran.line = "parecer: falhou (\(Self.reviewerTouched))"
+                ran.line = ReviewVerdict.reviewLabel + tr("falhou (\(Self.reviewerTouched))", "failed (\(Self.reviewerTouched))")
                 ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
             } else if globalTouched, !ran.outcome.approved {
                 // F2 reviewVetoKept: a veto from a possibly tampered context can only fail more (the safe side): it stays,
@@ -878,7 +884,7 @@ actor WorkLoop {
             // C3a: the HEAD the review judged (the tree is as judged when not touched), recorded with its approval
             let judgedHead = touched ? nil : await out(["rev-parse", "HEAD"], dir)
             // A4: clean only with every persona answering, none mute or invalid, no veto, the tree as judged
-            let clean = !touched && approved && ran.outcome.silent == nil && !ran.outcome.notes.contains { $0.hasPrefix(ReviewVerdict.reviewAdvisoryNone) }
+            let clean = !touched && approved && ran.outcome.silent == nil && !ran.outcome.notes.contains(where: ReviewVerdict.isNoOpinion)
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                     x.tasks[i].review = line; x.tasks[i].reviewClean = clean ? true : nil; x.tasks[i].reviewedHead = clean ? judgedHead : nil
@@ -893,7 +899,7 @@ actor WorkLoop {
         case .discard:
             r.patched = await discard(id, task.id, n, before: before, branch: branch, keep: r.keep, dir)
         case .adoptionFailed(let reason):
-            let at = r.at, text = LotBoards.scrub("[loop] adoção de \"\(task.title)\" falhou: \(reason); nada foi apagado")
+            let at = r.at, text = LotBoards.scrub(tr("[loop] adoção de \"\(task.title)\" falhou: \(reason); nada foi apagado", "[loop] adoption of \"\(task.title)\" failed: \(reason); nothing was deleted"))
             // the attempt is not counted on the task (no agent of its own ran); the next run starts from the HEAD of then
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
@@ -940,7 +946,7 @@ actor WorkLoop {
             if let g = task.evidenceGlob {
                 let c = await host.copyEvidence(g, from: dir, work: id, task: task.id)
                 evidence.files = c.files; evidence.filesDir = c.dir
-                if let n = c.note { await note(id, "[loop] evidência de \"\(task.title)\": \(n)") }
+                if let n = c.note { await note(id, tr("[loop] evidência de \"\(task.title)\": \(n)", "[loop] evidence of \"\(task.title)\": \(n)")) }
             }
             let found = evidence
             // M3.5: in a lane the task is `done` only once integrated: what passed waits for `WorkLoopLanes`
@@ -962,7 +968,7 @@ actor WorkLoop {
             if let all = whole, !all.isEmpty {
                 whole = Self.acceptNote(all, file: Self.keepAcceptOutput(all, dir: host.patchDir(id), task: task.id, attempt: n))
             }
-            let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))"
+            let text = LotBoards.scrub(tr("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))", "[loop \(task.id)] \(task.title), attempt \(n)/\(r.loop.tries): \(reason) (agent \(name))")
                 + (whole.map { $0.isEmpty ? "" : Self.acceptMark + $0 } ?? (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
@@ -1069,7 +1075,8 @@ actor WorkLoop {
     }
 
     static func blockedNote(_ who: String) -> String {
-        "[loop] '\(who)' está trabalhando no cercado: o laço não reseta a worktree com outro agente nela; laço parado, worktree intocada"
+        tr("[loop] '\(who)' está trabalhando no cercado: o laço não reseta a worktree com outro agente nela; laço parado, worktree intocada",
+           "[loop] '\(who)' is working in the paddock: the loop does not reset the worktree with another agent in it; loop stopped, worktree untouched")
     }
 
     /// One line of the loop's journal (`WorkLoopState.events`, `work status --events`). It only records: no decision
@@ -1112,12 +1119,12 @@ actor WorkLoop {
     /// C5a: a forced stop of `id` ends the turn too (the attempt's interpreter turns it into `stopForced`).
     private func talk(_ agent: UUID, _ prompt: String, _ timeout: Duration, work id: UUID) async -> AttemptMachine.Event {
         let host = host, poll = poll
-        if forcing.contains(id) { return .turnFailed("stop forçado") }
+        if forcing.contains(id) { return .turnFailed(tr("stop forçado", "forced stop")) }
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
             g.addTask { [weak self] in
                 while !Task.isCancelled {
                     await Self.nap(Swift.min(poll, .seconds(1)))
-                    if await self?.forcing.contains(id) ?? true { return .turnFailed("stop forçado") }
+                    if await self?.forcing.contains(id) ?? true { return .turnFailed(tr("stop forçado", "forced stop")) }
                 }
                 return nil
             }
@@ -1203,7 +1210,8 @@ actor WorkLoop {
     /// F3: the task's acceptance is guarded the same way (`by`: what runs the file, for the reason). C4a: `refuseNew`
     /// (the acceptance): a file its text names that the attempt created (not in `before`) fails it too, whatever the
     /// spec says: the agent would write the script that judges it.
-    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String = "o portão", refuseNew: Bool = false) async -> String? {
+    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String? = nil, refuseNew: Bool = false) async -> String? {
+        let by = by ?? tr("o portão", "the gate")
         let named = await specText(spec, at: before, dir)
         // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
         guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir), d.status == 0 else {
@@ -1213,9 +1221,9 @@ actor WorkLoop {
             let existed = (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0
             // a created file only when named whole (`judgedPaths`): `curl …/health` is no file `health`
             if refuseNew && !existed && Self.judgedPaths(gate, dir).contains(Self.normalPath(path, dir)) {
-                return "\(by) cita «\(path)» que não existe no commit base: crie-o numa tarefa anterior e commite"
+                return tr("\(by) cita «\(path)» que não existe no commit base: crie-o numa tarefa anterior e commite", "\(by) names «\(path)» which does not exist at the base commit: create it in an earlier task and commit")
             }
-            if existed && !named.contains(path) { return "a tentativa alterou «\(path)», que \(by) executa" }
+            if existed && !named.contains(path) { return tr("a tentativa alterou «\(path)», que \(by) executa", "the attempt changed «\(path)», which \(by) runs") }
         }
         return nil
     }
@@ -1233,7 +1241,7 @@ actor WorkLoop {
         spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
     }
 
-    static let configTampered = "alterou \(ProjectWorkConfig.fileName)"
+    static var configTampered: String { tr("alterou \(ProjectWorkConfig.fileName)", "changed \(ProjectWorkConfig.fileName)") }
 
     /// M13.3: the attempt changed `collie-work.json` from `before` to what it left (its commits and its tree: edited,
     /// deleted, or created untracked; an untracked one that was there before the attempt, `keep`, is the owner's).
@@ -1244,7 +1252,7 @@ actor WorkLoop {
         guard !(await specText(spec, at: before, dir)).contains(name) else { return nil }
         guard let d = try? await host.git(["--literal-pathspecs", "diff", "--name-only", "-z", "--no-renames", before, "--", name], in: dir), d.status == 0,
               let u = try? await host.git(["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", name], in: dir), u.status == 0 else {
-            return Self.configTampered + " (não foi possível ver o que a tentativa mudou)"
+            return Self.configTampered + tr(" (não foi possível ver o que a tentativa mudou)", " (could not see what the attempt changed)")
         }
         let changed = !d.stdout.isEmpty || u.stdout.split(separator: "\0").contains { !keep.contains(String($0)) }
         return changed ? Self.configTampered : nil
@@ -1292,7 +1300,7 @@ actor WorkLoop {
         return wrote
     }
 
-    static let reviewerTouched = "o revisor mexeu na árvore"
+    static var reviewerTouched: String { tr("o revisor mexeu na árvore", "the reviewer touched the tree") }
 
     /// F2 X1: HEAD and the porcelain status with its branch line, before and after the review (nil: git could not say).
     /// F2 Y2b: ignored files too (`--ignored=matching`), NUL-separated (`-z`, names unquoted): a reviewer's
@@ -1348,12 +1356,15 @@ actor WorkLoop {
         // a cut inside a multi-byte character decodes as U+FFFD: dropped
         let head = String(decoding: Array(clean.utf8.prefix(half)), as: UTF8.self).trimmingCharacters(in: ["\u{FFFD}"])
         let tail = String(decoding: Array(clean.utf8.suffix(half)), as: UTF8.self).trimmingCharacters(in: ["\u{FFFD}"])
-        return head + "\n… (\(clean.utf8.count - 2 * half) bytes cortados no meio) …\n" + tail
+        return head + tr("\n… (\(clean.utf8.count - 2 * half) bytes cortados no meio) …\n", "\n… (\(clean.utf8.count - 2 * half) bytes cut in the middle) …\n") + tail
     }
 
     /// C4a: what a note of a failed acceptance keeps (`acceptNoteChars`, head and tail) and what the next attempt's prompt
     /// carries of all of them together (`acceptPromptChars`); the whole output goes to a file (`keepAcceptOutput`).
-    static let acceptMark = "\nsaída do aceite:\n", acceptNoteChars = 3000, acceptPromptChars = 4000
+    static var acceptMark: String { tr("\nsaída do aceite:\n", "\nacceptance output:\n") }
+    /// A note outlives a language switch: `promptNotes` finds the mark in either.
+    static let acceptMarks = ["\nsaída do aceite:\n", "\nacceptance output:\n"]
+    static let acceptNoteChars = 3000, acceptPromptChars = 4000
 
     /// C4a: `out` whole in `<patchDir>/accept-output/<task>-<attempt>.txt` (0600); nil: it could not be written.
     static func keepAcceptOutput(_ out: String, dir: URL, task: String, attempt: Int) -> String? {
@@ -1372,7 +1383,7 @@ actor WorkLoop {
     static func acceptNote(_ out: String, file: String?) -> String {
         guard out.count > acceptNoteChars else { return out }
         let half = acceptNoteChars / 2
-        return String(out.prefix(half)) + "\n… (\(out.count - 2 * half) caracteres cortados; saída inteira em \(file ?? "nenhum arquivo: a gravação falhou")) …\n" + String(out.suffix(half))
+        return String(out.prefix(half)) + tr("\n… (\(out.count - 2 * half) caracteres cortados; saída inteira em \(file ?? "nenhum arquivo: a gravação falhou")) …\n", "\n… (\(out.count - 2 * half) characters cut; whole output in \(file ?? "no file: the write failed")) …\n") + String(out.suffix(half))
     }
 
     /// C4a: the notes as the prompt carries them: the acceptances' outputs, newest first, at most `acceptPromptChars` in
@@ -1380,9 +1391,9 @@ actor WorkLoop {
     static func promptNotes(_ notes: [WorkNote]) -> [String] {
         var left = acceptPromptChars
         return notes.reversed().map { n -> String in
-            guard let r = n.text.range(of: acceptMark) else { return n.text }
+            guard let r = acceptMarks.lazy.compactMap({ n.text.range(of: $0) }).first else { return n.text }
             let out = n.text[r.upperBound...]
-            let kept = out.count <= left ? String(out) : left > 2 ? "… " + String(out.suffix(left - 2)) : "(omitida: o limite das notas de aceite no prompt foi atingido)"
+            let kept = out.count <= left ? String(out) : left > 2 ? "… " + String(out.suffix(left - 2)) : tr("(omitida: o limite das notas de aceite no prompt foi atingido)", "(left out: the limit of acceptance notes in the prompt was reached)")
             left = Swift.max(0, left - out.count)
             return String(n.text[..<r.upperBound]) + kept
         }.reversed()
@@ -1403,22 +1414,25 @@ actor WorkLoop {
     }
 
     /// M10.2: the turn's rules, fixed lines of every attempt's prompt.
-    static let turnRule = "Rode build e testes em primeiro plano; não encerre o turno com comando em segundo plano nem monitor pendente."
-    static let buildRule = "`swift build` não compila os testes: use `swift build --build-tests` ou `swift test --filter`."
+    static var turnRule: String { tr("Rode build e testes em primeiro plano; não encerre o turno com comando em segundo plano nem monitor pendente.", "Run builds and tests in the foreground; do not end the turn with a command in the background or a pending monitor.") }
+    static var buildRule: String { tr("`swift build` não compila os testes: use `swift build --build-tests` ou `swift test --filter`.", "`swift build` does not compile the tests: use `swift build --build-tests` or `swift test --filter`.") }
 
     /// The attempt's prompt, in the owner's language.
     static func prompt(task: WorkTask, spec: String?, attempt: Int, tries: Int, dir: URL, notes: [WorkNote], gate: String? = nil, map: String? = nil) -> String {
         var lines = [
-            "Tarefa \"\(task.title)\", tentativa \(attempt) de \(tries), num laço autônomo: ninguém vai responder perguntas, então decida e registre a decisão no commit.",
-            "Trabalhe só em \(dir.path). Faça só esta tarefa. Não faça push nem land.",
-            "Faça commit assim que código e testes estiverem escritos, ANTES de rodar build ou teste: sem commit novo a tarefa não conta. Se depois corrigir algo, faça outro commit. Não deixe arquivo modificado sem commit.",
+            tr("Tarefa \"\(task.title)\", tentativa \(attempt) de \(tries), num laço autônomo: ninguém vai responder perguntas, então decida e registre a decisão no commit.",
+               "Task \"\(task.title)\", attempt \(attempt) of \(tries), in an autonomous loop: nobody will answer questions, so decide and record the decision in the commit."),
+            tr("Trabalhe só em \(dir.path). Faça só esta tarefa. Não faça push nem land.", "Work only in \(dir.path). Do only this task. Do not push or land."),
+            tr("Faça commit assim que código e testes estiverem escritos, ANTES de rodar build ou teste: sem commit novo a tarefa não conta. Se depois corrigir algo, faça outro commit. Não deixe arquivo modificado sem commit.",
+               "Commit as soon as code and tests are written, BEFORE running a build or a test: without a new commit the task does not count. If you fix something afterwards, make another commit. Do not leave a modified file uncommitted."),
             turnRule, buildRule,
-            "Depois do seu turno, o laço roda este comando em \(dir.path) e só ele decide se a tarefa passou:",
+            tr("Depois do seu turno, o laço roda este comando em \(dir.path) e só ele decide se a tarefa passou:",
+               "After your turn, the loop runs this command in \(dir.path) and only it decides whether the task passed:"),
             task.check ?? "",
         ]
-        if let gate { lines += ["e depois este portão:", gate] }
-        if let map { lines.append("O mapa de funcionalidades do projeto está em \(map): use os nomes dele.") }
-        if !notes.isEmpty { lines.append("O que falhou nas tentativas anteriores:"); lines += promptNotes(notes) }
+        if let gate { lines += [tr("e depois este portão:", "and then this gate:"), gate] }
+        if let map { lines.append(tr("O mapa de funcionalidades do projeto está em \(map): use os nomes dele.", "The project's feature map is at \(map): use its names.")) }
+        if !notes.isEmpty { lines.append(tr("O que falhou nas tentativas anteriores:", "What failed in the previous attempts:")); lines += promptNotes(notes) }
         lines.append("")
         lines.append(spec ?? task.title)
         return lines.joined(separator: "\n")
@@ -1439,7 +1453,7 @@ extension WorkLoop {
         // C5a: a stop of its own (`landTasksNotDone`, the tasks named), never a finish: nothing was integrated
         let left = w.tasks.filter { $0.state != .done }
         guard left.isEmpty else {
-            await note(id, "[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado")
+            await note(id, tr("[loop] auto-land: \(left.count) tarefa(s) não terminaram feitas; nada integrado", "[loop] auto-land: \(left.count) task(s) did not end done; nothing landed"))
             return (.stopped, .init(.landTasksNotDone, detail: Self.eventDetail(left.map(\.title).joined(separator: ", "))))
         }
         let stop = await landConditions(id, w, al, dir)
@@ -1467,7 +1481,7 @@ extension WorkLoop {
             if stopping.contains(id) { job.cancel() }
             let result = await withTaskCancellationHandler { await job.value } onCancel: { job.cancel() }
             landRuns[id] = nil
-            let secs = "em \(Int(host.now().timeIntervalSince(t0).rounded())) s"
+            let secs = tr("em \(Int(host.now().timeIntervalSince(t0).rounded())) s", "in \(Int(host.now().timeIntervalSince(t0).rounded())) s")
             let why: String?, short: String
             switch result {
             case .success(let r) where r.status == 0: why = nil; short = "exit 0 \(secs)"
@@ -1475,7 +1489,7 @@ extension WorkLoop {
                 let tail = (r.stdout + r.stderr).split(separator: "\n").suffix(20).joined(separator: "\n")
                 why = "exit \(r.status)" + (tail.isEmpty ? "" : ":\n" + tail); short = "exit \(r.status) \(secs)"
             case .failure(let e) where e.code == .timeout: why = "timeout"; short = "timeout \(secs)"
-            case .failure(let e): why = "não rodou: \(e.message)"; short = "não rodou"
+            case .failure(let e): why = tr("não rodou: \(e.message)", "did not run: \(e.message)"); short = tr("não rodou", "did not run")
             }
             let finished = entry(kinds.1, detail: short)
             try? await store.update(id) { $0.record(finished) }
@@ -1486,51 +1500,51 @@ extension WorkLoop {
             stopping.contains(id) ? .init(.requested, detail: Self.landPhase) : Task.isCancelled ? .init(.cancelled, detail: Self.landPhase) : nil
         }
         func failed(_ code: WorkLoopState.Stop.Code, _ what: String, _ why: String) async -> WorkLoopState.Stop {
-            await note(id, LotBoards.scrub(String("[loop] auto-land: \(what) (\(why)); nada integrado".prefix(Self.noteChars))))
+            await note(id, LotBoards.scrub(String(tr("[loop] auto-land: \(what) (\(why)); nada integrado", "[loop] auto-land: \(what) (\(why)); nothing landed").prefix(Self.noteChars))))
             return .init(code, detail: Self.eventDetail(why))
         }
         guard await host.factoryPaddock() else { return .init(.landNotFactory) }
         // A5: the paddock's daily cap, before any land (the first of a run too)
         if let cap = await dailyCapReached(id, al) { return cap }
-        guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, "git falhou", "rev-parse HEAD") }
+        guard let head = await out(["rev-parse", "HEAD"], dir) else { return await failed(.gitFailed, tr("git falhou", "git failed"), "rev-parse HEAD") }
         // C3b: the base must be the one the last attempt began on (a host with no base, the tests' fakes: none to check)
         let base: String?
-        do { base = try await host.baseHead() } catch { return await failed(.gitFailed, "git falhou", "a base: \(error.message)") }
-        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
+        do { base = try await host.baseHead() } catch { return await failed(.gitFailed, tr("git falhou", "git failed"), tr("a base: \(error.message)", "the base: \(error.message)")) }
+        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, tr("a base mudou", "the base moved"), why) }
         // C3b: the gate and the CI run from the agent's tree: the files that judge the land must be the base's
         // C4a: fail closed: a base known at the attempt (`al.baseHead`) but unread now, or the other way, is no comparison.
         // Only a host that never knew a base (a folder paddock, the tests' fakes) has nothing to compare.
         switch (base, al.baseHead) {
         case (nil, nil): break
         case (let base?, _?):
-            if let why = await judgesChanged(al, base: base, head: head, dir) { return await failed(.landGateRed, "portão não rodou", why) }
-        default: return await failed(.landGateRed, "portão não rodou", "não consegui comparar o que julga o land com a base")
+            if let why = await judgesChanged(al, base: base, head: head, dir) { return await failed(.landGateRed, tr("portão não rodou", "gate did not run"), why) }
+        default: return await failed(.landGateRed, tr("portão não rodou", "gate did not run"), tr("não consegui comparar o que julga o land com a base", "could not compare what judges the land with the base"))
         }
         await phase(id, .gate)
         let gate = await run(al.gate, checkTimeout, (.landGateStarted, .landGateFinished))
         if let h = halted() { return h }
-        if let why = gate { return await failed(.landGateRed, "portão vermelho no HEAD \(head.prefix(12))", why) }
+        if let why = gate { return await failed(.landGateRed, tr("portão vermelho no HEAD \(head.prefix(12))", "gate red at HEAD \(head.prefix(12))"), why) }
         // parecer mudo/inválido or a task with no review in its last attempt is no approval
         if let t = w.tasks.first(where: { $0.state == .done && $0.reviewClean != true }) {
-            return await failed(.landReviewVeto, "revisão sem aprovação limpa", RerailText.clean(t.title, max: 80) + ": " + (t.review ?? "sem revisão"))
+            return await failed(.landReviewVeto, tr("revisão sem aprovação limpa", "review without a clean approval"), RerailText.clean(t.title, max: 80) + ": " + (t.review ?? tr("sem revisão", "no review")))
         }
-        if let why = await reviewedHeadVeto(w, head: head, dir) { return await failed(.landReviewVeto, "commits depois da revisão", why) }
+        if let why = await reviewedHeadVeto(w, head: head, dir) { return await failed(.landReviewVeto, tr("commits depois da revisão", "commits after the review"), why) }
         // F3: the 4th condition, only when a task of the work has `--accept`: its last acceptance passed (in the attempt
         // that made it done: each attempt clears it first)
         if let t = w.tasks.first(where: { $0.state == .done && $0.accept != nil && $0.acceptPassed != true }) {
-            return await failed(.landAcceptRed, "aceite em runtime sem passar", RerailText.clean(t.title, max: 80) + ": " + (t.acceptResult ?? "não rodou"))
+            return await failed(.landAcceptRed, tr("aceite em runtime sem passar", "runtime acceptance not passing"), RerailText.clean(t.title, max: 80) + ": " + (t.acceptResult ?? tr("não rodou", "did not run")))
         }
         await phase(id, .check)
         let ci = await run(al.ci, .seconds(al.timeout), (.landCiStarted, .landCiFinished))
         if let h = halted() { return h }
-        if let why = ci { return await failed(.landCiRed, "CI local vermelho", why) }
+        if let why = ci { return await failed(.landCiRed, tr("CI local vermelho", "local CI red"), why) }
         await phase(id, nil)
-        guard let status = await out(["status", "--porcelain"], dir) else { return await failed(.gitFailed, "git falhou", "status") }
-        if !status.isEmpty { return await failed(.landDirty, "árvore do cercado suja", String(status.prefix(300))) }
-        if await out(["rev-parse", "HEAD"], dir) != head { return await failed(.landDirty, "o HEAD mudou durante o portão ou o CI", "era \(head.prefix(12))") }
-        if let who = await host.othersWorking() { return await failed(.landDirty, "outro agente trabalhando no cercado", who) }
+        guard let status = await out(["status", "--porcelain"], dir) else { return await failed(.gitFailed, tr("git falhou", "git failed"), "status") }
+        if !status.isEmpty { return await failed(.landDirty, tr("árvore do cercado suja", "paddock tree is dirty"), String(status.prefix(300))) }
+        if await out(["rev-parse", "HEAD"], dir) != head { return await failed(.landDirty, tr("o HEAD mudou durante o portão ou o CI", "HEAD changed during the gate or the CI"), tr("era \(head.prefix(12))", "was \(head.prefix(12))")) }
+        if let who = await host.othersWorking() { return await failed(.landDirty, tr("outro agente trabalhando no cercado", "another agent working in the paddock"), who) }
         // C3b: again after the gate and the CI (they may take long); the land checks it once more under its claim
-        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, "a base mudou", why) }
+        if base != nil, let why = await baseMoved(from: al.baseHead, dir) { return await failed(.landBaseMoved, tr("a base mudou", "the base moved"), why) }
         // the gate and the CI may take long (up to the CI's timeout): a `work stop`, a cancel, the work closed or the
         // starter gone meanwhile wins, and nothing lands
         if let h = halted() { return h }
@@ -1540,7 +1554,7 @@ extension WorkLoop {
             let (before, after, late, unrecorded) = try await host.land(mode: .merge, message: "Land paddock (auto-land): \(w.title)", base: base == nil ? nil : al.baseHead)
             // C3a: no commit made (nothing new, or integrated already): no land, no undo line, not counted anywhere
             if before == after {
-                await note(id, "[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))")
+                await note(id, tr("[loop] auto-land: nada a integrar (o merge não criou commit; a base segue em \(after.prefix(12)))", "[loop] auto-land: nothing to land (the merge created no commit; the base stays at \(after.prefix(12)))"))
                 return .init(.landNothing, detail: String(after.prefix(12)))
             }
             let at = host.now()
@@ -1548,25 +1562,28 @@ extension WorkLoop {
                 x.loop?.autoLand?.before = before; x.loop?.autoLand?.after = after
                 x.loop?.autoLand?.startHead = nil   // C5c: integrated: the work's next run begins at the HEAD after this land
                 x.record(LoopEvent(at: at, kind: .landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))"))
-                x.notes.append(WorkNote(at: at, text: "[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
-                    + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))", decision: true))
+                x.notes.append(WorkNote(at: at, text: tr("[loop] auto-land: integrado por merge local (sem push). Base antes: \(before); depois: \(after). "
+                    + "Para desfazer, na base: git reset --hard \(before) (ou git revert -m 1 \(after))",
+                    "[loop] auto-land: landed by local merge (no push). Base before: \(before); after: \(after). "
+                    + "To undo, in the base: git reset --hard \(before) (or git revert -m 1 \(after))"), decision: true))
             }
             // C2: a failure after the merge is no conflict: the base changed, and both commits are recorded above
             if let late {
-                await note(id, LotBoards.scrub(String("[loop] auto-land: a base MUDOU (merge feito, \(before.prefix(12)) -> \(after.prefix(12))), "
-                    + "mas o passo depois do merge falhou: \(late)".prefix(Self.noteChars))))
+                await note(id, LotBoards.scrub(String(tr("[loop] auto-land: a base MUDOU (merge feito, \(before.prefix(12)) -> \(after.prefix(12))), "
+                    + "mas o passo depois do merge falhou: \(late)", "[loop] auto-land: the base CHANGED (merge done, \(before.prefix(12)) -> \(after.prefix(12))), "
+                    + "but the step after the merge failed: \(late)").prefix(Self.noteChars))))
             }
             // C4a: a land the daily cap may not count is no land to chain from: stop, and the owner knows why
             if let unrecorded {
-                let line = LotBoards.scrub(String("[loop] auto-land: merge feito (\(before.prefix(12)) -> \(after.prefix(12))), mas o registro do teto diário não foi gravado: \(unrecorded); o laço parou".prefix(Self.noteChars)))
+                let line = LotBoards.scrub(String(tr("[loop] auto-land: merge feito (\(before.prefix(12)) -> \(after.prefix(12))), mas o registro do teto diário não foi gravado: \(unrecorded); o laço parou", "[loop] auto-land: merge done (\(before.prefix(12)) -> \(after.prefix(12))), but the daily cap record was not written: \(unrecorded); the loop stopped").prefix(Self.noteChars)))
                 await note(id, line)   // the stop's own notice tells the owner (its label: "chame o dono")
                 return .init(.landRegistryFailed, detail: Self.eventDetail(unrecorded))
             }
-            return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))" + (late.map { "; depois do merge falhou: \(Self.eventDetail($0))" } ?? ""))
+            return .init(.landed, detail: "\(before.prefix(12)) -> \(after.prefix(12))" + (late.map { tr("; depois do merge falhou: \(Self.eventDetail($0))", "; after the merge it failed: \(Self.eventDetail($0))") } ?? ""))
         } catch {
             // C3b: the base moved between the check above and the merge (`.conflict`, under the land's claim)
-            if error.code == .conflict { return await failed(.landBaseMoved, "a base mudou", error.message) }
-            return await failed(.landConflict, "o land (merge) falhou", error.message)
+            if error.code == .conflict { return await failed(.landBaseMoved, tr("a base mudou", "the base moved"), error.message) }
+            return await failed(.landConflict, tr("o land (merge) falhou", "the land (merge) failed"), error.message)
         }
     }
 }
@@ -1605,7 +1622,7 @@ extension WorkLoop {
         if let left = c.budget { l.budget = Swift.min(l.budget ?? left, left) }
         l.autoLand?.max = c.max; l.autoLand?.perDay = c.perDay; l.autoLand?.chained = c.chained
         x.loop = l
-        x.notes.append(WorkNote(at: at, text: "[loop] auto-land: ativado pela corrente após o land de \"\(c.after)\" (\(c.chained + 1) de \(c.max ?? 1))"))
+        x.notes.append(WorkNote(at: at, text: tr("[loop] auto-land: ativado pela corrente após o land de \"\(c.after)\" (\(c.chained + 1) de \(c.max ?? 1))", "[loop] auto-land: activated by the chain after the land of \"\(c.after)\" (\(c.chained + 1) of \(c.max ?? 1))")))
         return true
     }
 
@@ -1615,11 +1632,11 @@ extension WorkLoop {
     /// The attempts' own `tampered` is not this: it guards each attempt, this the whole paddock against the base.
     func judgesChanged(_ al: WorkLoopState.AutoLand, base: String, head: String, _ dir: URL) async -> String? {
         guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", "\(base)...\(head)"], in: dir), d.status == 0 else {
-            return "não foi possível comparar com a base \(base.prefix(12)) os arquivos que julgam o land"
+            return tr("não foi possível comparar com a base \(base.prefix(12)) os arquivos que julgam o land", "could not compare the files that judge the land with the base \(base.prefix(12))")
         }
         let judges = Self.judgedPaths(al.gate + " ; " + al.ci, dir).union([ProjectWorkConfig.fileName])
         let path = d.stdout.split(separator: "\0").map(String.init).first { judges.contains(Self.normalPath($0, dir)) }
-        return path.map { "o agente alterou \(RerailText.clean($0, max: 120)) que julga o land" }
+        return path.map { tr("o agente alterou \(RerailText.clean($0, max: 120)) que julga o land", "the agent changed \(RerailText.clean($0, max: 120)) which judges the land") }
     }
 
     /// C3b: the path tokens of a shell command (split at spaces, quotes, `&&`, `||`, `;`, `|`, parentheses and
@@ -1638,11 +1655,11 @@ extension WorkLoop {
     /// C3b: nil when the base branch's commit, read now, is `judged` (the base the last attempt began on); else why not:
     /// it moved, no base is known (`judged` nil) or git could not say (fail closed).
     func baseMoved(from judged: String?, _ dir: URL) async -> String? {
-        guard let judged else { return "base desconhecida: nenhuma tentativa registrou a base em que começou" }
+        guard let judged else { return tr("base desconhecida: nenhuma tentativa registrou a base em que começou", "unknown base: no attempt recorded the base it started on") }
         let now: String?
-        do { now = try await host.baseHead() } catch { return "a base não pôde ser lida: \(error.message)" }
-        guard let now else { return "a base não pôde ser lida" }
-        return now == judged ? nil : "a base está em \(now.prefix(12)), a tentativa começou em \(judged.prefix(12))"
+        do { now = try await host.baseHead() } catch { return tr("a base não pôde ser lida: \(error.message)", "the base could not be read: \(error.message)") }
+        guard let now else { return tr("a base não pôde ser lida", "the base could not be read") }
+        return now == judged ? nil : tr("a base está em \(now.prefix(12)), a tentativa começou em \(judged.prefix(12))", "the base is at \(now.prefix(12)), the attempt started at \(judged.prefix(12))")
     }
 
     /// C6: the stop's detail of a `work stop` or a cancel in the land's phase (after every task ended): the run's end
@@ -1656,8 +1673,8 @@ extension WorkLoop {
         guard let al else { return nil }
         let perDay = al.perDay ?? WorkLoopState.AutoLand.defaultPerDay, today = await landsToday()
         guard today >= perDay else { return nil }
-        let why = "\(today) de \(perDay) em 24 h"
-        await note(id, LotBoards.scrub(String("[loop] auto-land: teto diário atingido (\(why)); nada integrado".prefix(Self.noteChars))))
+        let why = tr("\(today) de \(perDay) em 24 h", "\(today) of \(perDay) in 24 h")
+        await note(id, LotBoards.scrub(String(tr("[loop] auto-land: teto diário atingido (\(why)); nada integrado", "[loop] auto-land: daily cap reached (\(why)); nothing landed").prefix(Self.noteChars))))
         return .init(.landDailyCap, detail: Self.eventDetail(why))
     }
 
@@ -1674,13 +1691,13 @@ extension WorkLoop {
     func reviewedHeadVeto(_ w: Work, head: String, _ dir: URL) async -> String? {
         let done = w.tasks.filter { $0.state == .done }
         guard !done.isEmpty else { return nil }
-        if let t = done.first(where: { $0.reviewedHead == nil }) { return RerailText.clean(t.title, max: 80) + ": revisão sem o HEAD revisado" }
+        if let t = done.first(where: { $0.reviewedHead == nil }) { return RerailText.clean(t.title, max: 80) + tr(": revisão sem o HEAD revisado", ": review without the reviewed HEAD") }
         if (w.loop?.parallel ?? 1) <= 1 {
-            return done.contains { $0.reviewedHead == head } ? nil : "o HEAD \(head.prefix(12)) não é o que a revisão aprovou"
+            return done.contains { $0.reviewedHead == head } ? nil : tr("o HEAD \(head.prefix(12)) não é o que a revisão aprovou", "HEAD \(head.prefix(12)) is not what the review approved")
         }
         for t in done {
             let r = try? await host.git(["merge-base", "--is-ancestor", t.reviewedHead!, head], in: dir)
-            if r?.status != 0 { return RerailText.clean(t.title, max: 80) + ": o HEAD revisado \(t.reviewedHead!.prefix(12)) não está no HEAD" }
+            if r?.status != 0 { return RerailText.clean(t.title, max: 80) + tr(": o HEAD revisado \(t.reviewedHead!.prefix(12)) não está no HEAD", ": the reviewed HEAD \(t.reviewedHead!.prefix(12)) is not in HEAD") }
         }
         return nil
     }
@@ -1711,7 +1728,7 @@ extension WorkLoop {
         if let left, left <= 0 { return .init(.budgetSpent) }
         let next = queue[0]
         chainNext[id] = Chain(next: next.id, max: al.max, perDay: al.perDay, chained: done, budget: left, after: RerailText.clean(w.title, max: 80))
-        await note(id, "[loop] auto-land: próximo trabalho da fila: \"\(RerailText.clean(next.title, max: 80))\" (\(done + 1) de \(max))")
+        await note(id, tr("[loop] auto-land: próximo trabalho da fila: \"\(RerailText.clean(next.title, max: 80))\" (\(done + 1) de \(max))", "[loop] auto-land: next work in the queue: \"\(RerailText.clean(next.title, max: 80))\" (\(done + 1) of \(max))"))
         return nil
     }
 }

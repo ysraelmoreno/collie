@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
 // M3.2. Reused, not reinvented (from `PaddockManager.create`/`delete`, the paddocks' own worktree code):
@@ -97,7 +98,8 @@ enum LaneWorktree {
     /// F2: a field's name is its agent's name; it lands in a path and a branch, so it is checked before any git.
     static func validate(field name: String) throws(ProtocolError) {
         guard name.range(of: "^[a-z0-9][a-z0-9-]{0,39}$", options: .regularExpression) != nil else {
-            throw fail("nome de field inválido '\(name)' (use a-z, 0-9 e '-', começando por letra ou dígito, até 40)")
+            throw fail(tr("nome de field inválido '\(name)' (use a-z, 0-9 e '-', começando por letra ou dígito, até 40)",
+                       "invalid field name '\(name)' (use a-z, 0-9 and '-', starting with a letter or digit, up to 40)"))
         }
     }
 

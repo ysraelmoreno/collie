@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// The files a task declared as its evidence (`work task add --evidence <glob>`), copied out of the worktree when the
 /// loop approves the task. Only reads inside the worktree, so never more than the task's check could read.
@@ -60,7 +61,8 @@ enum EvidenceFiles {
             // one byte past what is left: a file that grew since the stat still stops here
             let left = maxBytes - total
             guard Int(st.st_size) <= left, let data = try? file.read(upToCount: left + 1), data.count <= left else {
-                out.note = "os arquivos passaram de \(maxBytes / 1_048_576) MB no total: a cópia parou em «\(name)» (\(out.files.count) copiados)"
+                out.note = tr("os arquivos passaram de \(maxBytes / 1_048_576) MB no total: a cópia parou em «\(name)» (\(out.files.count) copiados)",
+                         "the files exceeded \(maxBytes / 1_048_576) MB in total: the copy stopped at «\(name)» (\(out.files.count) copied)")
                 break
             }
             try? fm.createDirectory(at: dest, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

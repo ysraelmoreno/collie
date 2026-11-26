@@ -56,7 +56,7 @@ actor JSONLLog<M: Codable & Sendable & Identifiable> where M.ID == UUID {
         var end = list.endIndex
         if let before {
             guard let i = list.firstIndex(where: { $0.id == before }) else {
-                throw ProtocolError(code: .notFound, message: "Mensagem não encontrada.")
+                throw ProtocolError(code: .notFound, message: tr("Mensagem não encontrada.", "Message not found."))
             }
             end = i
         }

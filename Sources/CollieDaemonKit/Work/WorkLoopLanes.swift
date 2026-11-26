@@ -41,7 +41,7 @@ extension WorkLoop {
     /// The parallel loop: how it ended and why (nil: it finished). `run` writes the end, as for the sequential path.
     func runLanes(work id: UUID, dir: URL, parallel: Int) async -> (WorkLoopState.State, WorkLoopState.Stop?) {
         guard let root = await repoRoot(dir) else {
-            await note(id, "[loop] git falhou em \(dir.path); laço parado")
+            await note(id, tr("[loop] git falhou em \(dir.path); laço parado", "[loop] git failed in \(dir.path); loop stopped"))
             return (.stopped, .init(.gitFailed))
         }
         let integrator = await host.integrator(dir: dir, work: id)   // F3: the paddock's one
@@ -67,7 +67,7 @@ extension WorkLoop {
             // M3b.4: with what the lanes alive have run: no lane starts on a spent budget, and the ones alive are
             // cancelled below, each adding its own seconds to `spent`, once, as it ends
             if let b = loop.budget, let rest = Self.unspent(loop, now: host.now()), rest <= 0 {
-                await note(id, "[loop] orçamento de tempo usado (\(b - rest) de \(b) s, com as faixas em curso); laço parado")
+                await note(id, tr("[loop] orçamento de tempo usado (\(b - rest) de \(b) s, com as faixas em curso); laço parado", "[loop] time budget used (\(b - rest) of \(b) s, with the lanes in progress); loop stopped"))
                 stop = .init(.budgetSpent); break
             }
             let integrating = lanes[id]?.integrating ?? []
@@ -79,7 +79,7 @@ extension WorkLoop {
                 if let max = loop.max, loop.used >= max { stop = .init(.maxReached); break }
                 // nothing runs and nothing can start: what is left waits for a task that will not be done here
                 var stuck = TaskScheduler.blocked(tasks: w.tasks).filter { approved?.contains($0.task) != false }
-                if stuck.isEmpty { stuck = open.map { .init(task: $0.id, reason: "depende de uma tarefa que este laço não roda") } }
+                if stuck.isEmpty { stuck = open.map { .init(task: $0.id, reason: tr("depende de uma tarefa que este laço não roda", "depends on a task this loop does not run")) } }
                 await deferBlocked(id, stuck)
                 signal.yield(.poke)
                 continue
@@ -150,7 +150,7 @@ extension WorkLoop {
             if await engine.passed != nil {
                 // nothing is integrated once the loop is stopping
                 if stop == nil, !Task.isCancelled { stop = await integrate(id, engine, lane, loop, integrator) }
-                else { await engine.release(id, "não integrada: o laço parou") }
+                else { await engine.release(id, tr("não integrada: o laço parou", "not integrated: the loop stopped")) }
             }
         }
         let secs = Int(host.now().timeIntervalSince(t0).rounded(.up)), taskId = task.id
@@ -181,7 +181,7 @@ extension WorkLoop {
     /// The task got no lane (`why`; nil: the loop was stopping before it had one): no attempt ran, none is counted.
     /// With a reason the task is deferred: left open, the scheduler would hand it a lane again without end.
     private func noLane(_ id: UUID, _ task: WorkTask, _ why: String?) async {
-        let at = host.now(), reason = Task.isCancelled ? nil : why.map { Self.eventDetail("a faixa não pôde ser criada: \($0)") }
+        let at = host.now(), reason = Task.isCancelled ? nil : why.map { Self.eventDetail(tr("a faixa não pôde ser criada: \($0)", "the lane could not be created: \($0)")) }
         try? await store.update(id) { x in
             let used = x.loop?.used ?? 0
             x.loop?.used = Swift.max(0, used - 1)
@@ -238,7 +238,7 @@ extension WorkLoop {
         let result = await run.value
         lanes[id]?.integrations[p.task.id] = nil
         guard let result else {
-            await engine.refuse(id, "integração recusada: o branch não é de uma faixa", output: "", last: true)
+            await engine.refuse(id, tr("integração recusada: o branch não é de uma faixa", "integration refused: the branch is not a lane's"), output: "", last: true)
             return nil
         }
         // M3c.2: new untracked files never stop the loop nor a reset: they stay, and the note names them
@@ -255,22 +255,23 @@ extension WorkLoop {
             return WorkLoopState.Stop(.dirtyTree)
         case .leftDirty(let why):
             // M3b.2: not the task's fault: it is open again and its attempt is given back, as for `.wait`
-            await engine.release(id, "não integrada: \(why)")
+            await engine.release(id, tr("não integrada: \(why)", "not integrated: \(why)"))
             await note(id, Self.keptNote(why, result))
             return result.blockedBy.map { WorkLoopState.Stop(.othersWorking, detail: $0) } ?? WorkLoopState.Stop(.dirtyTree)
         case .retryFromNewBase(let why), .defer(let why):
             // the loop stopped meanwhile: no verdict on the task, as for an attempt cancelled
-            if Task.isCancelled || stopping.contains(id) { await engine.release(id, "não integrada: o laço parou"); return nil }
+            if Task.isCancelled || stopping.contains(id) { await engine.release(id, tr("não integrada: o laço parou", "not integrated: the loop stopped")); return nil }
             var last = false
             if case .defer = result.outcome { last = true }
             await engine.refuse(id, why, output: result.output, last: last)
             return nil
         case .wait(let why):
             // as the engine does for another terminal in the worktree: nothing touched, the loop stops
-            await engine.release(id, "não integrada: \(why)")
+            await engine.release(id, tr("não integrada: \(why)", "not integrated: \(why)"))
             let who = await host.othersWorking()
             await note(id, who.map(Self.blockedNote)
-                ?? "[loop] a worktree do cercado tem arquivos rastreados modificados, e não são do laço: nada foi integrado; laço parado, worktree intocada")
+                ?? tr("[loop] a worktree do cercado tem arquivos rastreados modificados, e não são do laço: nada foi integrado; laço parado, worktree intocada",
+                      "[loop] the paddock's worktree has modified tracked files that are not the loop's: nothing was integrated; loop stopped, worktree untouched"))
             return who.map { WorkLoopState.Stop(.othersWorking, detail: $0) } ?? WorkLoopState.Stop(.dirtyTree)
         }
     }
@@ -278,41 +279,43 @@ extension WorkLoop {
     /// M3b.2: the note of an integration that reset nothing: what was preserved, who was there, and the merge left in
     /// the branch (`why` nil: the gate passed and the task is integrated).
     static func keptNote(_ why: String?, _ r: LaneIntegrator.Result) -> String {
-        var s = why.map { "[loop] não integrada (\($0))" } ?? "[loop] integrada"
-        s += ", mas a worktree do cercado não estava como o integrador a deixou: nada foi resetado nem apagado."
-        if let who = r.blockedBy { s += " '\(who)' está trabalhando nela." }
+        var s = why.map { tr("[loop] não integrada (\($0))", "[loop] not integrated (\($0))") } ?? tr("[loop] integrada", "[loop] integrated")
+        s += tr(", mas a worktree do cercado não estava como o integrador a deixou: nada foi resetado nem apagado.", ", but the paddock's worktree was not as the integrator left it: nothing was reset or deleted.")
+        if let who = r.blockedBy { s += tr(" '\(who)' está trabalhando nela.", " '\(who)' is working in it.") }
         if !r.kept.isEmpty {
             // ponytail: the first 10 names; `git status` shows the rest
-            let more = r.kept.count > 10 ? " e mais \(r.kept.count - 10)" : ""
-            s += " Preservado: " + eventDetail(r.kept.prefix(10).joined(separator: ", ")) + more + "."
+            let more = r.kept.count > 10 ? tr(" e mais \(r.kept.count - 10)", " and \(r.kept.count - 10) more") : ""
+            s += tr(" Preservado: ", " Preserved: ") + eventDetail(r.kept.prefix(10).joined(separator: ", ")) + more + "."
         }
         if let undo = r.undo {
-            s += " O merge \(r.head.prefix(7)) ficou no branch sem passar no portão: para desfazer, guarde o que é seu e rode git reset --hard \(undo.prefix(7))."
+            s += tr(" O merge \(r.head.prefix(7)) ficou no branch sem passar no portão: para desfazer, guarde o que é seu e rode git reset --hard \(undo.prefix(7)).", " The merge \(r.head.prefix(7)) stayed on the branch without passing the gate: to undo it, keep what is yours and run git reset --hard \(undo.prefix(7)).")
         }
-        return s + " Laço parado."
+        return s + tr(" Laço parado.", " Loop stopped.")
     }
 
     /// M3c.2: the untracked files a merge's gate (or someone meanwhile) left in the paddock's worktree. M3d.3: removed
     /// before the next merge (or at the loop's end) if still as the gate left them.
     static func leftNote(_ left: [String]) -> String {
-        "[loop] arquivos não rastreados novos na worktree do cercado (do portão): " + fileList(left)
-            + ". Vão para a quarentena antes do próximo merge, ou no fim do laço, se ninguém mexer neles."
+        tr("[loop] arquivos não rastreados novos na worktree do cercado (do portão): ", "[loop] new untracked files in the paddock's worktree (from the gate): ") + fileList(left)
+            + tr(". Vão para a quarentena antes do próximo merge, ou no fim do laço, se ninguém mexer neles.", ". They go to quarantine before the next merge, or at the end of the loop, if nobody touches them.")
     }
 
     /// M6.3: the gate's files moved out of the tree: where they are (nothing removed).
     static func movedNote(_ moved: [String], at: String) -> String {
-        "[loop] arquivos deixados pelo portão foram movidos para a quarentena \(at) (nada foi apagado; ela é esvaziada no começo do próximo laço): "
+        tr("[loop] arquivos deixados pelo portão foram movidos para a quarentena \(at) (nada foi apagado; ela é esvaziada no começo do próximo laço): ",
+           "[loop] files left by the gate were moved to quarantine \(at) (nothing was deleted; it is emptied at the start of the next loop): ")
             + fileList(moved) + "."
     }
 
     /// M3d.3: files a gate left that changed since: they are the owner's now, and stay.
     static func sparedNote(_ spared: [String]) -> String {
-        "[loop] arquivos deixados pelo portão ficaram na worktree do cercado (mudaram depois dele, têm nome que o laço não toca ou a quarentena estava cheia; nada foi apagado): "
+        tr("[loop] arquivos deixados pelo portão ficaram na worktree do cercado (mudaram depois dele, têm nome que o laço não toca ou a quarentena estava cheia; nada foi apagado): ",
+           "[loop] files left by the gate stayed in the paddock's worktree (they changed after it, have a name the loop does not touch, or the quarantine was full; nothing was deleted): ")
             + fileList(spared) + "."
     }
 
     private static func fileList(_ files: [String]) -> String {
-        let more = files.count > 10 ? " e mais \(files.count - 10)" : ""
+        let more = files.count > 10 ? tr(" e mais \(files.count - 10)", " and \(files.count - 10) more") : ""
         return eventDetail(files.prefix(10).joined(separator: ", ")) + more
     }
 
@@ -339,7 +342,7 @@ extension WorkLoop {
         await keepPatch(id, p)
         let at = host.now(), task = p.task
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
-        let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(p.n)/\(p.tries): \(reason) (agente \(p.name))"
+        let text = LotBoards.scrub(tr("[loop \(task.id)] \(task.title), tentativa \(p.n)/\(p.tries): \(reason) (agente \(p.name))", "[loop \(task.id)] \(task.title), attempt \(p.n)/\(p.tries): \(reason) (agent \(p.name))")
             + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
         let e = entry(last ? .verdict : .integrationRetry, task: task.id, attempt: p.n, detail: reason)
         try? await store.update(id) { x in

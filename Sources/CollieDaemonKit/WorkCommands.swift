@@ -174,9 +174,9 @@ extension CommandRouter {
     /// F3: why `work task add --accept` refuses this command (already trimmed); nil: taken. As the check: not empty and
     /// at most `maxWorkText` characters; and no control character but a tab or a newline.
     static func acceptRefusal(_ a: String) -> String? {
-        if a.isEmpty { return "está vazio" }
-        if a.count > maxWorkText { return "tem mais de \(maxWorkText) caracteres" }
-        if a.unicodeScalars.contains(where: { $0.properties.generalCategory == .control && $0 != "\n" && $0 != "\t" }) { return "tem caractere de controle" }
+        if a.isEmpty { return tr("está vazio", "is empty") }
+        if a.count > maxWorkText { return tr("tem mais de \(maxWorkText) caracteres", "has more than \(maxWorkText) characters") }
+        if a.unicodeScalars.contains(where: { $0.properties.generalCategory == .control && $0 != "\n" && $0 != "\t" }) { return tr("tem caractere de controle", "has a control character") }
         return nil
     }
 
@@ -276,7 +276,7 @@ extension CommandRouter {
             // M13.2: --area builds the check from the project's collie-work.json; the task keeps the built command
             let areas = try strings("area")
             if let areas {
-                guard check == nil else { throw invalid("--area e --check não andam juntos: --area monta o check a partir do collie-work.json; use um ou outro") }
+                guard check == nil else { throw invalid(tr("--area e --check não andam juntos: --area monta o check a partir do collie-work.json; use um ou outro", "--area and --check do not go together: --area builds the check from collie-work.json; use one or the other")) }
                 check = try areaCheck(areas, for: t)
             }
             // F3: the acceptance as the check (trimmed, not empty, bounded), and no control character but a tab or a newline
@@ -313,7 +313,7 @@ extension CommandRouter {
             task.accept = accept; task.acceptTimeout = acceptTimeout
             try await work.update(w.id) { $0.tasks.append(task) }
             guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
-            o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "
+            o["output"] = .string(tr("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas ", "Task \"\(RerailText.clean(title))\" [\(id)] added; check built from the areas ")
                                   + "\(RerailText.clean(areas.joined(separator: ", "))): \(RerailText.clean(check, max: Self.maxWorkText + 10))")
             return .object(o)
 
@@ -336,15 +336,15 @@ extension CommandRouter {
                 }
                 switch re.from {
                 case .deferred, .abandoned: break
-                case .done: throw invalid("a tarefa já está feita; use `work task defer` antes se quer refazê-la")
-                case .open: throw invalid("a tarefa já está aberta; não há o que reabrir")
+                case .done: throw invalid(tr("a tarefa já está feita; use `work task defer` antes se quer refazê-la", "the task is already done; use `work task defer` first if you want to redo it"))
+                case .open: throw invalid(tr("a tarefa já está aberta; não há o que reabrir", "the task is already open; there is nothing to reopen"))
                 case .inProgress:
-                    throw invalid("a tarefa está em andamento" + (w.loop?.state == .running ? " num laço rodando" : "") + "; só se reabre uma adiada ou abandonada")
+                    throw invalid(tr("a tarefa está em andamento" + (w.loop?.state == .running ? " num laço rodando" : "") + "; só se reabre uma adiada ou abandonada", "the task is in progress" + (w.loop?.state == .running ? " in a running loop" : "") + "; only a deferred or abandoned one can be reopened"))
                 }
                 guard case .object(var o) = try isoJSON(re.task) else { throw ProtocolError(code: .internal, message: "task encoding") }
-                o["output"] = .string("Tarefa \"\(re.task.title)\" reaberta [\(re.task.id)]: de volta à fila, na mesma posição. "
-                    + (re.loopTakes ? "O laço em curso a pega de novo: ela está entre as que ele aprovou."
-                       : "Ela espera o próximo `work run`, como uma tarefa adicionada depois: um laço só pega as tarefas aprovadas quando começou."))
+                o["output"] = .string(tr("Tarefa \"\(re.task.title)\" reaberta [\(re.task.id)]: de volta à fila, na mesma posição. ", "Task \"\(re.task.title)\" reopened [\(re.task.id)]: back in the queue, in the same position. ")
+                    + (re.loopTakes ? tr("O laço em curso a pega de novo: ela está entre as que ele aprovou.", "The running loop takes it again: it is among the ones it approved.")
+                       : tr("Ela espera o próximo `work run`, como uma tarefa adicionada depois: um laço só pega as tarefas aprovadas quando começou.", "It waits for the next `work run`, like a task added later: a loop only takes the tasks approved when it started.")))
                 return .object(o)
             }
             guard let hit = hits.first, let done = try await work.setTask(w.id, task: hit.id, state: state, reason: reason, at: now) else {
@@ -459,10 +459,11 @@ extension CommandRouter {
                 if let s = a.stopDetail { o["stopDetail"] = .string(s) }   // A5: `Stop.finishes` reads it
                 if a.reconstructed { o["reconstructed"] = .bool(true) }
                 return .object(o)
-            }), "output": .string(rows.isEmpty ? "Nenhum trabalho fechado neste cercado." : rows.map { a in
-                "\(RerailText.clean(a.title)) [\(a.id)] · \(a.done)/\(a.tasks.count) feitas · \(a.deferred) "
-                    + (a.deferred == 1 ? "adiada" : "adiadas") + (a.stopReason.map { " · parou: \($0)" } ?? "")
-                    + (a.reconstructed ? " · reconstruído" : "")
+            }), "output": .string(rows.isEmpty ? tr("Nenhum trabalho fechado neste cercado.", "No closed work in this paddock.") : rows.map { a in
+                tr("\(RerailText.clean(a.title)) [\(a.id)] · \(a.done)/\(a.tasks.count) feitas · \(a.deferred) " + (a.deferred == 1 ? "adiada" : "adiadas"),
+                   "\(RerailText.clean(a.title)) [\(a.id)] · \(a.done)/\(a.tasks.count) done · \(a.deferred) deferred")
+                    + (a.stopReason.map { tr(" · parou: \($0)", " · stopped: \($0)") } ?? "")
+                    + (a.reconstructed ? tr(" · reconstruído", " · reconstructed") : "")
             }.joined(separator: "\n"))])
 
         case "work.handoff":   // M10.1: the caller's paddock's handoff file (the app: the paddock it names)
@@ -528,7 +529,7 @@ extension CommandRouter {
         // F5: the PRD and the plan package; adding and applying are the owner's alone, showing and linting only read
         case "work.prd.add":
             guard caller == nil else {
-                throw ProtocolError(code: .unauthorized, message: "'work.prd.add' é do dono (a CLI fora de um terminal); um agente lê o PRD com collie work prd show")
+                throw ProtocolError(code: .unauthorized, message: tr("'work.prd.add' é do dono (a CLI fora de um terminal); um agente lê o PRD com collie work prd show", "'work.prd.add' belongs to the owner (the CLI outside a terminal); an agent reads the PRD with collie work prd show"))
             }
             return try await prdAdd(r, try await active(try target()), now: now)
         case "work.prd.show":
@@ -542,12 +543,12 @@ extension CommandRouter {
             var root: URL?
             if let t {
                 do { root = try await projectRoot(of: t) }
-                catch { throw ProtocolError(code: .internal, message: "não achei a raiz do projeto de '\(t.name)' (\(error)): o lint não lê o pacote sem ela") }
+                catch { throw ProtocolError(code: .internal, message: tr("não achei a raiz do projeto de '\(t.name)' (\(error)): o lint não lê o pacote sem ela", "could not find the project root of '\(t.name)' (\(error)): the lint does not read the package without it")) }
             }
             return PlanLint.json(PlanLint.lint(dir, root: root))
         case "work.plan.apply":
             guard caller == nil else {
-                throw ProtocolError(code: .unauthorized, message: "'work.plan.apply' é do dono (a CLI fora de um terminal): ele aprova o pacote que viu")
+                throw ProtocolError(code: .unauthorized, message: tr("'work.plan.apply' é do dono (a CLI fora de um terminal): ele aprova o pacote que viu", "'work.plan.apply' belongs to the owner (the CLI outside a terminal): they approve the package they saw"))
             }
             let t = try target()
             return try await planApply(r, t, try await active(t), now: now)
@@ -581,7 +582,7 @@ extension CommandRouter {
         var o: [String: JSONValue] = ["works": .array(try works.map(isoJSON))]
         o["output"] = .string(works.isEmpty ? "No active work." : works.map { w in
             let journal = last.flatMap { n in w.loop.map { WorkStatusText.events($0, last: n) } } ?? ""
-            return workSummary(w, now: now) + (journal.isEmpty ? "" : "\nDiário do laço:\n" + journal)
+            return workSummary(w, now: now) + (journal.isEmpty ? "" : tr("\nDiário do laço:\n", "\nLoop journal:\n") + journal)
         }.joined(separator: "\n\n"))
         if let last {
             o["events"] = .object(Dictionary(uniqueKeysWithValues: try works.filter { $0.loop != nil }.map {

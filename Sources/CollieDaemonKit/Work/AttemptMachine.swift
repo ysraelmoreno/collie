@@ -165,7 +165,7 @@ enum AttemptMachine {
         // reopens and the loop stops as asked
         case (_, .stopForced(let others)):
             let patch: [Effect] = s.adopted ? [] : others.map { [.note(stopForcedKeptNote($0))] } ?? [.discard, .journal(.discarded, "\(s.task)-\(s.n).patch")]
-            return leave(&s, patch + [.reopen(job: "stop forçado"), .stopLoop(.init(.requested))])
+            return leave(&s, patch + [.reopen(job: tr("stop forçado", "forced stop")), .stopLoop(.init(.requested))])
 
         case (.summoning, .started):
             return (s, [.journal(.attemptStarted, nil), .summon])
@@ -266,13 +266,13 @@ enum AttemptMachine {
             guard f.hasGate, f.broken == nil, f.checkStatus == 0, f.committed, !f.dirty, f.moves.isEmpty else { return accepting(&s, fx) }
             if f.blockedBy != nil {
                 s.facts.gate = "gate did not run (tree not reset)"
-                return verdict(&s, fx + [.journal(.gateFinished, "não rodou")])
+                return verdict(&s, fx + [.journal(.gateFinished, tr("não rodou", "did not run"))])
             }
             // the agent may not rewrite the script that judges it: the gate does not run on a tree that changed it
             return (s, fx + [.guardGate])
         case (.checking, .gateSkipped(let why)):
             s.facts.gate = why
-            return verdict(&s, [.journal(.gateFinished, "não rodou")])
+            return verdict(&s, [.journal(.gateFinished, tr("não rodou", "did not run"))])
         case (.checking, .gateClear):
             s.phase = .gating
             return (s, [.show(.gate), .journal(.gateStarted, nil), .runGate])
@@ -281,13 +281,13 @@ enum AttemptMachine {
             s.facts.gate = broken ?? WorkLoop.failure("gate", status)
             return (s, [.journal(.gateFinished, ran(status, broken)), .awaitOthers])
         case (.gating, .settled(let moved, let reset)):
-            if moved { s.facts.moves.append("o portão moveu o HEAD") }
+            if moved { s.facts.moves.append(tr("o portão moveu o HEAD", "the gate moved HEAD")) }
             return accepting(&s, resetLine(moved, reset))
 
         // F3: the acceptance judges the result running, on the tree the check and the gate judged
         case (.checking, .acceptSkipped(let why)), (.gating, .acceptSkipped(let why)):
             s.facts.accept = why
-            return verdict(&s, [.journal(.acceptFailed, "não rodou")])
+            return verdict(&s, [.journal(.acceptFailed, tr("não rodou", "did not run"))])
         case (.checking, .acceptClear), (.gating, .acceptClear):
             s.phase = .accepting
             return (s, [.show(.check), .journal(.acceptStarted, nil), .runAccept])
@@ -348,7 +348,8 @@ enum AttemptMachine {
 
     /// C5a: a forced stop found another terminal working: the tree is not reset under it.
     static func stopForcedKeptNote(_ who: String) -> String {
-        "[loop] stop forçado: '\(who)' trabalha no cercado; a tentativa não foi descartada, worktree intocada"
+        tr("[loop] stop forçado: '\(who)' trabalha no cercado; a tentativa não foi descartada, worktree intocada",
+           "[loop] forced stop: '\(who)' is working in the paddock; the attempt was not discarded, worktree untouched")
     }
 
     /// P2: free retries (a prompt not delivered) per task; the next one counts as a normal attempt.
@@ -361,12 +362,14 @@ enum AttemptMachine {
 
     /// C1 (P2-a): the prompt was not delivered and the budget left holds no other try.
     static func promptRetryBudgetNote(_ s: State) -> String {
-        "[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue e o orçamento de tempo que resta não cabe outra tentativa: tentativa não contada; laço parado"
+        tr("[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue e o orçamento de tempo que resta não cabe outra tentativa: tentativa não contada; laço parado",
+           "[loop] task \(s.task), attempt \(s.n): prompt not delivered and the time budget left does not fit another attempt: attempt not counted; loop stopped")
     }
 
     /// P2: the task spent its free retries and its prompt was not delivered again: load is the likely cause.
     static func overloadNote(_ s: State, _ load: Double) -> String {
-        "[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue \(maxPromptRetries + 1) vezes seguidas; a máquina está sobrecarregada? (load average \(String(format: "%.2f", load)))"
+        tr("[loop] tarefa \(s.task), tentativa \(s.n): prompt não entregue \(maxPromptRetries + 1) vezes seguidas; a máquina está sobrecarregada? (load average \(String(format: "%.2f", load)))",
+           "[loop] task \(s.task), attempt \(s.n): prompt not delivered \(maxPromptRetries + 1) times in a row; is the machine overloaded? (load average \(String(format: "%.2f", load)))")
     }
 
     /// Nothing changes and the interpreter is told (`fault`): the pair, without the event's payload (it may be the
@@ -391,7 +394,7 @@ enum AttemptMachine {
         }
         if f.blockedBy != nil {
             s.facts.accept = "accept did not run (tree not reset)"
-            return verdict(&s, fx + [.journal(.acceptFailed, "não rodou")])
+            return verdict(&s, fx + [.journal(.acceptFailed, tr("não rodou", "did not run"))])
         }
         return (s, fx + [.guardAccept])
     }
@@ -411,7 +414,7 @@ enum AttemptMachine {
 
     /// The journal's word for how the check or the gate ran.
     private static func ran(_ status: Int32?, _ broken: String?) -> String {
-        broken != nil ? "não rodou" : status.map { "exit \($0)" } ?? "timeout"
+        broken != nil ? tr("não rodou", "did not run") : status.map { "exit \($0)" } ?? "timeout"
     }
 
     private static func resetLine(_ moved: Bool, _ reset: Bool) -> [Effect] {

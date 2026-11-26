@@ -8,7 +8,7 @@ extension CommandRouter {
     func shepherd(_ r: Request, from tid: UUID) async throws -> JSONValue {
         guard let me = ws.terminals.first(where: { $0.id == tid }), me.isShepherd else {
             throw ProtocolError(code: .notShepherd, message: "'\(r.command)' is Shepherd-only"
-                + (r.command == "summon" ? "; peça a quem te convocou (collie ask <nome> --no-wait) ou ao usuário para te marcar como Pastor no app" : ""))
+                + (r.command == "summon" ? tr("; peça a quem te convocou (collie ask <nome> --no-wait) ou ao usuário para te marcar como Pastor no app", "; ask whoever summoned you (collie ask <name> --no-wait) or the user to mark you as a Shepherd in the app") : ""))
         }
         func peer(_ k: String) throws -> TerminalRecord { try ConnectionGraph.resolve(name: try need(r, k), from: me.id, in: ws) }
         // same rule for panels: within the Shepherd's reach (canvas: leashed to it; dock: always)

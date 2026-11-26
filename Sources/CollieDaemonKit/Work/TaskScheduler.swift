@@ -53,15 +53,15 @@ enum TaskScheduler {
             if let known = memo[t.id] { return known }
             var reason: String?
             for n in t.needs ?? [] where reason == nil {
-                guard let d = byId[n] else { reason = "depende de '\(n)', que não existe neste trabalho"; break }
+                guard let d = byId[n] else { reason = tr("depende de '\(n)', que não existe neste trabalho", "depends on '\(n)', which does not exist in this work"); break }
                 let name = "«\(d.title)» [\(n)]"
                 if n == t.id || path.contains(n) { reason = "depende de \(name) num ciclo"; break }
                 switch d.state {
                 case .done: break
-                case .deferred: reason = "depende de \(name), que foi adiada"
-                case .abandoned: reason = "depende de \(name), que foi abandonada"
+                case .deferred: reason = tr("depende de \(name), que foi adiada", "depends on \(name), which was deferred")
+                case .abandoned: reason = tr("depende de \(name), que foi abandonada", "depends on \(name), which was abandoned")
                 case .open, .inProgress:
-                    if why(d, path.union([t.id])) != nil { reason = "depende de \(name), que está bloqueada" }
+                    if why(d, path.union([t.id])) != nil { reason = tr("depende de \(name), que está bloqueada", "depends on \(name), which is blocked") }
                 }
             }
             memo[t.id] = reason
@@ -128,11 +128,11 @@ enum TaskScheduler {
 
     /// Why the globs of `--scope` are not accepted (in Portuguese); nil: they are.
     static func scopeRefusal(_ globs: [String]) -> String? {
-        if globs.isEmpty || globs.contains("") { return "glob vazio; passe globs relativos à raiz da worktree, separados por vírgula" }
-        if globs.count > maxScope { return "no máximo \(maxScope) globs (vieram \(globs.count))" }
+        if globs.isEmpty || globs.contains("") { return tr("glob vazio; passe globs relativos à raiz da worktree, separados por vírgula", "empty glob; pass globs relative to the worktree root, comma-separated") }
+        if globs.count > maxScope { return tr("no máximo \(maxScope) globs (vieram \(globs.count))", "at most \(maxScope) globs (got \(globs.count))") }
         for g in globs {
-            if g.hasPrefix("/") || g.hasPrefix("~") { return "'\(g)' é um caminho absoluto; o escopo é relativo à raiz da worktree" }
-            if g.split(separator: "/", omittingEmptySubsequences: false).contains("..") { return "'\(g)' tem '..'; o escopo não sai da worktree" }
+            if g.hasPrefix("/") || g.hasPrefix("~") { return tr("'\(g)' é um caminho absoluto; o escopo é relativo à raiz da worktree", "'\(g)' is an absolute path; the scope is relative to the worktree root") }
+            if g.split(separator: "/", omittingEmptySubsequences: false).contains("..") { return tr("'\(g)' tem '..'; o escopo não sai da worktree", "'\(g)' has '..'; the scope does not leave the worktree") }
             if g.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) { return "o glob tem caracteres de controle" }
         }
         return nil
@@ -143,11 +143,11 @@ enum TaskScheduler {
     static func needsRefusal(id: String, needs: [String], tasks: [WorkTask]) -> String? {
         var graph = Dictionary(tasks.map { ($0.id, $0.needs ?? []) }, uniquingKeysWith: { a, _ in a })
         for n in needs {
-            if n.isEmpty { return "id de tarefa vazio; passe ids separados por vírgula" }
-            if n == id { return "a tarefa não pode depender dela mesma ('\(n)')" }
+            if n.isEmpty { return tr("id de tarefa vazio; passe ids separados por vírgula", "empty task id; pass comma-separated ids") }
+            if n == id { return tr("a tarefa não pode depender dela mesma ('\(n)')", "a task cannot depend on itself ('\(n)')") }
             if graph[n] == nil {
-                return "a tarefa '\(n)' não existe neste trabalho"
-                    + (tasks.isEmpty ? " (ele ainda não tem tarefas)" : "; ids: " + tasks.map(\.id).joined(separator: ", "))
+                return tr("a tarefa '\(n)' não existe neste trabalho", "task '\(n)' does not exist in this work")
+                    + (tasks.isEmpty ? tr(" (ele ainda não tem tarefas)", " (it has no tasks yet)") : "; ids: " + tasks.map(\.id).joined(separator: ", "))
             }
         }
         graph[id] = needs
@@ -159,7 +159,7 @@ enum TaskScheduler {
             clear.insert(n)
             return nil
         }
-        if let c = cycle(id, []) { return "as dependências formam um ciclo: " + c.joined(separator: " → ") }
+        if let c = cycle(id, []) { return tr("as dependências formam um ciclo: ", "the dependencies form a cycle: ") + c.joined(separator: " → ") }
         return nil
     }
 }

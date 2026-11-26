@@ -139,6 +139,7 @@ extension CommandRouter {
     /// feedback: R19), then one `consolidate` job over ≤ 6 clusters inside the curator's input cap. Never fails.
     func consolidate(_ store: RepoMemory, now: Date = Date()) async {
         markConsolidated(store, at: now)
+        await curator.pruneFailed(now: now)   // ma4 2a: each cycle, not only at load or on a new failure
         if store.root != nil { await ingestReviews(repo: store); await detectProcedures(store) }
         let scores = await memory.scores.all()
         // never archived cold or for a low score: a stored longTerm (contested too: it keeps its standing until the verdict) and

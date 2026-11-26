@@ -6,6 +6,14 @@ import CollieProtocol
 /// week trends. Pure (`compute`): the router hands it the events already filtered to the caller's scope.
 /// Savings are never estimated: with no controlled comparison, only trends are shown, with `caveat` saying so.
 enum MemoryObservability {
+    /// A failure reason's head: the text before its first `:`, `(` or newline, past a leading "curator: " (else every
+    /// internal error would share one bucket), at most 60 characters; empty or missing: "unknown".
+    static func reasonBucket(_ reason: String?) -> String {
+        var s = (reason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)[...]
+        if s.hasPrefix("curator: ") { s = s.dropFirst(9) }
+        let head = s.prefix { $0 != ":" && $0 != "(" && $0 != "\n" }.trimmingCharacters(in: .whitespaces)
+        return head.isEmpty ? "unknown" : String(head.prefix(60))
+    }
     static let caveat = "economia não medida diretamente (sem comparação controlada); tendências apenas"
     static let deadAfterDays = 30, repeatWithinDays = 14, topMax = 10, candidatesTop = 5
 
@@ -71,6 +79,8 @@ enum MemoryObservability {
         var averageAgeDays: Double?, averageScore: Double?
         var curatorQueued = 0, curatorFailed = 0, curatorRuns = 0, curatorRunFailures = 0
         var lastCuratorRun: Date?
+        /// ma4 2b: the period's failed runs by their reason's head (`reasonBucket`; empty: "unknown") and by provider.
+        var curatorFailuresByReason: [String: Int] = [:], curatorFailuresByProvider: [String: Int] = [:]
     }
     struct Learning: Codable, Sendable, Equatable {
         var corrections = 0, repeatCorrections = 0
@@ -194,7 +204,8 @@ enum MemoryObservability {
         m.merges = inPeriod.filter { $0.type == .merged }.count
         m.supersedes = inPeriod.filter { $0.type == .superseded }.count
         m.retractionsDelivered = injected.filter { $0.where == "retraction" }.reduce(0) { $0 + ($1.ids?.count ?? 0) }
-        let runs = inPeriod.filter { $0.type == .curatorRun }
+        let allRuns = inPeriod.filter { $0.type == .curatorRun }
+        let runs = allRuns.filter { $0.test != true }   // ma4 2d: "Testar" calls are not runs
         m.consolidations = runs.filter { $0.job == CuratorJobKind.consolidate.rawValue && $0.ok == true }.count
         m.archivedLowScore = inPeriod.filter { $0.type == .archived && $0.source == "consolidation" }.count
         m.pendingAsks = openDigest.filter { $0.action == "confirmar" && !$0.resolved && !$0.undone }.count
@@ -204,7 +215,12 @@ enum MemoryObservability {
             m.averageScore = records.reduce(0) { $0 + (scores[$1.id] ?? 1) } / Double(records.count)
         }
         m.curatorQueued = curator?.queued ?? 0; m.curatorFailed = curator?.failed ?? 0
-        m.curatorRuns = runs.count; m.curatorRunFailures = runs.filter { $0.ok != true }.count
+        let failures = runs.filter { $0.ok != true }
+        m.curatorRuns = runs.count; m.curatorRunFailures = failures.count
+        for e in failures {
+            m.curatorFailuresByReason[reasonBucket(e.reason), default: 0] += 1
+            m.curatorFailuresByProvider[e.provider ?? "unknown", default: 0] += 1
+        }
         m.lastCuratorRun = events.filter { $0.type == .curatorRun }.map(\.at).max()
         r.maintenance = m
 
@@ -240,8 +256,8 @@ enum MemoryObservability {
         c.curatorUSDPerDay = series(.curatorRun) { $0.costUSD ?? 0 }
         c.injectedTokensPerDay = series(.injected) { Double($0.tokens ?? 0) }
         c.sessionTokensPerDay = series(.sessionUsage) { Double(sessionTokens($0)) }
-        c.curatorTokens = runs.reduce(0) { $0 + ($1.inputTokens ?? 0) + ($1.outputTokens ?? 0) }
-        c.curatorUSD = runs.reduce(0) { $0 + ($1.costUSD ?? 0) }
+        c.curatorTokens = allRuns.reduce(0) { $0 + ($1.inputTokens ?? 0) + ($1.outputTokens ?? 0) }
+        c.curatorUSD = allRuns.reduce(0) { $0 + ($1.costUSD ?? 0) }
         c.injectedTokens = injected.reduce(0) { $0 + ($1.tokens ?? 0) }
         for e in inPeriod where e.type == .sessionUsage {
             c.sessionInput += e.inputTokens ?? 0; c.sessionOutput += e.outputTokens ?? 0

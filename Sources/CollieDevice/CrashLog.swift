@@ -1,6 +1,9 @@
 import Foundation
 
-public struct CrashEvent: Equatable, Sendable { public var package: String?; public var text: String }
+public struct CrashEvent: Equatable, Sendable {
+    public var package: String?; public var text: String
+    public init(package: String?, text: String) { self.package = package; self.text = text }
+}
 
 /// Groups `adb logcat` lines into crash events (Java FATAL EXCEPTION blocks and native "Fatal signal" lines).
 public struct CrashLog: Sendable {

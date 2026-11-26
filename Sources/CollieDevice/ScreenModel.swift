@@ -8,6 +8,8 @@ import CollieProtocol
 public struct ScreenItem: Equatable, Sendable {
     public var ref: String, label: String, role: String, state: [String], id: String, position: String?
     public var ocr = false
+    /// Inside a list (`role` list ancestor): a variable item, left out of `ScreenSignature` unless it has an id.
+    public var inList = false
 }
 
 /// `device screen`: the UI tree grouped the way a person reads it (title, back, tabs, actions, fields, content,
@@ -70,7 +72,8 @@ public enum ScreenModel {
                          n.checked ? "checked" : nil, n.enabled ? nil : "disabled", n.focused ? "focused" : nil,
                          n.scrollable ? "scrollable" : nil, n.password ? "password" : nil].compactMap { $0 }
             used.insert(i)
-            return ScreenItem(ref: n.ref, label: text ?? label(i, consume: true), role: role, state: state, id: n.id, position: nil, ocr: n.ocr)
+            return ScreenItem(ref: n.ref, label: text ?? label(i, consume: true), role: role, state: state, id: n.id, position: nil, ocr: n.ocr,
+                              inList: ancestors(i).contains { roles[$0] == "list" })
         }
         let top = { (i: Int) in nodes[i].bounds.midY < h * 0.15 }
         let inToolbar = { (i: Int) in ancestors(i).contains { roles[$0] == "toolbar" } }

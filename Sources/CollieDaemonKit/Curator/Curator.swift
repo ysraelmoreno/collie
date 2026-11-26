@@ -89,6 +89,8 @@ actor Curator {
             try? fm.removeItem(at: u)
         }
     }
+    /// ma4 2a: the consolidation pass calls this each cycle, so a parked job leaves `failed/` without a restart.
+    func pruneFailed(now t: Date) { Self.pruneFailed(dir.appendingPathComponent("failed"), now: t) }
     static let queueMax = 200
     static let dedupeWindow: TimeInterval = 60
 
@@ -117,7 +119,8 @@ actor Curator {
     }
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
-    private let dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
+    nonisolated let dir: URL
+    private let runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
     /// Each call is a `curatorRun` event (nil: not logged).
     private let events: MemoryEventLog?
     /// Its CLI is on the user's PATH or in a known dir (`BinaryLocator`); never runs it.
@@ -320,7 +323,7 @@ actor Curator {
     }
 
     /// "Testar com uma chamada": one synthetic call per answer format through `call` (each counts in today's cap and is
-    /// logged); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
+    /// logged with `test: true`, outside the stats' runs and failures: ma4 2d); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
     func testCalls() async throws(ProtocolError) -> [(format: String, result: String)] {
         if case .unavailable(let why) = await availability() { throw ProtocolError(code: .unavailable, message: why) }
         let instructions = "Isto é um teste do Collie, sem dados reais. Responda só com a lista vazia."
@@ -328,7 +331,7 @@ actor Curator {
         for (key, schema) in [("ops", CuratorOps.schema), ("items", ConversationCapture.schema), ("chunks", DocTerms.schema)] {
             let job = CuratorJob(id: UUID(), kind: .correction, store: "", payload: .null, dedupe: "", createdAt: now(), attempts: 0)
             do throws(ProtocolError) {
-                let o = try await call(CuratorCall(instructions: instructions, input: "teste", schema: schema), job: job)
+                let o = try await call(CuratorCall(instructions: instructions, input: "teste", schema: schema), job: job, test: true)
                 if case .object(let x) = o.json, case .array? = x[key] { out.append((key, "ok")) } else { out.append((key, "junk")) }
             } catch {
                 out.append((key, String(error.message.prefix(200))))
@@ -498,7 +501,7 @@ actor Curator {
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
     /// Two exceptions wait without spending one: the runner exhausted (quota) and an environment failure (the provider
     /// unavailable, or `isEnvironmentFailure`); the latter counts as a bad call, so a provider that never works gets paused.
-    private func call(_ c: CuratorCall, job: CuratorJob) async throws(ProtocolError) -> CuratorOutput {
+    private func call(_ c: CuratorCall, job: CuratorJob, test: Bool = false) async throws(ProtocolError) -> CuratorOutput {
         if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
         // the provider is fixed for this call: a switch meanwhile takes the next one
         let p = provider, m = model(p)
@@ -517,7 +520,7 @@ actor Curator {
             var e = MemoryEvent(type: .curatorRun, job: job.kind.rawValue, ok: ok, reason: reason, inputTokens: o?.inputTokens,
                                 outputTokens: o?.outputTokens, costUSD: o?.costUSD,
                                 durationMs: Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000))
-            e.provider = p.rawValue; e.model = m
+            e.provider = p.rawValue; e.model = m; e.test = test ? true : nil
             e.place(store: job.store)
             events?.emit(e)
         }

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import CollieCore
 import CollieDevice
 import CollieProtocol
@@ -28,6 +29,22 @@ actor DeviceService {
     var refs: [UUID: [UINode]] = [:]
     /// The last `device.screen` per panel, for its `changed`.
     var lastScreen: [UUID: Screen] = [:]
+    /// c3: each panel's screen generation, moved synchronously by every action and viewer touch down (`FlowGen`).
+    nonisolated let flowGen = FlowGen()
+    /// b1/c3: the generation the panel's `refs` were proven at: a read whose generation did not move while it was in
+    /// flight. The typed text of a `device.text` is written in clear only while it is still the current one (`flowFresh`).
+    var flowFreshAt: [UUID: Int] = [:]
+    /// wd2: when the read behind `flowFreshAt` ended. A touch outside the viewer (Simulator.app, a physical device, an
+    /// external scrcpy) moves no generation, so the text is in clear only while that read is also `flowReadMaxAge` young.
+    var flowReadAt: [UUID: ContinuousClock.Instant] = [:]
+    static let flowReadMaxAge: Duration = .seconds(2)
+    /// b4/c3: the generation the panel's last `device.screen` started at; once the generation moved past it (an action,
+    /// a viewer touch down) its `flowSig` is "" ("tela gasta"), not the old read's signature again.
+    var screenAt: [UUID: Int] = [:]
+    /// Tests only: stands in for `perform` (the device) under `tracked`, so a race can be staged without adb.
+    var performSeam: (@Sendable (String, Panel, [String: JSONValue]) async throws(ProtocolError) -> JSONValue)?
+    /// The last queued flow log write (d5): the next one waits for it.
+    private var flowWrite: Task<Void, Never>?
     /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
     var simPoints: [UUID: CGSize] = [:]
     /// Panels closed so far: a command that was awaiting adb when its panel closed must not write anything afterwards.
@@ -57,6 +74,21 @@ actor DeviceService {
         var starting = false
     }
     private var crash: [String: CrashWatch] = [:]
+    /// Crash lines per device since its last `device screen` (d2), fed by the crash watchers above.
+    var screenErrors = ScreenErrors()
+    /// Android pixels per dp per serial (`wm density`, d3); only reads that worked (b5: a failed one is tried again).
+    var densities: [String: Double] = [:]
+    /// b5: the `wm density` read in flight per serial; concurrent callers share it.
+    private var densityReads: [String: Task<Double?, Never>] = [:]
+    /// c3: when a serial's last `wm density` read failed (timeout or a fast adb error): no new read for `densityBackoff`.
+    var densityFailed: [String: ContinuousClock.Instant] = [:]
+    /// c3: the background read `densityKnown` started per serial (nil once it is done).
+    var densityProbe: [String: Task<Void, Never>] = [:]
+    static let densityBackoff: Duration = .seconds(30)
+    /// The `adb shell wm density` output of a serial (nil: failed); nil here: the real adb.
+    private let wmDensity: (@Sendable (String) async -> String?)?
+    /// The clock of the density backoff (injected by tests).
+    private let now: @Sendable () -> ContinuousClock.Instant
 
     private let scrcpyServer: URL?
     /// How long a session outlives its last viewer.
@@ -80,12 +112,14 @@ actor DeviceService {
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
          helperApk: @escaping @Sendable () -> URL? = { nil },
          ocr: (any OCRProvider)? = nil, ocrLanguages: [String] = VisionOCR.defaultLanguages,
+         wmDensity: (@Sendable (String) async -> String?)? = nil, now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
         self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
         self.scrcpyServer = scrcpyServer; self.grace = grace; self.helperApk = helperApk
         self.ocr = ocr; self.ocrLanguages = ocrLanguages
+        self.wmDensity = wmDensity; self.now = now
     }
 
     var screens: URL { root.appendingPathComponent("screens") }
@@ -94,6 +128,43 @@ actor DeviceService {
 
     /// The session's one `adb start-server` (shared by concurrent first callers; retried after a failure).
     private var server: Task<Bool, Never>?
+
+    /// Pixels per dp of an Android serial (`wm density`), kept once read; nil: unreadable now (booting, timeout), so
+    /// the next call reads again (b5). One read in flight per serial.
+    func density(_ serial: String) async -> Double? {
+        if let d = densities[serial] { return d }
+        let wm = wmDensity
+        let t = densityReads[serial] ?? Task {
+            let out: String? = if let wm { await wm(serial) } else {
+                try? await tool().run(["shell", "wm", "density"], serial: serial, timeout: .seconds(5)).stdout
+            }
+            return out.flatMap(ScreenAccessibility.density(wm:))
+        }
+        densityReads[serial] = t
+        let d = await t.value
+        if densityReads[serial] == t { densityReads[serial] = nil }
+        if let d { densities[serial] = d }
+        return d
+    }
+
+    /// c3: the density for `device screen`, never waited for: the known value, else nil, and one read started in the
+    /// background unless one is in flight or the last one failed less than `densityBackoff` ago (then no Task at all).
+    /// Any failure backs off, a timeout and a fast adb error alike.
+    /// wd2: so the first Android read of a serial (`device screen`) comes out without density; later ones carry it.
+    func densityKnown(_ serial: String) -> Double? {
+        if let d = densities[serial] { return d }
+        if let t = densityFailed[serial], now() - t < Self.densityBackoff { return nil }
+        guard densityProbe[serial] == nil else { return nil }
+        densityProbe[serial] = Task {
+            let d = await self.density(serial)
+            self.densityProbe[serial] = nil
+            self.densityFailed[serial] = d == nil ? self.now() : nil
+        }
+        return nil
+    }
+
+    /// Waits for the background density read of `serial`, if any (tests).
+    func densitySettled(_ serial: String) async { await densityProbe[serial]?.value }
 
     /// The adb tool, with the server started (`Adb.startServer`) before its first use in this daemon session.
     func tool() async throws(ProtocolError) -> Adb {
@@ -154,7 +225,43 @@ actor DeviceService {
         }
     }
 
-    func run(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+    /// `flow`: who acts and the paddock's `FlowActionLog` (d5); an action that succeeds is recorded when the log is on.
+    func run(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?, flow: FlowRecorder? = nil) async throws(ProtocolError) -> JSONValue {
+        guard let flow, let panel, let action = Self.flowActions[command], flow.log.enabled else { return try await tracked(command, panel: panel, args: args, cwd: cwd) }
+        let before = flowSig(panel.id)   // read before the action: `--then screen` updates it
+        let nodes = refs[panel.id] ?? []
+        // c3: the generation is taken before the action; the text is in clear only when the read was fresh at it and
+        // nothing but the action's own bump moved it until the action ended (a viewer touch meanwhile masks)
+        let gen = flowGen.value(panel.id)
+        let recent = flowReadAt[panel.id].map { now() - $0 <= Self.flowReadMaxAge } ?? false
+        let secure = Self.flowSecure(nodes, fresh: flowFreshAt[panel.id] == gen && recent)
+        let r = try await tracked(command, panel: panel, args: args, cwd: cwd)
+        record(FlowAction(origin: flow.origin, action: action, target: Self.flowTarget(command, args, nodes),
+                          text: command == "device.text" ? { if case .string(let t)? = args["text"] { t } else { nil } }() : nil,
+                          secure: secure || flowGen.value(panel.id) != gen + 1 || (refs[panel.id] ?? []).contains(where: \.password),
+                          sigBefore: before, sigAfter: Self.screenSig(r)), to: flow.log)
+        return r
+    }
+
+    /// `perform`, keeping `flowFreshAt`: an action moves the generation (before it runs: one that fails midway leaves
+    /// the read stale) unless it returns its own screen (`--then screen` reads after it); a read proves the generation
+    /// it started at, only if nothing moved it while the read was in flight (c3).
+    private func tracked(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+        guard let panel else { return try await perform(command, panel: nil, args: args, cwd: cwd) }
+        let id = panel.id
+        if Self.flowActions[command] != nil { flowGen.bump(id) }
+        let gen = flowGen.value(id)
+        let r = if let f = performSeam { try await f(command, panel, args) } else { try await perform(command, panel: panel, args: args, cwd: cwd) }
+        if !closed.contains(id), flowGen.value(id) == gen, Self.flowReads.contains(command) || !Self.screenSig(r).isEmpty {
+            flowFreshAt[id] = gen; flowReadAt[id] = now()
+        }
+        return r
+    }
+
+    /// Whether the panel's `refs` come from a read no action or viewer touch came after (b1, c3).
+    func flowFresh(_ id: UUID) -> Bool { flowFreshAt[id] == flowGen.value(id) }
+
+    private func perform(_ command: String, panel: Panel?, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
@@ -162,15 +269,17 @@ actor DeviceService {
             kickHelper(panel: panel.id, serial: serial)
             await helpers[serial]?.recover()   // H7/A1: a fallback is retried along DeviceHelper.retrySchedule (2, 5, 15, then 30 s)
         }
-        func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
-            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
-            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
+        /// `guarded` (wf1): the node a guarded tap touches, classified in the read it came from; never looked up again.
+        func act(_ c: String, _ a: [String: JSONValue], _ guarded: UINode? = nil) async throws(ProtocolError) -> JSONValue {
+            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd, guarded: guarded) }
+            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd, guarded: guarded)
         }
         func dump() async throws(ProtocolError) -> [UINode] {
             _ = try await act("device.ui", [:])   // the device.ui path: refs updated
             return refs[panel.id] ?? []
         }
         func screen(all: Bool, timing: Bool = false, ocrMode: OCRMode = .auto) async throws(ProtocolError) -> [String: JSONValue] {
+            let gen = flowGen.value(panel.id)   // c3: a touch during this read leaves the screen spent
             let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
             let start = ContinuousClock.now
             var nodes = refs[panel.id] ?? []
@@ -182,16 +291,30 @@ actor DeviceService {
             }
             var screen = ScreenModel.build(nodes)
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
-            if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
+            if !closed.contains(panel.id) { lastScreen[panel.id] = screen; screenAt[panel.id] = gen }
             var o = ScreenModel.json(screen)
+            let sig = ScreenSignature.compute(screen)
+            o["sig"] = .string(sig)
+            if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nsig=\(sig)") }
+            let platform: ScreenAccessibility.Platform = panel.state["platform"] == .string("ios") ? .ios : .android(density: densityKnown(serial))   // c3: never waits for adb
+            if let found = ScreenAccessibility.summary(nodes, platform: platform) {   // d3: only when anything was found
+                let a11y = "ACESSIBILIDADE: " + found
+                o["accessibility"] = .string(found)
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + a11y) }
+            }
             if let read, read.nodes == nil {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
+            }
+            if !closed.contains(panel.id), let lines = screenErrors.read(serial) {   // d2: ERROS DESDE A ÚLTIMA LEITURA, only when any
+                o["errors"] = .array(lines.map { .string($0) })
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\n" + ScreenErrors.block(lines)) }
             }
             guard case .object(let u) = ui else { return o }
             if all { o["tree"] = u["tree"] }
             if timing, case .object(var t)? = u["timingMs"] {
                 t["group"] = Self.ms(ContinuousClock.now - start - (read?.took ?? .zero))
+                t["sig"] = .string(sig)
                 if let read {
                     t["ocrMs"] = Self.ms(read.took); t["ocrLevel"] = .string(OCRLevel.accurate.rawValue); t["trigger"] = .string(read.trigger)
                 }
@@ -277,18 +400,43 @@ actor DeviceService {
         }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
         let quiet = try Self.quietMs(args)
+        // wf1: `guard: "destructive"` (the FlowRunner's): the target classified in the read this command resolves it in
+        let step = command == "device.tap" || command == "device.swipe" ? try Self.guardStep(command, args) : nil
+        /// The read the command resolves its target in; guarded, a failing read refuses (fail-closed).
+        func read() async throws(ProtocolError) -> [UINode] {
+            do { return try await dump() } catch { throw step == nil ? error : FlowClassifier.unread(error.message) }
+        }
         var args = args
         var viaOCR: OCRRead?
+        var touched: UINode?   // guarded: the node the tap touches, from the read it was classified on
         if command == "device.tap", let pick = try Self.tapPick(args) {
-            _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
-            let nodes = refs[panel.id] ?? []
-            do { args["ref"] = .string(try UITree.target(nodes, text: pick.text, id: pick.id, nth: pick.nth).ref) } catch where error.code == .notFound {
+            var nodes = try await read()   // always a fresh dump: cached refs may be stale
+            do { touched = try UITree.target(nodes, text: pick.text, id: pick.id, nth: pick.nth) } catch where error.code == .notFound {
                 guard pick.id == nil, let f = await ocrFallback(nodes, ocrMode) else { throw error }
-                args["ref"] = .string(try UITree.target(f.nodes, text: pick.text, id: nil, nth: pick.nth).ref)   // an OCR ref: its box centre
+                nodes = f.nodes
+                touched = try UITree.target(f.nodes, text: pick.text, id: nil, nth: pick.nth)   // an OCR ref: its box centre
                 viaOCR = f.read
             }
+            args["ref"] = touched.map { .string($0.ref) }
+            if let step { try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched) }
+        } else if var step {
+            var named: UINode?   // wf2: a ref names a node of the last read; the tap reads again and touches it there
+            if case .string(let ref)? = args["ref"] {
+                guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
+                    throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
+                }
+                named = n
+            }
+            let nodes = try await read()   // a ref or a point: classified in a fresh read
+            if let named {
+                guard let m = FlowClassifier.refound(named, in: nodes) else {
+                    throw ProtocolError(code: .conflict, message: "ref \(step.target.dropFirst(4)) is no longer on the screen read again (the screen changed); tap refused, nothing touched")
+                }
+                touched = m; args["ref"] = .string(m.ref); step.target = "ref:" + m.ref
+            }
+            try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched)
         }
-        var r = try await act(command, args)
+        var r = try await act(command, args, step == nil ? nil : touched)
         if let read = viaOCR, case .object(var o) = r {
             o.merge(Self.ocrNote, uniquingKeysWith: { _, b in b })
             if Self.timing(args) { o["timingMs"] = Self.ocrTiming(read) }
@@ -483,6 +631,23 @@ actor DeviceService {
         return (text, id, try int(a, "nth", 1...10_000))
     }
 
+    /// wf1: a `device.tap`/`device.swipe` with `guard: "destructive"`: its target as a plan step (`FlowClassifier.labels`'s
+    /// vocabulary); nil without `guard`. Any other `guard` value: invalidArgs (never read as off).
+    static func guardStep(_ command: String, _ a: [String: JSONValue]) throws(ProtocolError) -> FlowPlan.Step? {
+        switch a["guard"] {
+        case nil, .null?: return nil
+        case .string("destructive")?: break
+        default: throw ProtocolError(code: .invalidArgs, message: "guard only takes 'destructive'")
+        }
+        func s(_ k: String) -> String? { if case .string(let v)? = a[k], !v.isEmpty { v } else { nil } }
+        func xy(_ ks: [String]) throws(ProtocolError) -> String {
+            try ks.map { k throws(ProtocolError) in try int(a, k).map(String.init) ?? "" }.joined(separator: ",")
+        }
+        if command == "device.swipe" { return FlowPlan.Step(action: "swipe", target: try xy(["x1", "y1", "x2", "y2"])) }
+        let target = if let t = s("text") { t } else if let i = s("id") { "id:" + i } else if let r = s("ref") { "ref:" + r } else { try xy(["x", "y"]) }
+        return FlowPlan.Step(action: "tap", target: target)
+    }
+
     /// A duration in whole ms, for `--timing`'s `timingMs`.
     static func ms(_ d: Duration) -> JSONValue { .number((d / .milliseconds(1)).rounded()) }
     /// `--timing` set (a flag arrives as true or "true").
@@ -528,10 +693,117 @@ actor DeviceService {
         return v
     }
 
+    // MARK: flow log (d5)
+
+    static let flowActions = ["device.tap": "tap", "device.text": "text", "device.swipe": "swipe", "device.key": "key", "device.launch": "launch"]
+
+    /// The commands that read the whole tree into `refs` (b1).
+    static let flowReads: Set<String> = ["device.ui", "device.screen", "device.find"]
+
+    /// b1, fails closed: the typed text is masked unless the last read is fresh (no action since), has nodes and none of
+    /// them is a password field. ponytail: any password field masks; over-masks a screen with a password field and
+    /// another one, never leaks.
+    static func flowSecure(_ nodes: [UINode], fresh: Bool) -> Bool { !fresh || nodes.isEmpty || nodes.contains(where: \.password) }
+
+    /// The `sig` of the screen an action returned (`--then screen`); "" when none.
+    static func screenSig(_ r: JSONValue) -> String {
+        if case .object(let o) = r, case .object(let s)? = o["screen"], case .string(let sig)? = s["sig"] { sig } else { "" }
+    }
+
+    /// The signature of the panel's last `device.screen`; "" before any, or (b4) once an action changed the screen after it.
+    func flowSig(_ panel: UUID) -> String { screenAt[panel] != flowGen.value(panel) ? "" : lastScreen[panel].map(ScreenSignature.compute) ?? "" }
+
+    /// What the action acted on, from its args (`nodes`: the refs before it, for `--ref`).
+    static func flowTarget(_ command: String, _ a: [String: JSONValue], _ nodes: [UINode]) -> String {
+        func s(_ k: String) -> String? { if case .string(let v)? = a[k], !v.isEmpty { v } else if case .number(let n)? = a[k] { String(Int(n)) } else { nil } }
+        switch command {
+        case "device.tap":
+            if let t = s("text") { return t }
+            if let i = s("id") { return "id:" + i }
+            if let r = s("ref") { return nodes.first { $0.ref == r }.map { $0.text.isEmpty ? ($0.desc.isEmpty ? r : $0.desc) : $0.text } ?? r }
+            return [s("x"), s("y")].compactMap { $0 }.joined(separator: ",")
+        case "device.swipe": return [s("x1"), s("y1"), s("x2"), s("y2")].compactMap { $0 }.joined(separator: ",")
+        case "device.key": return s("key") ?? ""
+        case "device.launch": return [s("package"), s("bundle"), s("activity")].compactMap { $0 }.joined(separator: "/")
+        default: return ""
+        }
+    }
+
+    /// Writes off the actor, in order (each write waits for the one before), so the command does not wait for the disk
+    /// (a rotation reads at most `FlowActionLog.readCap`, 10 MiB, per kept file). A failure only reaches the daemon's log (stderr).
+    func record(_ a: FlowAction, to log: FlowActionLog) {
+        let prev = flowWrite
+        flowWrite = Task.detached {
+            await prev?.value
+            do { try log.append(a) } catch { FileHandle.standardError.write(Data("collied: flow log \(log.file.path): \(error)\n".utf8)) }
+        }
+    }
+
+    /// Waits for the writes queued so far (tests; the daemon never waits).
+    func flowFlushed() async { await flowWrite?.value }
+
+    /// A tap from the panel's viewer: on iOS a `SimInput.tap` (points), on Android a scrcpy touch up within 16 px of its
+    /// down (frame pixels; farther is a drag, not recorded). `down`: the viewer's last touch down. Returns "x,y".
+    static func panelTap(_ d: Data, ios: Bool, down: inout (x: Int32, y: Int32)?,
+                         decode: @Sendable (Data) -> SimInput? = decodeSim) -> String? {
+        if ios {
+            guard case .tap(let x, let y)? = decode(d) else { return nil }
+            return "\(Int(x)),\(Int(y))"
+        }
+        let b = [UInt8](d)
+        guard b.count == 32, b[0] == 2, b[1] <= 1 else { return nil }   // touch, down or up
+        func i32(_ at: Int) -> Int32 { Int32(bitPattern: b[at..<(at + 4)].reduce(UInt32(0)) { $0 << 8 | UInt32($1) }) }
+        let p = (x: i32(10), y: i32(14))
+        if b[1] == 0 { down = p; return nil }
+        defer { down = nil }
+        guard let s = down, abs(s.x - p.x) <= 16, abs(s.y - p.y) <= 16 else { return nil }
+        return "\(p.x),\(p.y)"
+    }
+
+    @Sendable static func decodeSim(_ d: Data) -> SimInput? { try? JSONDecoder().decode(SimInput.self, from: d) }
+
+    /// The viewer tap of frame `d` to record, nil when none or the log is off. b5: iOS asks `logOn` before decoding
+    /// (every frame is JSON); Android decodes first (a byte check that also keeps `down` across the toggle).
+    static func viewerTap(_ d: Data, ios: Bool, logOn: () -> Bool, down: OSAllocatedUnfairLock<(x: Int32, y: Int32)?>,
+                          decode: @escaping @Sendable (Data) -> SimInput? = decodeSim) -> String? {
+        if ios, !logOn() { return nil }
+        guard let t = down.withLock({ panelTap(d, ios: ios, down: &$0, decode: decode) }), logOn() else { return nil }
+        return t
+    }
+
+    /// c3: whether viewer frame `d` may change the screen. Android: a scrcpy touch only on its down (a move or the up
+    /// belongs to a touch already counted), any other control message (key, text, scroll) always. iOS: the viewer sends
+    /// whole gestures (`DevicePanel` turns a press, its drag and its lift into one tap or swipe at the lift), so each
+    /// decoded `SimInput` is the gesture's down; a frame that is not one (`SimSession` drops it) changes nothing.
+    static func viewerChangesScreen(_ d: Data, ios: Bool, decode: @Sendable (Data) -> SimInput? = decodeSim) -> Bool {
+        if ios { return decode(d) != nil }
+        let b = [UInt8](d)
+        guard let type = b.first else { return false }
+        if type == 2, b.count == 32 { return b[1] == 0 }
+        return true
+    }
+
+    /// c3: one viewer frame, synchronously (no Task per frame): the screen generation moves (`viewerChangesScreen`)
+    /// before the session gets the input (`forward`), so no read that ends after the input counts as fresh; then the
+    /// tap to record (`viewerTap`), nil when none or the log is off.
+    static func viewerFrame(_ d: Data, ios: Bool, panel: UUID, gen: FlowGen, forward: (Data) -> Void, flowLog: FlowActionLog?,
+                            down: OSAllocatedUnfairLock<(x: Int32, y: Int32)?>, decode: @escaping @Sendable (Data) -> SimInput? = decodeSim) -> String? {
+        if viewerChangesScreen(d, ios: ios, decode: decode) { gen.bump(panel) }
+        forward(d)
+        guard let flowLog else { return nil }
+        return viewerTap(d, ios: ios, logOn: { flowLog.enabled }, down: down, decode: decode)
+    }
+
+    /// Records a panel tap (origin `panel`); no screen comes back, so `sigAfter` is empty.
+    func recordPanelTap(panel: UUID, target: String, log: FlowActionLog) {
+        record(FlowAction(origin: "panel", action: "tap", target: target, sigBefore: flowSig(panel)), to: log)
+    }
+
     // MARK: video
 
     /// A `ui.device` viewer of `panel`: opens `conn` and joins the panel's session, starting one if there is none.
-    func attach(panel: Panel, conn: StreamConn, ok: Response) {
+    /// `flowLog`: the panel's paddock log (d5), where its taps are recorded when it is on.
+    func attach(panel: Panel, conn: StreamConn, ok: Response, flowLog: FlowActionLog? = nil) {
         idle.removeValue(forKey: panel.id)?.cancel()
         let s: any ViewerSession
         let serial = { if case .string(let v)? = panel.state["serial"] { v } else { "" } }()
@@ -553,7 +825,16 @@ actor DeviceService {
                 catch { dev.end("error", error.message) }
             }
         }
-        conn.open(ok, onFrame: { [unowned conn, weak s] f in if case .in(let d) = f { s?.input(d, from: conn) } },
+        let ios = panel.state["platform"] == .string("ios"), down = OSAllocatedUnfairLock<(x: Int32, y: Int32)?>(initialState: nil), id = panel.id
+        let gen = flowGen
+        conn.open(ok, onFrame: { [unowned conn, weak s] f in
+                      guard case .in(let d) = f else { return }
+                      // c3: the generation moves (lock, in order) before the device gets the touch: a read in flight
+                      // then is never taken as fresh, and a `device.text` around it is masked
+                      guard let t = Self.viewerFrame(d, ios: ios, panel: id, gen: gen, forward: { s?.input($0, from: conn) },
+                                                     flowLog: flowLog, down: down), let flowLog else { return }
+                      Task { await self.recordPanelTap(panel: id, target: t, log: flowLog) }
+                  },
                   onClose: { [weak s] in Task { if let s { await self.left(s, conn) } } })
         if !s.join(conn) {   // ended between the check and the join (another thread): tell the viewer, it reconnects
             conn.send(.deviceStatus(state: "ended", message: nil)); conn.closeAfterFlush()
@@ -587,6 +868,8 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
+        flowFreshAt[id] = nil; flowReadAt[id] = nil; screenAt[id] = nil
+        flowGen.bump(id)   // c3: never reset (monotonic): a read still in flight can not match it again
         lastScreen[id] = nil
         simPoints[id] = nil
         idle.removeValue(forKey: id)?.cancel()
@@ -680,6 +963,7 @@ actor DeviceService {
             for u in Set(watchedIOS.values) { if let e = IPSCrash.parse(data, udid: u) { out.append((u, e, name)) } }
         }
         for (u, e, name) in out {
+            screenErrors.record(u, e)
             await toPanels(of: u, "device.crash", ["serial": .string(u), "package": e.package.map { .string($0) } ?? .null, "text": .string(e.text),
                                                    "path": .string(dir.appendingPathComponent(name).path)])
         }
@@ -732,6 +1016,7 @@ actor DeviceService {
 
     private func emitCrashes(_ serial: String, _ events: [CrashEvent]) async {
         for e in events {
+            screenErrors.record(serial, e)
             await toPanels(of: serial, "device.crash", ["serial": .string(serial), "package": e.package.map { .string($0) } ?? .null,
                                                         "text": .string(e.text)])
         }
@@ -761,7 +1046,8 @@ actor DeviceService {
     /// Daemon stop: ends every session and watcher and waits (≤ 1.5 s) for their groups, so the delayed KILL is not lost
     /// with the process; and for the sessions' `forward --remove` (≤ its 5 s adb timeout).
     func stop() async {
-        refs = [:]
+        refs = [:]; flowFreshAt = [:]; flowReadAt = [:]; screenAt = [:]
+        flowGen.bumpAll()   // c3: not zeroed: reads in flight stay stale
         watched = [:]; online = [:]; watchedIOS = [:]; booted = [:]
         poller?.cancel(); poller = nil
         let live = Array(sessions.values); sessions = [:]
@@ -775,4 +1061,16 @@ actor DeviceService {
         let deadline = ContinuousClock.now + .milliseconds(1500)
         while pids.contains(where: { kill(-$0, 0) == 0 }) && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
     }
+}
+
+/// c3: the screen generation per panel, moved under a lock by every action (`tracked`) and every viewer touch down
+/// (`viewerFrame`, on the connection's thread, before the device gets it). Never reset, only moved up: a read or a
+/// `device.text` compares the value it started at with the one it ends at.
+/// ponytail: one Int per panel ever touched for the daemon's life, like `closed`.
+final class FlowGen: Sendable {
+    /// `all`: moved by `bumpAll`, part of every panel's value (also one never bumped yet).
+    private let gens = OSAllocatedUnfairLock<(all: Int, panel: [UUID: Int])>(initialState: (0, [:]))
+    func value(_ id: UUID) -> Int { gens.withLock { $0.all + ($0.panel[id] ?? 0) } }
+    func bump(_ id: UUID) { gens.withLock { $0.panel[id, default: 0] += 1 } }
+    func bumpAll() { gens.withLock { $0.all += 1 } }
 }

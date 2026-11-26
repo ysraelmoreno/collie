@@ -47,18 +47,23 @@ enum LifecycleRules {
     static func effective(_ e: LifecycleEntry, _ r: MemoryRecord) -> LifecycleEntry {
         guard e.tier != .provisional, let h = e.textHash, h != textHash(r) else { return e }
         var x = e
-        x.tier = .provisional; x.usefulUses = []; x.evidencedUses = nil; x.textHash = nil
+        x.tier = .provisional; x.usefulUses = []; x.evidencedUses = nil; x.textHash = nil; x.earnedBy = nil
         return x
     }
 
+    /// provisional → earned (ma3): 2 uses on 2 days by 2 sessions, at least one of them with evidence (cite, `memory get`,
+    /// `flag --useful`), and no open contest nor wrong/outdated flag. Implicit uses alone stay provisional. An entry
+    /// already stored earned keeps it (no mass demotion: the rule is for new promotions); the pass writes `earnedBy`.
     static func tier(for e: LifecycleEntry, now: Date) -> LifecycleTier {
         if e.tier == .longTerm { return e.contestedNow ? .earned : .longTerm }
         guard e.tier == .provisional, !contested(e) else { return e.tier }
         let u = e.usefulUses
         return u.count >= earnedUses && Set(u.map(\.day)).count >= earnedDays && Set(u.map(\.session)).count >= earnedSessions
+            && !(e.evidencedUses ?? []).intersection(u).isEmpty
             ? .earned : .provisional
     }
 
+    /// Needs a tier that is not provisional, so the mass promotion by "vacuous use" (implicit uses only) is barred by `tier`.
     static func promotionCandidate(_ e: LifecycleEntry, now: Date) -> Bool {
         guard e.tier != .longTerm, !e.contestedNow, e.usefulUses.count >= longTermUses else { return false }
         if let c = e.lastContestedAt, now.timeIntervalSince(c) < contestedWindow { return false }

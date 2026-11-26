@@ -1,0 +1,20 @@
+{
+  "apiVersion": 2, "id": "flow", "name": "Fluxos", "version": "0.1.0", "license": "MIT",
+  "placements": ["dock.right", "canvas"], "defaultPlacement": "dock.right",
+  "ui": "ui/index.html",
+  "service": { "base": "http://127.0.0.1:8792", "start": "./run.sh", "health": "/healthz", "cwd": "Examples/apps/fluxos" },
+  "notify": false,
+  "commands": [
+    { "name": "goals", "summary": "Lista as metas do app (nome -> assinatura de tela).",
+      "runs": "http", "http": { "method": "GET", "path": "/api/goals" }, "timeout": 15 },
+    { "name": "go", "summary": "Devolve o plano (menor trajeto) até a meta, no formato de collie device run --plan. Só planeja: nunca age no aparelho.",
+      "runs": "http", "http": { "method": "GET", "path": "/api/go" }, "timeout": 15,
+      "params": [ { "name": "goal", "type": "string", "required": true, "positional": true, "help": "nome da meta (ou assinatura de tela)" },
+                  { "name": "from", "type": "string", "help": "assinatura da tela de partida (padrão: a última do log)" } ] },
+    { "name": "show", "summary": "Mostra a meta: assinatura e arestas atuais que entram e saem dela.",
+      "runs": "http", "http": { "method": "GET", "path": "/api/show" }, "timeout": 15,
+      "params": [ { "name": "goal", "type": "string", "required": true, "positional": true, "help": "nome da meta" } ] },
+    { "name": "learn", "summary": "Reprocessa o log de ações (actions.jsonl) e reconstrói o grafo, mantendo as metas.",
+      "runs": "http", "http": { "method": "POST", "path": "/api/learn" }, "timeout": 60 }
+  ]
+}

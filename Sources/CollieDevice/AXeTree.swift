@@ -17,9 +17,10 @@ public enum AXeTree {
         func walk(_ e: [String: Any], _ depth: Int) {
             if truncated { return }
             let label = (e["AXLabel"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            let value = (e["AXValue"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            let id = e["AXUniqueId"] as? String ?? ""
             let type = e["type"] as? String ?? ""
+            let password = type == "SecureTextField"   // b1: its value (the typed secret) never enters the node
+            let value = password ? "" : (e["AXValue"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let id = e["AXUniqueId"] as? String ?? ""
             let enabled = e["enabled"] as? Bool != false
             let clickable = enabled && clickableTypes.contains(type)
             let scrollable = scrollTypes.contains(type)
@@ -30,7 +31,8 @@ public enum AXeTree {
                 nodes.append(UINode(ref: "e\(nodes.count + 1)", cls: type, text: label, desc: value, id: id,
                                     bounds: rect(e["frame"]), clickable: clickable, depth: depth,
                                     selected: traits.contains("selected"), checked: toggleTypes.contains(type) && value == "1",
-                                    enabled: enabled, focused: traits.contains("focused"), scrollable: scrollable))
+                                    enabled: enabled, focused: traits.contains("focused"), scrollable: scrollable,
+                                    password: password))
             }
             for c in e["children"] as? [[String: Any]] ?? [] { walk(c, depth + 1) }
         }

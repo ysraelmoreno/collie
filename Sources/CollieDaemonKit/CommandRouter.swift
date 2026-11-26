@@ -359,7 +359,7 @@ actor CommandRouter {
                       let p = ws.panels.first(where: { $0.id == id && $0.pluginId == "device" }) else {
                     throw ProtocolError(code: .notFound, message: "No device panel '\(str(req, "panel") ?? "")'")
                 }
-                await devices.attach(panel: p, conn: conn, ok: ok)
+                await devices.attach(panel: p, conn: conn, ok: ok, flowLog: flowLog(p.paddockId))
             case "ui.snapshot": return Response(id: req.id, ok: true, result: try await snapshot())
             case "ui.usage":
                 let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
@@ -479,6 +479,12 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("app.") {   // list/attach: admin or terminal; approve: admin only
                 return Response(id: req.id, ok: true, result: try await appCommand(req, peer: peer))
+            }
+            if req.command == "device.run" {   // d6: the plan executor; reach as the device commands
+                return Response(id: req.id, ok: true, result: try await deviceRunCommand(req, peer: peer))
+            }
+            if req.command == "device.flow" {   // on: the user only; off/status: a terminal of the paddock too
+                return Response(id: req.id, ok: true, result: try await deviceFlowCommand(req, peer: peer))
             }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let http = plugin.source == .builtIn ? nil : try await appHTTPCommand(req, plugin: plugin, peer: peer)

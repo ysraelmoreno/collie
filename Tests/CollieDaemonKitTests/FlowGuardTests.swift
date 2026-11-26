@@ -472,7 +472,7 @@ struct FlowGuardRefTests {
         let fx = try Droid(xml([ax(id: "com.shop:id/footer", cls: "LinearLayout", "[0,1800][1080,2200]",
                                    [ax("Finalizar pedido", cls: "TextView", "[340,1950][740,2050]", clickable: true)])]))
         _ = try await fx.run("device.ui")
-        let r = try #require(await fx.svc.refs[fx.panel.id]?.first { $0.id == "com.shop:id/footer" }?.ref)
+        let r = try #require(await fx.svc.refs[fx.panel.id]?.first { $0.id.hasSuffix("footer") }?.ref)
         #expect(destructive(await failure { try await fx.run("device.tap", with(["ref": .string(r)])) }))
         #expect(fx.touches.isEmpty, "\(fx.touches)")
         await fx.cleanup()
@@ -499,7 +499,8 @@ struct FlowGuardRefTests {
         let plan = try FlowPlan.parse(Data(#"{"steps":[{"action":"tap","target":"ref:\#(r)"},{"action":"tap","target":"Menu"},{"action":"tap","target":"150,550"},{"action":"key","target":"Back"}]}"#.utf8))
         #expect(try await runner.run(plan) == .object(["ok": .bool(true), "steps": .number(4)]))
         #expect(dumps() - before == 3, "\(fx.adb)")   // the three taps' own reads; the key reads none
-        #expect(fx.touches == ["-s R58M shell input tap 150 50", "-s R58M shell input tap 150 550", "-s R58M shell input tap 150 550"], "\(fx.touches)")
+        #expect(fx.touches == ["-s R58M shell input tap 150 50", "-s R58M shell input tap 150 550", "-s R58M shell input tap 150 550",
+                              "-s R58M shell input keyevent 4"], "\(fx.touches)")
         await fx.cleanup()
     }
 

@@ -143,7 +143,7 @@ enum UpdateModel {
 
     /// An `app.update.*` error for the page: a daemon from before the updater (unknown command) needs a restart.
     static func loadError(_ e: ProtocolError) -> String {
-        if e.message.contains(RestartHint.text) || RestartHint.wrap(e).message.contains(RestartHint.text) { return restartForChecks }
+        if RestartHint.isHint(e.message) || RestartHint.isHint(RestartHint.wrap(e).message) { return restartForChecks }
         return e.message
     }
 

@@ -179,7 +179,7 @@ public enum ScreenModel {
 
     /// `{text,title,back,tabs[],actions[],fields[],lists[],floating[],changed[],more}`; items `{ref,label,role,state[],id?,position?,source?}`
     /// (`source: "ocr"` on OCR items).
-    public static func json(_ s: Screen) -> [String: JSONValue] {
+    public static func json(_ s: Screen, en: Bool = false) -> [String: JSONValue] {
         func j(_ i: ScreenItem) -> JSONValue {
             var o: [String: JSONValue] = ["ref": .string(i.ref), "label": .string(i.label), "role": .string(i.role),
                                           "state": .array(i.state.map { .string($0) })]
@@ -188,7 +188,7 @@ public enum ScreenModel {
             if i.ocr { o["source"] = .string("ocr") }
             return .object(o)
         }
-        return ["text": .string(text(s)), "title": s.title.map { .string($0) } ?? .null, "back": s.back.map(j) ?? .null,
+        return ["text": .string(text(s, en: en)), "title": s.title.map { .string($0) } ?? .null, "back": s.back.map(j) ?? .null,
                 "tabs": .array(s.tabs.map(j)), "actions": .array(s.actions.map(j)), "fields": .array(s.fields.map(j)),
                 "lists": .array(s.content.map(j)), "floating": .array(s.floating.map(j)),
                 "changed": .array(s.changed.map { .string($0) }), "more": .number(Double(s.more))]

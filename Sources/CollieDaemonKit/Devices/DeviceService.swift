@@ -181,9 +181,9 @@ actor DeviceService {
                 if let found = read?.nodes, !found.isEmpty, !closed.contains(panel.id) { nodes += found; refs[panel.id] = nodes }
             }
             var screen = ScreenModel.build(nodes)
-            screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
+            screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen, en: L10n.current == .en)
             if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
-            var o = ScreenModel.json(screen)
+            var o = ScreenModel.json(screen, en: L10n.current == .en)
             if let read, read.nodes == nil {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
@@ -236,7 +236,7 @@ actor DeviceService {
             guard r.ok else {
                 let limit = w.timeoutMs % 1000 == 0 ? "\(w.timeoutMs / 1000) s" : "\(w.timeoutMs) ms"
                 throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit)\(w.clamped ? " (" + Self.clampNote + ")" : ""). Last screen:\n"
-                                    + ScreenModel.text(ScreenModel.build(r.last)))
+                                    + ScreenModel.text(ScreenModel.build(r.last), en: L10n.current == .en))
             }
             var o: [String: JSONValue] = ["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))]
             if w.clamped { o["clamped"] = .bool(true); o["warning"] = .string(Self.clampNote) }

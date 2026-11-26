@@ -85,6 +85,7 @@ extension CommandRouter {
         }) { c, a async throws(ProtocolError) in
             try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
         }
+        runner.guarded = true   // wf1: each tap/swipe classifies what it touches, in its own read (no flag turns it off)
         if let gone = ClientHangup.current { runner.hungUp = { gone.isSet } }   // c2: the socket's hangup, read between steps
         return try await runner.run(plan)
     }

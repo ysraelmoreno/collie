@@ -93,7 +93,10 @@ extension DeviceService {
         }
     }
 
-    func runAndroid(_ command: String, panel: Panel, serial: String, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+    /// `guarded` (wf1): a guarded tap's node, classified in the read it came from: touched as is, never looked up again; a
+    /// stale helper path is read again and the node found again classified in that read, else refused (never its old centre).
+    func runAndroid(_ command: String, panel: Panel, serial: String, args: [String: JSONValue], cwd: String?,
+                    guarded: UINode? = nil) async throws(ProtocolError) -> JSONValue {
         let tool = try await tool()
         func alive() throws(ProtocolError) { try self.alive(panel) }
         guard try await devices().contains(where: { $0.serial == serial && $0.state == "device" }) else {
@@ -170,7 +173,7 @@ extension DeviceService {
             return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
-                guard var n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
+                guard var n = guarded ?? refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
                 try FlowClassifier.checkPin(args, n)   // we1: the node classified, or refused
@@ -183,10 +186,16 @@ extension DeviceService {
                         refs[panel.id] = fresh
                         if let m = fresh.first(where: { $0.cls == n.cls && $0.text == n.text && $0.desc == n.desc && $0.id == n.id }), let p = m.path {
                             try FlowClassifier.checkPin(args, m)   // we1: the node found again is checked too
+                            // wf1: the node found again is classified in the read it was found in
+                            if guarded != nil { try FlowClassifier.guardCheck(FlowPlan.Step(action: "tap", target: "ref:" + m.ref), nodes: fresh, touching: m) }
                             n = m; done = await click(p) ?? false
                         }
                     }
                     if done { return .object([:]) }
+                    // wf1, fail-closed: the centre left is that of a node no read classified any more
+                    if guarded != nil {
+                        throw ProtocolError(code: .conflict, message: "ref \(ref) is gone from the screen read again (or has no path there); tap refused, its old centre not touched")
+                    }
                 }
                 return try await tapAt(n.center.x, n.center.y)
             }

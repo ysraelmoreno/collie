@@ -12,8 +12,8 @@ import CollieProtocol
 /// `dump` with one node (or `dumpNodes`) after `emptyDumps` empty ones; `tap`/`swipe`/`click`/`text`/`global` are
 /// acknowledged, `click` answering `node gone` while `goneClicks` lasts. `subscribe` is acknowledged and the connection
 /// kept: an event is pushed at each of `pushes` (ms after the ack), then it is closed with `drop`, else held open.
-/// `ops` logs each request line.
-private final class FakeHelper: @unchecked Sendable {
+/// `ops` logs each request line. `set(dumps:)` (wf1): each dump takes the next answer of the list, then the last stays.
+final class FakeHelper: @unchecked Sendable {
     let port: UInt16
     private let lfd: Int32
     private let lock = NSLock()
@@ -58,6 +58,9 @@ private final class FakeHelper: @unchecked Sendable {
 
     func set(emptyDumps: Int) { lock.withLock { state.emptyDumps = emptyDumps } }
 
+    func set(dumps: [String]) { lock.withLock { queue = dumps.map { $0.replacingOccurrences(of: "\n", with: "") } } }
+    private var queue: [String] = []
+
     func set(pushes: [Int], drop: Bool = false) { lock.withLock { self.pushes = pushes; self.drop = drop } }
 
     private func subscribed(_ c: Int32) {
@@ -86,7 +89,11 @@ private final class FakeHelper: @unchecked Sendable {
             got.append(contentsOf: b[0..<n])
         }
         let req = (try? JSONSerialization.jsonObject(with: got.prefix { $0 != 0x0A })) as? [String: Any] ?? [:]
-        let nodes = lock.withLock { () -> String? in log.append(String(decoding: got.prefix { $0 != 0x0A }, as: UTF8.self)); return dumpNodes }
+        let nodes = lock.withLock { () -> String? in
+            log.append(String(decoding: got.prefix { $0 != 0x0A }, as: UTF8.self))
+            if req["op"] as? String == "dump", !queue.isEmpty { dumpNodes = queue.removeFirst() }
+            return dumpNodes
+        }
         let reply: String
         switch req["op"] as? String {
         case "hello": reply = #"{"ok":true,"version":\#(s.version),"sdk":37,"w":1080,"h":2400,"id":1}"#

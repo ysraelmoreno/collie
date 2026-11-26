@@ -172,6 +172,30 @@ enum FlowClassifier {
         throw ProtocolError(code: .conflict, message: "ref \(n.ref) is no longer the node classified (the screen was read again meanwhile); tap refused")
     }
 
+    /// wf1: how a guarded command's refusal of a destructive target starts (`FlowRunner` turns it into `refused: destructive`).
+    static let refusedPrefix = "destructive:"
+
+    /// wf1: the guard of `device.tap`/`device.swipe` (`guard: "destructive"`, sent by the `FlowRunner`): `s`, the command's
+    /// target, classified on `nodes`, the read the command resolved it in, plus `n`, the node it will touch (nil: a point),
+    /// as a `ref:` of that read (its subtree, clickable ancestor and what lies under its centre). Destructive: `.conflict`
+    /// with `refusedPrefix`. Fail-closed: a read with no nodes, or an OCR node with no label, is a `.conflict` too.
+    /// Either way nothing is touched.
+    static func guardCheck(_ s: FlowPlan.Step, nodes: [UINode], touching n: UINode?) throws(ProtocolError) {
+        guard !nodes.isEmpty else { throw unread("the read has no nodes") }
+        if let n, n.ocr, (n.text + n.desc).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw ProtocolError(code: .conflict, message: "the OCR read no label for \(s.target); \(s.action) refused, nothing touched")
+        }
+        let all = labels(s, nodes: nodes) + (n.map { labels(FlowPlan.Step(action: "tap", target: "ref:" + $0.ref), nodes: nodes) } ?? [])
+        if let l = all.first(where: destructive) {
+            throw ProtocolError(code: .conflict, message: "\(refusedPrefix) \(s.action) \(s.target) acts on '\(l)'; refused before touching (only the user's --confirm-destructive runs it)")
+        }
+    }
+
+    /// wf1, fail-closed: a guarded command that cannot read the screen it would classify touches nothing.
+    static func unread(_ why: String) -> ProtocolError {
+        ProtocolError(code: .conflict, message: "cannot read the screen to classify (\(why)); refused, nothing touched")
+    }
+
     /// The point a tap `x,y` or a swipe `x1,y1,…` starts at; nil for other targets.
     static func point(_ s: FlowPlan.Step) -> CGPoint? {
         let p = s.target.split(separator: ",", omittingEmptySubsequences: false).compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -259,6 +283,10 @@ struct FlowRunner: Sendable {
     /// wd1: the classification and the step to run in its place (`FlowClassifier.resolve`: a tap pinned to the ref classified).
     typealias Resolve = @Sendable (FlowPlan.Step) async throws(ProtocolError) -> (destructive: Bool, step: FlowPlan.Step)
     var confirmed = false
+    /// wf1: every tap and swipe of an unconfirmed plan carries `guard: "destructive"`, so the command classifies the node it
+    /// resolved in its own read and refuses it before touching (`FlowClassifier.guardCheck`). `device.run` sets it; off
+    /// only for tests of the runner's own steps.
+    var guarded = false
     let resolve: Resolve
     let act: Act
     /// c2: the plan's client is gone; read between steps.
@@ -305,8 +333,13 @@ struct FlowRunner: Sendable {
             }
             var (command, args) = try Self.command(step)
             if step.expectSig != nil { args["then"] = .string("screen"); args["settle"] = .string("stable") }
+            if guarded, !confirmed, command == "device.tap" || command == "device.swipe" { args["guard"] = .string("destructive") }
             let r: JSONValue
             do { r = try await act(command, args) } catch {
+                if error.code == .conflict, error.message.hasPrefix(FlowClassifier.refusedPrefix) {   // wf1: the command's own guard
+                    return result(["ok": .bool(false), "refused": .string("destructive"), "at": .number(Double(i + 1)),
+                                   "done": .number(Double(i))])
+                }
                 var m = "step \(i + 1) (\(planned.action) \(planned.target)): \(error.message)"
                 if !errors.isEmpty, let e = try? JSONEncoder().encode(JSONValue.array(errors)) { m += "; errors so far: " + String(decoding: e, as: UTF8.self) }
                 throw ProtocolError(code: error.code, message: m)

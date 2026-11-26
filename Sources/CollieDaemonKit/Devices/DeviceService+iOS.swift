@@ -29,7 +29,9 @@ extension DeviceService {
         return (png, CGFloat(size.width) / points.width)
     }
 
-    func runIOS(_ command: String, panel: Panel, udid: String, args: [String: JSONValue], cwd: String?) async throws(ProtocolError) -> JSONValue {
+    /// `guarded` (wf1): a guarded tap's node, classified in the read it came from: touched as is, never looked up again.
+    func runIOS(_ command: String, panel: Panel, udid: String, args: [String: JSONValue], cwd: String?,
+                guarded: UINode? = nil) async throws(ProtocolError) -> JSONValue {
         let sim = sim
         guard try await simulators().contains(where: { $0.udid == udid && $0.state == "booted" }) else {
             throw ProtocolError(code: .notFound, message: "Simulator \(udid) is not booted")
@@ -82,7 +84,7 @@ extension DeviceService {
             return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
-                guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
+                guard let n = guarded ?? refs[panel.id]?.first(where: { $0.ref == ref }) else {
                     throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
                 }
                 try FlowClassifier.checkPin(args, n)   // we1: here, after every await: the node touched is the one checked

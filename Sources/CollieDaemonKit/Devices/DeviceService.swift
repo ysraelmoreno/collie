@@ -269,9 +269,10 @@ actor DeviceService {
             kickHelper(panel: panel.id, serial: serial)
             await helpers[serial]?.recover()   // H7/A1: a fallback is retried along DeviceHelper.retrySchedule (2, 5, 15, then 30 s)
         }
-        func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
-            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
-            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
+        /// `guarded` (wf1): the node a guarded tap touches, classified in the read it came from; never looked up again.
+        func act(_ c: String, _ a: [String: JSONValue], _ guarded: UINode? = nil) async throws(ProtocolError) -> JSONValue {
+            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd, guarded: guarded) }
+            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd, guarded: guarded)
         }
         func dump() async throws(ProtocolError) -> [UINode] {
             _ = try await act("device.ui", [:])   // the device.ui path: refs updated
@@ -399,18 +400,37 @@ actor DeviceService {
         }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
         let quiet = try Self.quietMs(args)
+        // wf1: `guard: "destructive"` (the FlowRunner's): the target classified in the read this command resolves it in
+        let step = command == "device.tap" || command == "device.swipe" ? try Self.guardStep(command, args) : nil
+        /// The read the command resolves its target in; guarded, a failing read refuses (fail-closed).
+        func read() async throws(ProtocolError) -> [UINode] {
+            do { return try await dump() } catch { throw step == nil ? error : FlowClassifier.unread(error.message) }
+        }
         var args = args
         var viaOCR: OCRRead?
+        var touched: UINode?   // guarded: the node the tap touches, from the read it was classified on
         if command == "device.tap", let pick = try Self.tapPick(args) {
-            _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
-            let nodes = refs[panel.id] ?? []
-            do { args["ref"] = .string(try UITree.target(nodes, text: pick.text, id: pick.id, nth: pick.nth).ref) } catch where error.code == .notFound {
+            var nodes = try await read()   // always a fresh dump: cached refs may be stale
+            do { touched = try UITree.target(nodes, text: pick.text, id: pick.id, nth: pick.nth) } catch where error.code == .notFound {
                 guard pick.id == nil, let f = await ocrFallback(nodes, ocrMode) else { throw error }
-                args["ref"] = .string(try UITree.target(f.nodes, text: pick.text, id: nil, nth: pick.nth).ref)   // an OCR ref: its box centre
+                nodes = f.nodes
+                touched = try UITree.target(f.nodes, text: pick.text, id: nil, nth: pick.nth)   // an OCR ref: its box centre
                 viaOCR = f.read
             }
+            args["ref"] = touched.map { .string($0.ref) }
+            if let step { try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched) }
+        } else if let step {
+            let nodes: [UINode]
+            if case .string(let ref)? = args["ref"] {   // a ref names a node of the last read: that read is the tap's
+                nodes = refs[panel.id] ?? []
+                guard let n = nodes.first(where: { $0.ref == ref }) else {
+                    throw ProtocolError(code: .notFound, message: "Unknown ref \(ref); run device.ui first")
+                }
+                touched = n
+            } else { nodes = try await read() }   // a point: its labels in a fresh read
+            try FlowClassifier.guardCheck(step, nodes: nodes, touching: touched)
         }
-        var r = try await act(command, args)
+        var r = try await act(command, args, step == nil ? nil : touched)
         if let read = viaOCR, case .object(var o) = r {
             o.merge(Self.ocrNote, uniquingKeysWith: { _, b in b })
             if Self.timing(args) { o["timingMs"] = Self.ocrTiming(read) }
@@ -603,6 +623,23 @@ actor DeviceService {
         }
         guard text != nil || id != nil else { return nil }
         return (text, id, try int(a, "nth", 1...10_000))
+    }
+
+    /// wf1: a `device.tap`/`device.swipe` with `guard: "destructive"`: its target as a plan step (`FlowClassifier.labels`'s
+    /// vocabulary); nil without `guard`. Any other `guard` value: invalidArgs (never read as off).
+    static func guardStep(_ command: String, _ a: [String: JSONValue]) throws(ProtocolError) -> FlowPlan.Step? {
+        switch a["guard"] {
+        case nil, .null?: return nil
+        case .string("destructive")?: break
+        default: throw ProtocolError(code: .invalidArgs, message: "guard only takes 'destructive'")
+        }
+        func s(_ k: String) -> String? { if case .string(let v)? = a[k], !v.isEmpty { v } else { nil } }
+        func xy(_ ks: [String]) throws(ProtocolError) -> String {
+            try ks.map { k throws(ProtocolError) in try int(a, k).map(String.init) ?? "" }.joined(separator: ",")
+        }
+        if command == "device.swipe" { return FlowPlan.Step(action: "swipe", target: try xy(["x1", "y1", "x2", "y2"])) }
+        let target = if let t = s("text") { t } else if let i = s("id") { "id:" + i } else if let r = s("ref") { "ref:" + r } else { try xy(["x", "y"]) }
+        return FlowPlan.Step(action: "tap", target: target)
     }
 
     /// A duration in whole ms, for `--timing`'s `timingMs`.

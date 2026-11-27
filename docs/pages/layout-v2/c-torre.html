@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · C · Torre de controle</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--sunk);color:var(--text);font:13px/1.45 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+.m{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+button,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+:focus-visible{outline:2px solid var(--sec);outline-offset:2px;border-radius:6px}
+.app{height:100vh;min-width:1100px;display:flex;flex-direction:column;background:var(--bg)}
+
+/* barra de título */
+.title{height:40px;flex:none;display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--side);border-bottom:1px solid var(--border);-webkit-user-select:none;user-select:none}
+.lights{display:flex;gap:8px;width:64px}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.crumb{display:flex;align-items:center;gap:6px;color:var(--text2);min-width:0}
+.crumb b{color:var(--text);font-weight:600}
+.crumb .sep{color:var(--muted)}
+.usage{margin-left:auto;display:flex;align-items:center;gap:14px}
+.meter{display:flex;align-items:center;gap:7px;color:var(--text2);font-size:12px;padding:3px 8px;border-radius:7px}
+.meter:hover{background:var(--raised)}
+.bar{width:54px;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--accent);border-radius:3px}
+.bar.w>span{background:var(--warn)}
+.kbtn{height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--sunk);color:var(--muted);display:flex;align-items:center;gap:10px;min-width:200px}
+.kbtn kbd{margin-left:auto}
+kbd{font:11px ui-monospace,"SF Mono",Menlo,monospace;color:var(--text2);background:var(--raised);border:1px solid var(--border);border-radius:4px;padding:0 5px}
+.ux{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border);color:var(--text2)}
+.ux:hover{background:var(--raised);color:var(--text)}
+
+.body{flex:1;display:flex;min-height:0}
+
+/* barra lateral fina */
+.side{width:76px;flex:none;background:var(--side);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:2px}
+.nav{width:64px;padding:7px 0 6px;border-radius:9px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);font-size:11px;position:relative}
+.nav svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.nav:hover{color:var(--text);background:var(--raised)}
+.nav.on{color:var(--text);background:var(--raised)}
+.nav.on svg{stroke:var(--accent)}
+.nav .badge{position:absolute;top:4px;right:12px;min-width:16px;height:16px;border-radius:8px;background:var(--warn);color:var(--onacc);font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px}
+.side .grow{flex:1}
+.side hr{width:40px;border:0;border-top:1px solid var(--border);margin:6px 0}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.view{display:none;flex:1;min-height:0;overflow:auto}
+.view.on{display:flex;flex-direction:column}
+@media (prefers-reduced-motion:no-preference){.view.on{animation:in .18s ease-out}}
+@keyframes in{from{transform:translateY(4px)}to{transform:none}}
+
+h1{font-size:18px;font-weight:650;margin:0}
+h2{font-size:13px;font-weight:600;margin:0;color:var(--text)}
+.sub{color:var(--muted)}
+.pad{padding:18px 22px}
+.btn{height:28px;padding:0 12px;border-radius:7px;background:var(--raised);border:1px solid var(--border);color:var(--text);white-space:nowrap}
+.btn:hover{border-color:#3A4475}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}
+.btn.pri:hover{filter:brightness(1.06)}
+.btn.dng{color:var(--danger)}
+.btn.sm{height:24px;padding:0 9px;font-size:12px}
+.chip{font:11px ui-monospace,"SF Mono",Menlo,monospace;padding:1px 7px;border-radius:99px;border:1px solid var(--border);color:var(--text2);white-space:nowrap}
+
+/* estados */
+.st{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.st i{width:8px;height:8px;border-radius:50%;display:block}
+.st.work{color:var(--accent)} .st.work i{background:var(--accent)}
+.st.wait{color:var(--warn)} .st.wait i{background:var(--warn)}
+.st.done{color:var(--sec)} .st.done i{background:var(--sec)}
+.st.err{color:var(--danger)} .st.err i{background:var(--danger)}
+@media (prefers-reduced-motion:no-preference){.st.work i{animation:pulse 1.6s ease-out infinite}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(110,231,183,.55)}100%{box-shadow:0 0 0 6px rgba(110,231,183,0)}}
+
+/* Visão geral: faixa "Precisa de você" */
+.head{display:flex;align-items:baseline;gap:12px;padding:18px 22px 10px}
+.head .act{margin-left:auto;display:flex;gap:8px}
+.needs{margin:0 22px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px}
+.needs-h{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.count{background:var(--warn);color:var(--onacc);font-weight:700;font-size:11px;border-radius:9px;padding:0 7px}
+.needs-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:2px}
+.ask{flex:1 1 0;min-width:280px;background:var(--raised);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.ask.big{flex:1.5 1 0}
+.ask .k{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.ask .k svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7}
+.ask .k.sb{color:var(--warn)} .ask .k.q{color:var(--sec)} .ask .k.lf{color:var(--danger)}
+.ask p{margin:0;color:var(--text)}
+.ask code{font:12px ui-monospace,"SF Mono",Menlo,monospace;background:var(--sunk);border:1px solid var(--border);border-radius:5px;padding:1px 5px;color:var(--text2)}
+.ask .row{display:flex;gap:8px;align-items:center;margin-top:auto}
+.ask input{flex:1;height:28px;border-radius:7px;border:1px solid var(--border);background:var(--sunk);padding:0 9px;min-width:0}
+.ask .row .when{margin-left:auto;font-size:11px;color:var(--muted)}
+.ask.gone{display:none}
+.calm{color:var(--muted);padding:6px 2px;display:none}
+
+/* quadro por cercado */
+.board-h{display:flex;align-items:center;gap:10px;padding:20px 22px 10px}
+.board-h .filters{margin-left:auto;display:flex;gap:4px;background:var(--sunk);border:1px solid var(--border);border-radius:8px;padding:2px}
+.seg{height:24px;padding:0 10px;border-radius:6px;color:var(--muted);font-size:12px}
+.seg.on{background:var(--raised);color:var(--text)}
+.board{display:grid;grid-template-columns:1.25fr 1fr 1fr;gap:14px;padding:0 22px 22px;align-items:start}
+.col{background:var(--side);border:1px solid var(--border);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.col-h{display:flex;align-items:center;gap:8px;padding:2px 4px 4px}
+.col-h .m{font-size:12px;color:var(--text2)}
+.col-h .chip{margin-left:auto}
+.ag{width:100%;text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 12px;display:flex;flex-direction:column;gap:7px;transition:border-color .15s ease-out,transform .15s ease-out}
+.ag:hover{border-color:#3A4475}
+@media (prefers-reduced-motion:no-preference){.ag:hover{transform:translateY(-1px)}}
+.ag .t1{display:flex;align-items:center;gap:8px}
+.ag .nm{font-weight:600;font-size:14px}
+.ag .t1 .st{margin-left:auto}
+.ag .task{color:var(--text2)}
+.ag .meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:12px}
+.ag .prog{height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+.ag .prog span{display:block;height:100%;background:var(--accent)}
+.ag .tail{font:11.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;color:var(--muted);background:var(--sunk);border-radius:6px;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ag.mini{padding:8px 12px;flex-direction:row;align-items:center;gap:10px}
+.ag.mini .task{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
+.ag.waitc{background:#1E2540;border-color:#4A4636}
+.ag.errc{border-color:#4E3242}
+.addag{color:var(--muted);border:1px dashed var(--border);border-radius:10px;padding:8px;font-size:12px}
+.addag:hover{color:var(--text);border-color:#3A4475}
+.hide{display:none!important}
+
+/* Foco */
+.focus{flex:1;display:flex;flex-direction:column;min-height:0}
+.fbar{height:44px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--side)}
+.fbar .back{display:flex;align-items:center;gap:6px;color:var(--text2);padding:4px 8px;border-radius:7px}
+.fbar .back:hover{background:var(--raised);color:var(--text)}
+.fbar .nm{font-weight:650;font-size:14px}
+.fbar .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.fbody{flex:1;display:flex;min-height:0}
+.fleft{flex:1;min-width:0;display:flex;flex-direction:column}
+.term{flex:1;min-height:0;background:var(--sunk);padding:14px 18px;overflow:auto;font:12.5px/1.65 ui-monospace,"SF Mono",Menlo,monospace;color:var(--text2);white-space:pre-wrap}
+.term .p{color:var(--accent)} .term .d{color:var(--muted)} .term .w{color:var(--warn)} .term .e{color:var(--danger)} .term .s{color:var(--sec)}
+.prompt{display:flex;gap:8px;padding:8px 14px;background:var(--sunk);border-top:1px solid var(--border)}
+.prompt input{flex:1;height:30px;border-radius:7px;border:1px solid var(--border);background:var(--bg);padding:0 10px;font-family:ui-monospace,"SF Mono",Menlo,monospace}
+.tline{flex:none;border-top:1px solid var(--border);background:var(--side);padding:10px 14px 12px}
+.tline-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tline-h .sub{font-size:12px}
+.tline-h .btn{margin-left:auto}
+.steps{display:flex;gap:6px;overflow-x:auto}
+.step{flex:1 0 150px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 9px;text-align:left;display:flex;flex-direction:column;gap:3px}
+.step .n{font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.step .tt{font-size:12px;color:var(--text2)}
+.step.ok .n{color:var(--sec)} .step.now{border-color:#2F5D51} .step.now .n{color:var(--accent)}
+.step.sel{border-color:var(--sec)}
+.evid{margin-top:8px;font-size:12px;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:none}
+.evid.on{display:block}
+.drawer{width:0;flex:none;overflow:hidden;border-left:1px solid var(--border);background:var(--side);transition:width .2s ease-out;display:flex;flex-direction:column}
+.drawer.on{width:380px}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+.dw-in{width:380px;display:flex;flex-direction:column;height:100%}
+.dtabs{display:flex;gap:2px;padding:8px 10px;border-bottom:1px solid var(--border)}
+.dtab{height:26px;padding:0 10px;border-radius:6px;color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+.dtab.on{background:var(--raised);color:var(--text)}
+.dpane{flex:1;min-height:0;padding:12px;overflow:auto;display:none}
+.dpane.on{display:block}
+.browser{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--bg)}
+.browser .url{height:28px;display:flex;align-items:center;gap:6px;padding:0 9px;background:var(--raised);font:11.5px ui-monospace,"SF Mono",Menlo,monospace;color:var(--text2)}
+.browser .pg{padding:14px;display:flex;flex-direction:column;gap:8px}
+.sk{height:10px;border-radius:4px;background:var(--border)}
+.cmt{margin-top:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--text2)}
+.net{width:100%;border-collapse:collapse;font:11.5px ui-monospace,"SF Mono",Menlo,monospace}
+.net td{padding:5px 4px;border-bottom:1px solid var(--border);color:var(--text2)}
+.dlink{margin-top:12px;color:var(--muted);font-size:12px}
+
+/* listas genéricas (Laços, Memória, Artifacts, Rebanhos, Ajustes) */
+.split{flex:1;display:flex;min-height:0}
+.list{width:340px;flex:none;border-right:1px solid var(--border);overflow:auto;padding:8px}
+.li{width:100%;text-align:left;padding:10px;border-radius:8px;display:flex;flex-direction:column;gap:4px;color:var(--text2)}
+.li:hover{background:var(--surface)}
+.li.on{background:var(--raised);color:var(--text)}
+.li .a{display:flex;align-items:center;gap:8px}
+.li .a .st,.li .a .chip{margin-left:auto}
+.li small{color:var(--muted)}
+.detail{flex:1;min-width:0;overflow:auto;padding:18px 22px;display:flex;flex-direction:column;gap:14px}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.tasks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.tasks li{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--border)}
+.tasks li:last-child{border:0}
+.tasks .ck{width:16px;height:16px;border-radius:4px;border:1.5px solid var(--muted);display:grid;place-items:center;font-size:11px;flex:none}
+.tasks .ok .ck{background:var(--sec);border-color:var(--sec);color:var(--onacc)}
+.tasks .now .ck{border-color:var(--accent)}
+.tasks .bad .ck{border-color:var(--danger);color:var(--danger)}
+.tasks .tag{margin-left:auto;font-size:11px;color:var(--muted)}
+.big-prog{display:flex;align-items:center;gap:12px}
+.big-prog .bar{flex:1;width:auto;height:7px}
+.mem-txt{width:100%;min-height:90px;resize:vertical;border-radius:8px;border:1px solid var(--border);background:var(--sunk);padding:10px;line-height:1.5}
+.row-btn{display:flex;gap:8px;flex-wrap:wrap}
+.art-prev{flex:1;min-height:320px;border:1px solid var(--border);border-radius:10px;background:var(--bg);padding:22px;display:flex;flex-direction:column;gap:12px}
+.pin{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--sec);color:var(--onacc);font-size:11px;font-weight:700}
+.herd{display:flex;gap:8px;flex-wrap:wrap}
+.herd .chip{font-size:12px;padding:3px 9px}
+.set-grid{display:grid;grid-template-columns:200px 1fr;gap:10px 18px;align-items:center}
+.sw{width:34px;height:20px;border-radius:10px;background:var(--border);position:relative}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--text2);transition:left .15s ease-out}
+.sw[aria-checked=true]{background:var(--accent)}
+.sw[aria-checked=true]::after{left:17px;background:var(--onacc)}
+.themes{display:flex;gap:8px}
+.th-sw{width:46px;height:30px;border-radius:7px;border:2px solid var(--border)}
+.th-sw.on{border-color:var(--accent)}
+
+/* Mapa */
+.map{flex:1;position:relative;background:var(--bg) radial-gradient(#1E2647 1px,transparent 1px) 0 0/22px 22px;overflow:hidden}
+.map svg{position:absolute;inset:0;width:100%;height:100%}
+.node{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 11px;display:flex;flex-direction:column;gap:3px;min-width:150px;text-align:left}
+.node:hover{border-color:#3A4475}
+.node .nm{font-weight:600}
+.node small{color:var(--muted)}
+.maphint{position:absolute;left:16px;bottom:14px;background:var(--side);border:1px solid var(--border);border-radius:8px;padding:8px 10px;color:var(--text2);font-size:12px;max-width:360px}
+
+/* paleta ⌘K */
+.scrim{position:fixed;inset:0;background:rgba(5,8,18,.55);display:none;z-index:20}
+.scrim.on{display:block}
+.pal{position:fixed;left:50%;top:90px;transform:translateX(-50%);width:560px;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);display:none;z-index:21;overflow:hidden}
+.pal.on{display:block}
+@media (prefers-reduced-motion:no-preference){.pal.on{animation:in .15s ease-out}}
+.pal input{width:100%;height:46px;border:0;border-bottom:1px solid var(--border);background:transparent;padding:0 16px;font-size:15px;outline:none}
+.pal ul{list-style:none;margin:0;padding:6px;max-height:360px;overflow:auto}
+.pal li{padding:8px 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--text2);cursor:pointer}
+.pal li small{margin-left:auto;color:var(--muted)}
+.pal li.on{background:var(--raised);color:var(--text)}
+
+/* Notas de UX */
+.notes{position:fixed;top:0;right:0;bottom:0;width:560px;background:var(--side);border-left:1px solid var(--border);z-index:30;transform:translateX(100%);transition:transform .22s ease-out;overflow:auto;padding:20px 22px;visibility:hidden}
+.notes.on{transform:none;visibility:visible}
+@media (prefers-reduced-motion:reduce){.notes{transition:none}}
+.notes h1{margin-bottom:4px}
+.notes h2{margin:18px 0 6px}
+.notes p,.notes li{color:var(--text2)}
+.notes ul{padding-left:18px;margin:6px 0}
+.notes table{width:100%;border-collapse:collapse;font-size:12px}
+.notes th,.notes td{text-align:left;padding:6px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.notes th{color:var(--muted);font-weight:600}
+.notes td:first-child{color:var(--text);white-space:nowrap}
+.notes .x{position:absolute;top:16px;right:16px}
+
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--raised);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--text);z-index:40;display:none}
+.toast.on{display:block}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="title">
+    <div class="lights" aria-hidden="true"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div>
+    <div class="crumb" id="crumb"><b>Collie</b><span class="sep">›</span><span>Visão geral</span></div>
+    <div class="usage" aria-label="Uso dos agentes">
+      <button class="meter" data-go="ajustes" title="Uso hoje — claude (janela de 5 h)">claude <span class="bar w"><span style="width:72%"></span></span> 72%</button>
+      <button class="meter" data-go="ajustes" title="Uso hoje — codex">codex <span class="bar"><span style="width:38%"></span></span> 38%</button>
+      <button class="meter" data-go="ajustes" title="Uso hoje — cursor">cursor <span class="bar"><span style="width:11%"></span></span> 11%</button>
+      <button class="kbtn" id="openPal">Buscar ou comandar… <kbd>⌘K</kbd></button>
+      <button class="ux" id="openNotes">Notas de UX</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <nav class="side" aria-label="Navegação">
+      <button class="nav on" data-go="geral" aria-current="page">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+        Visão geral<span class="badge" id="navBadge">3</span></button>
+      <button class="nav" data-go="lacos"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/></svg>Laços</button>
+      <button class="nav" data-go="memoria"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 2.4 1.4 3.8 2.5 5 .8.9 1.5 1.7 1.5 3h4c0-1.3.7-2.1 1.5-3 1.1-1.2 2.5-2.6 2.5-5a6 6 0 0 0-6-6Z"/><path d="M10 21h4"/></svg>Memória</button>
+      <button class="nav" data-go="artifacts"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 13h6M9 17h4"/></svg>Artifacts</button>
+      <button class="nav" data-go="rebanhos"><svg viewBox="0 0 24 24"><circle cx="8" cy="9" r="3"/><circle cx="16" cy="9" r="3"/><path d="M3 20c0-3 2.5-5 5-5s5 2 5 5M11 20c0-3 2.5-5 5-5s5 2 5 5"/></svg>Rebanhos</button>
+      <div class="grow"></div>
+      <button class="nav" data-go="mapa" title="Vista avançada: coleiras entre terminais e painéis"><svg viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M7 6h10M6 8l5 8M18 8l-5 8"/></svg>Mapa</button>
+      <hr>
+      <button class="nav" data-go="ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Ajustes</button>
+    </nav>
+
+    <main class="main">
+      <!-- VISÃO GERAL -->
+      <section class="view on" id="v-geral" aria-label="Visão geral">
+        <div class="head">
+          <h1>Visão geral</h1><span class="sub">3 cercados · 5 agentes · 1 laço rodando</span>
+          <div class="act"><button class="btn" data-pal="Novo cercado">Novo cercado</button><button class="btn pri" data-pal="Chamar agente">Chamar agente</button></div>
+        </div>
+
+        <div class="needs" id="needs">
+          <div class="needs-h"><h2>Precisa de você</h2><span class="count" id="needCount">3</span><span class="sub" style="font-size:12px">— nada aqui anda sem sua resposta</span></div>
+          <div class="needs-row">
+            <div class="ask big" id="n-sb">
+              <div class="k sb"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.4 3.4 8 8 9 4.6-1 8-4.6 8-9V6z"/></svg>Sandbox · l10n-cli em <span class="m">idiomas</span></div>
+              <p>Quer escrever em <code>~/Library/Application Support/Collie/l10n-cache</code>, fora do cercado.</p>
+              <div class="row"><button class="btn pri sm" data-resolve="n-sb" data-msg="Liberado só desta vez para l10n-cli">Permitir uma vez</button><button class="btn sm" data-resolve="n-sb" data-msg="Regra salva: l10n-cli pode escrever em l10n-cache">Sempre</button><button class="btn sm dng" data-resolve="n-sb" data-msg="Negado. l10n-cli foi avisado">Negar</button><span class="when">há 2 min</span></div>
+            </div>
+            <div class="ask" id="n-q">
+              <div class="k q"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01"/></svg>Pergunta · l10n-cli</div>
+              <p>“Mantenho ‘cercado’ em inglês como <i>paddock</i> nas mensagens da CLI ou traduzo tudo?”</p>
+              <div class="row"><input aria-label="Responder l10n-cli" placeholder="Responder…" id="qIn"><button class="btn pri sm" data-resolve="n-q" data-msg="Resposta enviada para l10n-cli">Enviar</button><button class="btn sm" data-focus="l10n">Abrir</button></div>
+            </div>
+            <div class="ask" id="n-lf">
+              <div class="k lf"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16h.01"/><path d="M10.3 3.9 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>Laço falhou · <span class="m">Pasto</span></div>
+              <p>“Guia de temas” parou na tarefa 2/4: o check <code>lint-docs</code> falhou 3 vezes.</p>
+              <div class="row"><button class="btn sm" data-resolve="n-lf" data-msg="Laço retomado da tarefa 2">Tentar de novo</button><button class="btn sm" data-go="lacos" data-loop="temas">Ver laço</button><button class="btn sm" data-resolve="n-lf" data-msg="Tarefa 2 pulada">Pular tarefa</button></div>
+            </div>
+          </div>
+          <div class="calm" id="calm">Tudo andando sozinho. Quando um agente pedir algo, aparece aqui.</div>
+        </div>
+
+        <div class="board-h"><h2>Rebanho em campo</h2><span class="sub" style="font-size:12px">clique num agente para entrar no Foco</span>
+          <div class="filters" role="group" aria-label="Filtrar agentes"><button class="seg on" data-f="all">Todos</button><button class="seg" data-f="wait">Esperando</button><button class="seg" data-f="work">Trabalhando</button><button class="seg" data-f="end">Concluídos</button></div>
+        </div>
+        <div class="board">
+          <div class="col">
+            <div class="col-h"><h2>collie-general-working</h2><span class="chip">collie/collie-general-working</span></div>
+            <button class="ag" data-focus="pastor" data-s="work">
+              <div class="t1"><span class="nm">Pastor</span><span class="chip">claude · opus</span><span class="st work"><i></i>trabalhando</span></div>
+              <div class="task">Reestruturar layout: 3 modelos em paralelo</div>
+              <div class="prog" aria-label="2 de 5 tarefas"><span style="width:40%"></span></div>
+              <div class="meta"><span>2/5 tarefas</span>·<span>41 min</span>·<span>212k tokens</span>·<span>painéis: Navegador, Prévia</span></div>
+              <div class="tail">› delegando “modelo C” para torre…</div>
+            </button>
+            <button class="ag" data-focus="torre" data-s="work">
+              <div class="t1"><span class="nm">torre</span><span class="chip">claude · opus</span><span class="st work"><i></i>trabalhando</span></div>
+              <div class="task">Modelo C · Torre de controle</div>
+              <div class="meta"><span>chamado pelo Pastor</span>·<span>9 min</span>·<span>painel: Prévia</span></div>
+            </button>
+            <button class="ag mini" data-focus="revisor" data-s="end"><span class="nm" style="font-weight:600">revisor</span><span class="task">Revisão l10n — 4 achados, todos corrigidos</span><span class="st done"><i></i>concluído</span></button>
+          </div>
+          <div class="col">
+            <div class="col-h"><h2>idiomas</h2><span class="chip">feat/l10n</span></div>
+            <button class="ag waitc" data-focus="l10n" data-s="wait">
+              <div class="t1"><span class="nm">l10n-cli</span><span class="chip">codex · gpt-5</span><span class="st wait"><i></i>esperando você</span></div>
+              <div class="task">Traduzir mensagens da CLI (laço 3/7)</div>
+              <div class="prog"><span style="width:43%;background:var(--warn)"></span></div>
+              <div class="meta"><span>2 pedidos abertos</span>·<span>1h12</span>·<span>painel: Rede</span></div>
+            </button>
+            <button class="addag" data-pal="Chamar agente">+ chamar agente neste cercado</button>
+          </div>
+          <div class="col">
+            <div class="col-h"><h2>Pasto</h2><span class="chip">main · sem cercado</span></div>
+            <button class="ag errc" data-focus="temas" data-s="wait">
+              <div class="t1"><span class="nm">docs-temas</span><span class="chip">cursor</span><span class="st err"><i></i>erro</span></div>
+              <div class="task">Guia de temas — check lint-docs falhou</div>
+              <div class="meta"><span>laço parado em 2/4</span>·<span>painel: Design</span></div>
+            </button>
+            <button class="ag mini" data-focus="disp" data-s="end"><span class="nm" style="font-weight:600">mobile</span><span class="task">Smoke no simulador iPhone 16</span><span class="st done"><i></i>concluído</span></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- FOCO -->
+      <section class="view" id="v-foco" aria-label="Foco no agente">
+        <div class="focus">
+          <div class="fbar">
+            <button class="back" id="back" title="Voltar (Esc)">‹ Visão geral <kbd>esc</kbd></button>
+            <span class="nm" id="fName">Pastor</span><span class="chip" id="fModel">claude · opus</span><span id="fState" class="st work"><i></i>trabalhando</span><span class="sub m" id="fPad">collie-general-working</span>
+            <div class="r">
+              <button class="btn sm" id="prevAg" title="Agente anterior (⌘[)">‹</button><button class="btn sm" id="nextAg" title="Próximo agente (⌘])">›</button>
+              <button class="btn sm" data-pal="Chamar agente">Delegar…</button>
+              <button class="btn sm" id="tglDrawer" aria-expanded="true">Painéis ligados <span id="pCount" class="chip">2</span></button>
+            </div>
+          </div>
+          <div class="fbody">
+            <div class="fleft">
+              <div class="term" id="term" tabindex="0" aria-label="Terminal"></div>
+              <div class="prompt"><input id="tIn" aria-label="Mensagem para o agente" placeholder="Escrever para o agente…  (↩ envia)"></div>
+              <div class="tline">
+                <div class="tline-h"><h2>Trabalho</h2><span class="sub" id="wSum">Reestruturar layout · 2/5 tarefas</span><button class="btn sm" id="tglEv">Resumo e evidências</button></div>
+                <div class="steps" id="steps"></div>
+                <div class="evid" id="evid"></div>
+              </div>
+            </div>
+            <aside class="drawer on" id="drawer" aria-label="Painéis ligados">
+              <div class="dw-in">
+                <div class="dtabs" id="dtabs"></div>
+                <div id="dpanes" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- LAÇOS -->
+      <section class="view" id="v-lacos" aria-label="Laços">
+        <div class="split">
+          <div class="list" id="loopList">
+            <div class="pad" style="padding:8px 10px 10px"><h1>Laços</h1><span class="sub">tarefas sem supervisão; o check decide</span></div>
+            <button class="li on" data-loop="cli"><span class="a"><b>Mensagens da CLI</b><span class="st wait"><i></i>3/7</span></span><small>idiomas · l10n-cli · check: swift test --filter L10n</small></button>
+            <button class="li" data-loop="temas"><span class="a"><b>Guia de temas</b><span class="st err"><i></i>falhou</span></span><small>Pasto · docs-temas · check: lint-docs</small></button>
+            <button class="li" data-loop="mem"><span class="a"><b>Melhorias de memória</b><span class="st done"><i></i>8/8</span></span><small>collie-general-working · concluído ontem</small></button>
+          </div>
+          <div class="detail" id="loopDetail"></div>
+        </div>
+      </section>
+
+      <!-- MEMÓRIA -->
+      <section class="view" id="v-memoria" aria-label="Memória">
+        <div class="split">
+          <div class="list">
+            <div class="pad" style="padding:8px 10px 10px"><h1>Memória</h1><span class="sub">decisões e armadilhas que os agentes leem</span></div>
+            <div style="padding:0 10px 8px;display:flex;gap:6px"><span class="chip" style="border-color:var(--warn);color:var(--warn)">2 para revisar</span><span class="chip">14 ativas</span></div>
+            <div id="memList"></div>
+          </div>
+          <div class="detail" id="memDetail"></div>
+        </div>
+      </section>
+
+      <!-- ARTIFACTS -->
+      <section class="view" id="v-artifacts" aria-label="Artifacts">
+        <div class="split">
+          <div class="list">
+            <div class="pad" style="padding:8px 10px 10px"><h1>Artifacts</h1><span class="sub">páginas que os agentes escrevem</span></div>
+            <button class="li on" data-art="0"><span class="a"><b>Layout v2 · C Torre</b><span class="chip">2 comentários</span></span><small>protótipo · torre · agora</small></button>
+            <button class="li" data-art="1"><span class="a"><b>Relatório de revisão l10n</b></span><small>relatório · revisor · há 1 h</small></button>
+            <button class="li" data-art="2"><span class="a"><b>Diagrama: fluxo do sandbox</b></span><small>diagrama · Pastor · ontem</small></button>
+            <div class="pad" style="padding:14px 10px 4px"><h2>Design Systems</h2></div>
+            <button class="li" data-art="3"><span class="a"><b>Collie Noite</b><span class="chip">em uso</span></span><small>tokens · 2 fontes</small></button>
+          </div>
+          <div class="detail" id="artDetail"></div>
+        </div>
+      </section>
+
+      <!-- REBANHOS -->
+      <section class="view" id="v-rebanhos" aria-label="Rebanhos e lotes">
+        <div class="pad" style="display:flex;flex-direction:column;gap:14px;max-width:980px">
+          <div><h1>Rebanhos</h1><span class="sub">times prontos que saem com um clique; lotes agrupam terminais que já existem</span></div>
+          <div class="box" style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center;gap:10px"><h2>Revisão dupla</h2><span class="sub">claude implementa, codex revisa</span><button class="btn pri sm" style="margin-left:auto" data-toast="Rebanho “Revisão dupla” solto em collie-general-working">Soltar no cercado…</button></div>
+            <div class="herd"><span class="chip">implementador · claude</span><span class="chip">revisor · codex</span><span class="chip">coleira: revisor → Prévia</span></div>
+          </div>
+          <div class="box" style="display:flex;flex-direction:column;gap:10px">
+            <div style="display:flex;align-items:center;gap:10px"><h2>Design + app</h2><span class="sub">agente com Design, Navegador e Dispositivo ligados</span><button class="btn sm" style="margin-left:auto" data-toast="Rebanho “Design + app” solto">Soltar no cercado…</button></div>
+            <div class="herd"><span class="chip">designer · claude</span><span class="chip">painel Design</span><span class="chip">painel Dispositivo · iPhone 16</span><span class="chip">painel Navegador</span></div>
+          </div>
+          <div><h2 style="margin:6px 0 8px">Lotes</h2>
+            <div class="box" style="display:flex;align-items:center;gap:10px"><b>layout-v2</b><span class="sub">Pastor, torre, + 2 modelos · quadro com 6 recados</span><button class="btn sm" style="margin-left:auto" data-toast="Recado enviado ao lote layout-v2">Mandar recado ao lote</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MAPA -->
+      <section class="view" id="v-mapa" aria-label="Mapa">
+        <div class="map" id="map">
+          <svg aria-hidden="true">
+            <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 10 5 0 10z" fill="#93A4FF"/></marker></defs>
+            <g stroke="#93A4FF" stroke-width="1.5" fill="none" marker-end="url(#ar)">
+              <path d="M260 150 C 360 150, 380 90, 470 90"/>
+              <path d="M260 160 C 360 170, 380 250, 470 250"/>
+              <path d="M260 170 C 300 300, 330 400, 470 410"/>
+              <path d="M650 250 C 720 250, 740 200, 800 200"/>
+              <path d="M650 410 C 720 410, 740 380, 800 380"/>
+            </g>
+          </svg>
+          <button class="node" style="left:100px;top:130px" data-focus="pastor"><span class="nm">Pastor</span><small>claude · trabalhando</small></button>
+          <button class="node" style="left:470px;top:70px" data-focus="torre"><span class="nm">torre</span><small>coleira do Pastor</small></button>
+          <button class="node" style="left:470px;top:230px" data-focus="revisor"><span class="nm">revisor</span><small>coleira do Pastor</small></button>
+          <button class="node" style="left:470px;top:390px" data-focus="l10n"><span class="nm">l10n-cli</span><small>idiomas · esperando</small></button>
+          <div class="node" style="left:800px;top:180px"><span class="nm">Prévia</span><small>painel · artifact Torre</small></div>
+          <div class="node" style="left:800px;top:360px"><span class="nm">Rede</span><small>painel · 2 regras</small></div>
+          <div class="maphint"><b>Mapa</b> — vista avançada. Arraste de um agente para outro ou para um painel para criar uma coleira. No dia a dia, a Visão geral basta.</div>
+        </div>
+      </section>
+
+      <!-- AJUSTES -->
+      <section class="view" id="v-ajustes" aria-label="Ajustes">
+        <div class="pad" style="display:flex;flex-direction:column;gap:16px;max-width:900px">
+          <h1>Ajustes</h1>
+          <div class="box"><h2 style="margin-bottom:10px">Uso dos agentes</h2>
+            <div class="set-grid">
+              <span>claude (janela 5 h)</span><span class="big-prog"><span class="bar w"><span style="width:72%"></span></span><span class="m">72% · zera em 1h40</span></span>
+              <span>codex</span><span class="big-prog"><span class="bar"><span style="width:38%"></span></span><span class="m">38%</span></span>
+              <span>cursor</span><span class="big-prog"><span class="bar"><span style="width:11%"></span></span><span class="m">11%</span></span>
+            </div></div>
+          <div class="box"><h2 style="margin-bottom:10px">Tema</h2><div class="themes" role="radiogroup" aria-label="Tema">
+            <button class="th-sw on" role="radio" aria-checked="true" aria-label="Noite" style="background:#0E1326"></button><button class="th-sw" role="radio" aria-checked="false" aria-label="Dia" style="background:#F4F6FB"></button><button class="th-sw" role="radio" aria-checked="false" aria-label="Campo" style="background:#13261E"></button><button class="btn sm" data-toast="Editor de temas abre aqui">Editar tema…</button></div></div>
+          <div class="box"><h2 style="margin-bottom:10px">Plug-ins</h2><div class="set-grid">
+            <span>figcraft</span><button class="sw" role="switch" aria-checked="true" aria-label="figcraft"></button>
+            <span>sentry-bridge</span><button class="sw" role="switch" aria-checked="false" aria-label="sentry-bridge"></button></div></div>
+          <div class="box"><h2 style="margin-bottom:10px">Preferências</h2><div class="set-grid">
+            <span>Mostrar “Precisa de você” como notificação</span><button class="sw" role="switch" aria-checked="true" aria-label="Notificações"></button>
+            <span>Abrir no Foco do último agente</span><button class="sw" role="switch" aria-checked="false" aria-label="Abrir no Foco"></button>
+            <span>Idioma</span><span>Português (Brasil)</span></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<div class="pal" id="pal" role="dialog" aria-label="Paleta de comandos">
+  <input id="palIn" placeholder="Agente, cercado, laço, painel ou comando…" aria-label="Buscar">
+  <ul id="palList" role="listbox"></ul>
+</div>
+
+<aside class="notes" id="notes" aria-label="Notas de UX">
+  <button class="btn sm x" id="closeNotes">Fechar <kbd>esc</kbd></button>
+  <h1>C · Torre de controle</h1>
+  <p><b>A ideia:</b> abrir o Collie é olhar a torre — tudo que está rodando numa tela, o que precisa de você no topo — e mergulhar num agente só quando quiser.</p>
+  <h2>Para quem</h2>
+  <p>Quem roda 3+ agentes em paralelo e passa mais tempo decidindo e destravando do que digitando no terminal. Quem está começando vê o Collie inteiro sem precisar descobrir o canvas.</p>
+  <h2>Princípios</h2>
+  <ul>
+    <li><b>Pedidos primeiro.</b> Sandbox, perguntas e laços falhos sobem para uma faixa só, com a ação ali mesmo.</li>
+    <li><b>Estado antes de terminal.</b> Cada agente vira um cartão com estado vivo, tarefa, modelo, uso e painéis; o terminal é um clique.</li>
+    <li><b>Foco é um modo, não um lugar.</b> Terminal grande, painéis na gaveta, Trabalho embaixo; Esc devolve à torre.</li>
+    <li><b>Topologia é avançada.</b> O canvas vira Mapa: útil para coleiras, mas não é a porta de entrada.</li>
+    <li><b>Tudo nomeado na barra.</b> Seis destinos com rótulo; nada escondido atrás de ícone mudo.</li>
+  </ul>
+  <h2>Onde mora cada função</h2>
+  <table>
+    <tr><th>Função</th><th>Casa</th></tr>
+    <tr><td>Canvas e terminais</td><td>Terminal no Foco; disposição livre e coleiras no Mapa</td></tr>
+    <tr><td>Cercados</td><td>Colunas do quadro na Visão geral; “Novo cercado”</td></tr>
+    <tr><td>Pastor e delegação</td><td>Cartão do Pastor; “Delegar…” no Foco; filhos aparecem no mesmo cercado</td></tr>
+    <tr><td>Laços</td><td>Barra lateral → Laços; falhas sobem para “Precisa de você”</td></tr>
+    <tr><td>Trabalho</td><td>Linha do tempo embaixo no Foco + “Resumo e evidências”</td></tr>
+    <tr><td>Paleta ⌘K</td><td>Barra de título, de qualquer vista</td></tr>
+    <tr><td>Navegador</td><td>Gaveta de painéis ligados no Foco</td></tr>
+    <tr><td>Dispositivo</td><td>Gaveta no Foco (agente mobile); Rebanho “Design + app”</td></tr>
+    <tr><td>Rede</td><td>Gaveta no Foco (l10n-cli)</td></tr>
+    <tr><td>Design e Design Systems</td><td>Gaveta no Foco; Design Systems na vista Artifacts</td></tr>
+    <tr><td>Prévia e Artifacts</td><td>Gaveta (Prévia) e barra lateral → Artifacts, com comentários</td></tr>
+    <tr><td>Diagrama</td><td>Artifacts (tipo diagrama) e gaveta no Foco</td></tr>
+    <tr><td>Memória</td><td>Barra lateral → Memória: revisar, editar, descartar</td></tr>
+    <tr><td>Sandbox e cartões</td><td>Faixa “Precisa de você” (Permitir / Sempre / Negar)</td></tr>
+    <tr><td>Rebanhos e Lotes</td><td>Barra lateral → Rebanhos</td></tr>
+    <tr><td>Uso dos agentes</td><td>Medidores na barra de título; detalhe em Ajustes; por agente no cartão</td></tr>
+    <tr><td>Plug-ins, Temas, Preferências</td><td>Barra lateral → Ajustes</td></tr>
+  </table>
+  <h2>Ganha vs. Trilho</h2>
+  <ul>
+    <li>Pedidos pendentes de todos os cercados numa faixa, em vez de espalhados por terminais.</li>
+    <li>Estado de todos os agentes sem trocar de cercado nem de aba.</li>
+    <li>Memória, Laços, Artifacts e Rebanhos viram destinos visíveis, não itens de menu.</li>
+    <li>Uso sempre à vista.</li>
+  </ul>
+  <h2>Perde vs. Trilho</h2>
+  <ul>
+    <li>Ver vários terminais lado a lado deixa de ser o padrão (fica no Mapa).</li>
+    <li>Um clique a mais para chegar no terminal.</li>
+    <li>Com 10+ agentes por cercado a coluna fica longa — precisa de filtro (já existe) e agrupar concluídos.</li>
+  </ul>
+</aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const NAMES={geral:'Visão geral',lacos:'Laços',memoria:'Memória',artifacts:'Artifacts',rebanhos:'Rebanhos',mapa:'Mapa',ajustes:'Ajustes',foco:'Foco'};
+let cur='geral', lastFocusEl=null;
+
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('on'),2200)}
+function crumb(parts){$('#crumb').innerHTML='<b>Collie</b>'+parts.map(p=>'<span class="sep">›</span><span>'+p+'</span>').join('')}
+function go(v){
+  cur=v;
+  $$('.view').forEach(x=>x.classList.toggle('on',x.id==='v-'+v));
+  $$('.nav').forEach(n=>{const on=n.dataset.go===v;n.classList.toggle('on',on);on?n.setAttribute('aria-current','page'):n.removeAttribute('aria-current')});
+  if(v!=='foco')crumb([NAMES[v]]);
+}
+document.addEventListener('click',e=>{
+  const g=e.target.closest('[data-go]'); if(g){go(g.dataset.go); if(g.dataset.loop)showLoop(g.dataset.loop); return}
+  const f=e.target.closest('[data-focus]'); if(f){lastFocusEl=f;focusAgent(f.dataset.focus);return}
+  const r=e.target.closest('[data-resolve]'); if(r){resolve(r.dataset.resolve,r.dataset.msg);return}
+  const p=e.target.closest('[data-pal]'); if(p){openPal(p.dataset.pal);return}
+  const t=e.target.closest('[data-toast]'); if(t){toast(t.dataset.toast);return}
+  const sw=e.target.closest('.sw'); if(sw){sw.setAttribute('aria-checked',sw.getAttribute('aria-checked')!=='true');return}
+  const th=e.target.closest('.th-sw'); if(th){$$('.th-sw').forEach(x=>{x.classList.toggle('on',x===th);x.setAttribute('aria-checked',x===th)});return}
+});
+
+/* Precisa de você */
+function resolve(id,msg){
+  $('#'+id).classList.add('gone'); toast(msg);
+  const n=$$('.needs-row .ask:not(.gone)').length;
+  $('#needCount').textContent=n; $('#navBadge').textContent=n; $('#navBadge').classList.toggle('hide',!n);
+  $('#calm').style.display=n?'none':'block'; $('.needs-row').style.display=n?'flex':'none';
+  if(id==='n-sb'||id==='n-q'){const c=$('[data-focus="l10n"].ag');const left=['n-sb','n-q'].filter(x=>!$('#'+x).classList.contains('gone')).length;
+    if(!left){c.classList.remove('waitc');c.dataset.s='work';c.querySelector('.st').className='st work';c.querySelector('.st').innerHTML='<i></i>trabalhando';c.querySelector('.meta span').textContent='nenhum pedido';AG.l10n.state='work'}
+    else c.querySelector('.meta span').textContent=left+' pedido aberto'}
+}
+$('#qIn').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim())resolve('n-q','Resposta enviada para l10n-cli')});
+
+/* filtros do quadro */
+$$('.seg').forEach(b=>b.addEventListener('click',()=>{
+  $$('.seg').forEach(x=>x.classList.toggle('on',x===b));
+  $$('.board .ag').forEach(a=>{const s=a.dataset.s;a.classList.toggle('hide',!(b.dataset.f==='all'||s===b.dataset.f))});
+}));
+
+/* Agentes e Foco */
+const AG={
+ pastor:{n:'Pastor',m:'claude · opus',state:'work',pad:'collie-general-working',work:'Reestruturar layout',
+  term:[['p','› '],'Li .collie/layout-v2-brief.md. Três modelos, um por agente.\n',['d','  collie summon torre --model opus "Modelo C · Torre de controle"\n'],['s','  ✓ torre chamado (claude) — coleira Pastor → torre\n'],['d','  collie summon trilho-b …   collie summon mesa-a …\n'],'Esperando os três responderem. Enquanto isso, abro a Prévia com o modelo A.\n',['d','  collie panel open browser --url file://…/a-mesa.html\n'],['p','› '],'Modelo A pronto. Comparando contraste…\n'],
+  steps:[['ok','Ler brief'],['ok','Chamar 3 agentes'],['now','Revisar modelos'],['','Comparar no Collie'],['','Commit']],
+  ev:'<b>Resumo:</b> 3 agentes chamados no mesmo cercado. Modelo A entregue (a-mesa.html), B e C em andamento.<br><b>Evidências:</b> brief em .collie/layout-v2-brief.md · prévia aberta · 0 testes rodados (não é Swift).',
+  panels:['Navegador','Prévia']},
+ torre:{n:'torre',m:'claude · opus',state:'work',pad:'collie-general-working',work:'Modelo C · Torre de controle',
+  term:[['p','› '],'Lendo o brief e o layout atual (a-trilho.html)…\n',['d','  Write docs/pages/layout-v2/c-torre.html\n'],'Faixa “Precisa de você” + quadro por cercado. Agora o Foco.\n'],
+  steps:[['ok','Ler brief'],['now','Escrever página'],['','Conferir no Collie']],ev:'<b>Resumo:</b> página em escrita.',panels:['Prévia']},
+ revisor:{n:'revisor',m:'claude · sonnet',state:'end',pad:'collie-general-working',work:'Revisão l10n',
+  term:[['p','› '],'Revisão de 5 commits em feat/l10n.\n',['w','  achado 1: comportamento lido de texto traduzido (ScreenModel)\n'],['s','  ✓ corrigido em 0bacd50e\n'],['s','  ✓ 4/4 achados resolvidos\n'],'Concluído. Relatório salvo como artifact.\n'],
+  steps:[['ok','Ler diff'],['ok','Achados'],['ok','Conferir correções']],ev:'<b>Resumo:</b> 4 achados, 4 corrigidos. Relatório: “Relatório de revisão l10n”.',panels:['Prévia']},
+ l10n:{n:'l10n-cli',m:'codex · gpt-5',state:'wait',pad:'idiomas',work:'Laço · Mensagens da CLI',
+  term:[['p','› '],'Tarefa 3/7: mensagens de erro do `collie work`.\n',['d','  rg -n "\\"Error:" Sources/CollieCLI\n'],'  38 ocorrências. Traduzindo com chaves estáveis.\n',['w','  ⏸ sandbox: escrever em ~/Library/Application Support/Collie/l10n-cache — esperando aprovação\n'],['w','  ? pergunta: manter “paddock” ou traduzir tudo?\n']],
+  steps:[['ok','Comandos raiz'],['ok','collie summon'],['now','collie work'],['','collie loop'],['','collie panel'],['','Ajuda (--help)'],['','Check final']],
+  ev:'<b>Check do laço:</b> swift test --filter L10n · última passada: 3/3 verdes.',panels:['Rede']},
+ temas:{n:'docs-temas',m:'cursor',state:'err',pad:'Pasto',work:'Laço · Guia de temas',
+  term:[['p','› '],'Tarefa 2/4: página de tokens.\n',['d','  lint-docs docs/temas.md\n'],['e','  ✗ docs/temas.md:41 link quebrado #contraste\n'],['e','  ✗ check falhou (3ª tentativa) — laço parado\n']],
+  steps:[['ok','Visão geral'],['now','Tokens'],['','Editor'],['','Exemplos']],ev:'<b>Check:</b> lint-docs falhou 3×: link quebrado em docs/temas.md:41.',panels:['Design']},
+ disp:{n:'mobile',m:'claude · sonnet',state:'end',pad:'Pasto',work:'Smoke iOS',
+  term:[['p','› '],'Rodando fluxo de login no iPhone 16…\n',['s','  ✓ 6/6 passos\n']],steps:[['ok','Instalar'],['ok','Fluxo login']],ev:'<b>Evidência:</b> 6 capturas do simulador.',panels:['Dispositivo']}
+};
+const ORDER=['pastor','torre','revisor','l10n','temas','disp'];
+const STL={work:'trabalhando',wait:'esperando você',end:'concluído',err:'erro'};
+const STC={work:'work',wait:'wait',end:'done',err:'err'};
+let curAg='pastor';
+const PANEL={
+ 'Navegador':'<div class="browser"><div class="url">◀ ▶ ⟳ file://…/layout-v2/a-mesa.html</div><div class="pg"><div class="sk" style="width:60%"></div><div class="sk"></div><div class="sk" style="width:80%"></div><div class="sk" style="height:60px"></div></div></div><p class="dlink">O agente dirige este navegador: cliques e leituras aparecem no terminal.</p>',
+ 'Prévia':'<div class="browser"><div class="url">Artifact · Layout v2 · C Torre</div><div class="pg"><div class="sk" style="width:40%;background:var(--warn)"></div><div class="sk"></div><div style="display:flex;gap:6px"><div class="sk" style="flex:1;height:50px"></div><div class="sk" style="flex:1;height:50px"></div><div class="sk" style="flex:1;height:50px"></div></div></div></div><div class="cmt"><span class="pin">1</span> “A faixa de pedidos podia ter atalho de teclado.” — você</div>',
+ 'Rede':'<table class="net"><tr><td>GET</td><td>api.openai.com/v1/…</td><td>200</td></tr><tr><td>POST</td><td>translate.local/batch</td><td style="color:var(--warn)">regra: mock</td></tr><tr><td>GET</td><td>registry.npmjs.org/…</td><td>304</td></tr></table><p class="dlink">2 regras ativas. Respostas por regra aparecem marcadas.</p>',
+ 'Design':'<div class="browser"><div class="url">Design · Collie Noite</div><div class="pg"><div style="display:flex;gap:6px">'+['#0E1326','#161C36','#6EE7B7','#93A4FF','#FFB86B'].map(c=>'<span style="flex:1;height:34px;border-radius:6px;border:1px solid var(--border);background:'+c+'"></span>').join('')+'</div><div class="sk" style="width:70%"></div></div></div>',
+ 'Dispositivo':'<div style="margin:0 auto;width:170px;height:330px;border-radius:28px;border:6px solid var(--raised);background:var(--bg);display:flex;flex-direction:column;gap:8px;padding:30px 14px"><div class="sk" style="width:50%"></div><div class="sk" style="height:30px"></div><div class="sk" style="height:30px"></div><div class="sk" style="height:30px;background:var(--accent)"></div></div><p class="dlink" style="text-align:center">iPhone 16 · iOS 26</p>'
+};
+function focusAgent(id){
+  curAg=id; const a=AG[id];
+  $('#fName').textContent=a.n; $('#fModel').textContent=a.m; $('#fPad').textContent=a.pad;
+  $('#fState').className='st '+STC[a.state]; $('#fState').innerHTML='<i></i>'+STL[a.state];
+  $('#term').innerHTML=a.term.map(x=>Array.isArray(x)?'<span class="'+x[0]+'">'+esc(x[1])+'</span>':esc(x)).join('');
+  const done=a.steps.filter(s=>s[0]==='ok').length;
+  $('#wSum').textContent=a.work+' · '+done+'/'+a.steps.length+' tarefas';
+  $('#steps').innerHTML=a.steps.map((s,i)=>'<button class="step '+s[0]+'" data-i="'+i+'"><span class="n">'+(s[0]==='ok'?'✓':s[0]==='now'?'●':'○')+' tarefa '+(i+1)+'</span><span class="tt">'+s[1]+'</span></button>').join('');
+  $('#evid').innerHTML=a.ev; $('#evid').classList.remove('on');
+  $('#pCount').textContent=a.panels.length;
+  $('#dtabs').innerHTML=a.panels.map((p,i)=>'<button class="dtab'+(i?'':' on')+'" data-p="'+i+'">'+p+'</button>').join('')+'<button class="dtab" title="Ligar painel" data-pal="Abrir painel">+</button>';
+  $('#dpanes').innerHTML=a.panels.map((p,i)=>'<div class="dpane'+(i?'':' on')+'">'+PANEL[p]+'</div>').join('');
+  go('foco'); crumb([a.pad,a.n]);
+  setTimeout(()=>$('#tIn').focus(),0);
+}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+$('#steps').addEventListener('click',e=>{const s=e.target.closest('.step');if(!s)return;$$('.step').forEach(x=>x.classList.toggle('sel',x===s));$('#evid').classList.add('on')});
+$('#dtabs').addEventListener('click',e=>{const t=e.target.closest('[data-p]');if(!t)return;$$('.dtab').forEach(x=>x.classList.toggle('on',x===t));$$('.dpane').forEach((p,i)=>p.classList.toggle('on',i==t.dataset.p))});
+$('#tglEv').onclick=()=>$('#evid').classList.toggle('on');
+$('#tglDrawer').onclick=()=>{const d=$('#drawer');d.classList.toggle('on');$('#tglDrawer').setAttribute('aria-expanded',d.classList.contains('on'))};
+function leaveFocus(){go('geral');if(lastFocusEl&&document.body.contains(lastFocusEl))lastFocusEl.focus()}
+$('#back').onclick=leaveFocus;
+function step(d){const i=(ORDER.indexOf(curAg)+d+ORDER.length)%ORDER.length;focusAgent(ORDER[i])}
+$('#prevAg').onclick=()=>step(-1); $('#nextAg').onclick=()=>step(1);
+$('#tIn').addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.value.trim()){const t=$('#term');t.insertAdjacentHTML('beforeend','<span class="p">› você: </span>'+esc(e.target.value)+'\n');e.target.value='';t.scrollTop=t.scrollHeight}});
+
+/* Laços */
+const LOOPS={
+ cli:{t:'Mensagens da CLI',who:'l10n-cli · idiomas',check:'swift test --filter L10n',st:['wait','3/7 · esperando você'],p:43,
+  tasks:[['ok','Comandos raiz'],['ok','collie summon'],['now','collie work','pedido de sandbox aberto'],['','collie loop'],['','collie panel'],['','Ajuda (--help)'],['','Check final']]},
+ temas:{t:'Guia de temas',who:'docs-temas · Pasto',check:'lint-docs',st:['err','falhou na tarefa 2'],p:25,
+  tasks:[['ok','Visão geral'],['bad','Tokens','check falhou 3×: link quebrado docs/temas.md:41'],['','Editor de temas'],['','Exemplos']]},
+ mem:{t:'Melhorias de memória',who:'Pastor · collie-general-working',check:'swift test --filter Memory',st:['done','8/8 · concluído'],p:100,
+  tasks:[['ok','Esquema'],['ok','Busca'],['ok','Promover'],['ok','Substituir'],['ok','Checklist'],['ok','Stats'],['ok','Docs'],['ok','Release v0.1.4']]}
+};
+function showLoop(k){
+  const L=LOOPS[k]; $$('#loopList .li').forEach(x=>x.classList.toggle('on',x.dataset.loop===k));
+  $('#loopDetail').innerHTML='<div style="display:flex;align-items:center;gap:10px"><h1>'+L.t+'</h1><span class="st '+STC[L.st[0]==='done'?'end':L.st[0]]+'"><i></i>'+L.st[1]+'</span></div><span class="sub">'+L.who+' · check: <span class="m">'+L.check+'</span></span>'+
+  '<div class="big-prog"><span class="bar'+(L.st[0]!=='done'?' w':'')+'"><span style="width:'+L.p+'%"></span></span><span class="m">'+L.p+'%</span></div>'+
+  '<div class="box"><ul class="tasks">'+L.tasks.map((t,i)=>'<li class="'+t[0]+'"><span class="ck">'+(t[0]==='ok'?'✓':t[0]==='bad'?'✗':'')+'</span><span>'+(i+1)+'. '+t[1]+'</span><span class="tag">'+(t[2]||(t[0]==='now'?'agora':''))+'</span></li>').join('')+'</ul></div>'+
+  '<div class="row-btn">'+(k==='temas'?'<button class="btn pri" data-toast="Laço retomado da tarefa 2">Tentar de novo</button><button class="btn" data-toast="Tarefa 2 pulada">Pular tarefa</button>':'')+(k!=='mem'?'<button class="btn" data-focus="'+(k==='cli'?'l10n':'temas')+'">Abrir agente</button><button class="btn" data-toast="Laço pausado">Pausar</button>':'<button class="btn" data-toast="Resumo copiado">Copiar resumo</button>')+'<button class="btn" data-pal="Novo laço">Novo laço…</button></div>';
+}
+$('#loopList').addEventListener('click',e=>{const b=e.target.closest('[data-loop]');if(b)showLoop(b.dataset.loop)});
+showLoop('cli');
+
+/* Memória */
+const MEM=[
+ {t:'Delegar no mesmo cercado',k:'decisão',rev:false,b:'Chamar agentes sem --paddock; nunca criar cercados novos para filhos do Pastor.'},
+ {t:'Comportamento nunca lê texto traduzido',k:'armadilha',rev:true,b:'Comparar por tags estáveis, não por mensagens em pt/en. Origem: revisão l10n 0bacd50e.'},
+ {t:'Só testes alterados',k:'decisão',rev:false,b:'Rodar swift test --filter nos testes tocados; nunca a suíte inteira.'},
+ {t:'Push do figcraft só no fim',k:'decisão',rev:true,b:'Push na main dispara release pública; esperar tarefas 1–8.'}
+];
+let memSel=1;
+function drawMem(){
+  $('#memList').innerHTML=MEM.map((m,i)=>m.gone?'':'<button class="li'+(i===memSel?' on':'')+'" data-m="'+i+'"><span class="a"><b>'+m.t+'</b>'+(m.rev?'<span class="chip" style="border-color:var(--warn);color:var(--warn)">revisar</span>':'')+'</span><small>'+m.k+'</small></button>').join('');
+  const m=MEM[memSel];
+  $('#memDetail').innerHTML=!m||m.gone?'<p class="sub">Escolha uma memória.</p>':'<div style="display:flex;gap:10px;align-items:center"><h1>'+m.t+'</h1><span class="chip">'+m.k+'</span></div><span class="sub">'+(m.rev?'Salva por um agente — confirme antes que outros leiam.':'Ativa · lida por todos os agentes deste projeto.')+'</span><textarea class="mem-txt" aria-label="Texto da memória">'+m.b+'</textarea><div class="row-btn">'+(m.rev?'<button class="btn pri" id="mOk">Confirmar</button>':'')+'<button class="btn" id="mSave">Salvar edição</button><button class="btn dng" id="mDrop">Descartar</button></div>';
+  const ok=$('#mOk'); if(ok)ok.onclick=()=>{m.rev=false;drawMem();toast('Memória confirmada')};
+  $('#mSave').onclick=()=>{m.b=$('.mem-txt').value;toast('Edição salva')};
+  $('#mDrop').onclick=()=>{m.gone=true;memSel=MEM.findIndex(x=>!x.gone);drawMem();toast('Memória descartada')};
+}
+$('#memList').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b){memSel=+b.dataset.m;drawMem()}});
+drawMem();
+
+/* Artifacts */
+const ART=[
+ '<div style="display:flex;align-items:center;gap:10px"><h1>Layout v2 · C Torre</h1><span class="chip">protótipo</span><div style="margin-left:auto;display:flex;gap:8px"><button class="btn sm" data-toast="Aberto na Prévia do Pastor">Abrir na Prévia</button><button class="btn sm" data-toast="Exportado como HTML">Exportar</button></div></div><div class="art-prev"><div class="sk" style="width:30%;background:var(--warn)"></div><div style="display:flex;gap:10px"><div class="sk" style="flex:1.5;height:70px"></div><div class="sk" style="flex:1;height:70px"></div><div class="sk" style="flex:1;height:70px"></div></div><div style="display:flex;gap:10px"><div class="sk" style="flex:1;height:120px"></div><div class="sk" style="flex:1;height:120px"></div><div class="sk" style="flex:1;height:120px"></div></div></div><div class="cmt"><span class="pin">1</span> “A faixa de pedidos podia ter atalho de teclado.” — você</div><div class="cmt"><span class="pin">2</span> “Colunas por cercado: e se houver 6?” — Pastor</div>',
+ '<h1>Relatório de revisão l10n</h1><div class="art-prev"><p>4 achados · 4 corrigidos</p><div class="sk"></div><div class="sk" style="width:70%"></div><div class="sk" style="width:85%"></div></div>',
+ '<h1>Diagrama: fluxo do sandbox</h1><div class="art-prev" style="align-items:center;justify-content:center"><svg width="420" height="120" viewBox="0 0 420 120" fill="none" stroke="#93A4FF" stroke-width="1.5"><rect x="5" y="40" width="100" height="40" rx="8"/><rect x="160" y="40" width="100" height="40" rx="8"/><rect x="315" y="40" width="100" height="40" rx="8"/><path d="M105 60h55M260 60h55"/><g fill="#B6BEDB" stroke="none" font-size="12" font-family="system-ui"><text x="28" y="64">agente</text><text x="183" y="64">cartão</text><text x="340" y="64">você</text></g></svg></div>',
+ '<h1>Collie Noite</h1><span class="sub">Design System em uso</span><div class="art-prev"><div style="display:flex;gap:8px">'+['--bg','--surface','--accent','--sec','--warn','--danger'].map(v=>'<div style="flex:1"><div style="height:44px;border-radius:8px;border:1px solid var(--border);background:var('+v+')"></div><small class="m sub">'+v+'</small></div>').join('')+'</div></div>'
+];
+$$('[data-art]').forEach(b=>b.addEventListener('click',()=>{$$('[data-art]').forEach(x=>x.classList.toggle('on',x===b));$('#artDetail').innerHTML=ART[b.dataset.art]}));
+$('#artDetail').innerHTML=ART[0];
+
+/* Paleta ⌘K */
+const CMDS=[
+ ['Pastor','agente · collie-general-working',()=>focusAgent('pastor')],['l10n-cli','agente · idiomas · esperando você',()=>focusAgent('l10n')],['revisor','agente · concluído',()=>focusAgent('revisor')],['docs-temas','agente · erro',()=>focusAgent('temas')],
+ ['Chamar agente','claude, codex ou cursor no cercado atual',()=>toast('Escolha modelo e tarefa…')],['Novo cercado','cópia isolada do repo com ramo próprio',()=>toast('Novo cercado: nome do ramo…')],
+ ['Novo laço','lista de tarefas + check',()=>{go('lacos')}],['Laços','vista',()=>go('lacos')],['Memória','vista',()=>go('memoria')],['Artifacts','vista',()=>go('artifacts')],['Rebanhos e Lotes','vista',()=>go('rebanhos')],['Mapa (coleiras)','vista avançada',()=>go('mapa')],['Ajustes · Uso, Temas, Plug-ins','vista',()=>go('ajustes')],
+ ['Abrir painel','Navegador, Dispositivo, Rede, Design, Prévia, Diagrama',()=>toast('Painel ligado ao agente atual')],['Aprovar pedido do sandbox','l10n-cli · ~/Library/…',()=>{go('geral');resolve('n-sb','Liberado só desta vez para l10n-cli')}],['Resumo do Trabalho','do agente atual',()=>{focusAgent(curAg);$('#evid').classList.add('on')}]
+];
+let palSel=0, palItems=[];
+function drawPal(){
+  const q=$('#palIn').value.toLowerCase();
+  palItems=CMDS.filter(c=>(c[0]+' '+c[1]).toLowerCase().includes(q));
+  palSel=Math.min(palSel,Math.max(0,palItems.length-1));
+  $('#palList').innerHTML=palItems.map((c,i)=>'<li role="option" aria-selected="'+(i===palSel)+'" class="'+(i===palSel?'on':'')+'" data-i="'+i+'">'+c[0]+'<small>'+c[1]+'</small></li>').join('')||'<li>Nada encontrado</li>';
+}
+function openPal(q){$('#pal').classList.add('on');$('#scrim').classList.add('on');$('#palIn').value=q||'';palSel=0;drawPal();$('#palIn').focus()}
+function closePal(){$('#pal').classList.remove('on');$('#scrim').classList.remove('on')}
+function runPal(i){const c=palItems[i];closePal();if(c)c[2]()}
+$('#openPal').onclick=()=>openPal();
+$('#palIn').addEventListener('input',()=>{palSel=0;drawPal()});
+$('#palIn').addEventListener('keydown',e=>{
+  if(e.key==='ArrowDown'){palSel=Math.min(palSel+1,palItems.length-1);drawPal();e.preventDefault()}
+  else if(e.key==='ArrowUp'){palSel=Math.max(palSel-1,0);drawPal();e.preventDefault()}
+  else if(e.key==='Enter'){runPal(palSel)}
+});
+$('#palList').addEventListener('click',e=>{const li=e.target.closest('[data-i]');if(li)runPal(+li.dataset.i)});
+$('#scrim').onclick=()=>{closePal();closeNotes()};
+
+/* Notas de UX */
+function closeNotes(){$('#notes').classList.remove('on');$('#scrim').classList.remove('on');$('#openNotes').focus()}
+$('#openNotes').onclick=()=>{$('#notes').classList.add('on');$('#scrim').classList.add('on');$('#closeNotes').focus()};
+$('#closeNotes').onclick=closeNotes;
+
+/* teclado global */
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();$('#pal').classList.contains('on')?closePal():openPal();return}
+  if(e.key==='Escape'){
+    if($('#pal').classList.contains('on'))return closePal();
+    if($('#notes').classList.contains('on'))return closeNotes();
+    if(cur==='foco')return leaveFocus();
+  }
+  if(cur==='foco'&&(e.metaKey||e.ctrlKey)&&(e.key===']'||e.key==='[')){e.preventDefault();step(e.key===']'?1:-1)}
+});
+</script>
+</body>
+</html>

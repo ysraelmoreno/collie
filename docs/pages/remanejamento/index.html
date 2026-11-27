@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · Remanejamento</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--warn:#FFB86B}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:48px 24px 72px}
+h1{font-size:28px;margin:0 0 8px;text-wrap:balance}
+.lede{color:var(--text2);max-width:68ch;margin:0 0 32px}
+.opts{display:flex;flex-direction:column;gap:14px}
+a.opt{display:grid;grid-template-columns:52px 1fr auto;gap:18px;align-items:start;padding:20px 22px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:inherit;text-decoration:none;transition:border-color .18s ease-out,background .18s ease-out}
+a.opt:hover,a.opt:focus-visible{border-color:var(--accent);background:var(--raised);outline:none}
+.n{width:52px;height:52px;border-radius:12px;background:var(--raised);display:grid;place-items:center;font:600 22px ui-monospace,Menlo,monospace;color:var(--accent)}
+.opt h2{margin:0 0 4px;font-size:18px}
+.opt p{margin:0;color:var(--text2);max-width:70ch}
+.go{color:var(--accent);white-space:nowrap;align-self:center}
+h3{font-size:16px;margin:40px 0 10px}
+ul{color:var(--text2);padding-left:20px;max-width:72ch}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:720px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+td:first-child{color:var(--text2);width:190px}
+@media (max-width:640px){a.opt{grid-template-columns:1fr}.n{display:none}}
+@media (prefers-reduced-motion:reduce){a.opt{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Remanejar o Collie sem mudar a estrutura</h1>
+<p class="lede">O trilho de cercados e o canvas de terminais continuam. As três opções mudam o que fica sempre à vista e o caminho até o resto, para mostrar menos ao mesmo tempo e ser claro para quem nunca orquestrou agentes. Cada página tem um botão para ver o “Primeiro uso” e as “Notas de UX”, com o que saiu da tela e para onde foi.</p>
+
+<h3>Vale nas três</h3>
+<ul>
+<li>Cercados com nome, não só letra; número só quando um cercado precisa de você.</li>
+<li>Laço como painel flutuante preso ao terminal que o roda, recolhível a uma pílula.</li>
+<li>Cabeçalho do terminal com nome e estado; modelo, tags e ações no hover ou no menu.</li>
+<li>Rebanhos, Lotes e Fábrica saem da vista fixa (＋ Novo, menu do cercado, ⌘K).</li>
+<li>Pedidos de sandbox junto do agente que pediu e num lugar de “Precisa de você”.</li>
+<li>Barra de status sem contadores internos (analytics, preview 10…).</li>
+</ul>
+
+<div class="opts" style="margin-top:28px">
+  <a class="opt" href="1-duas-colunas.html"><span class="n">1</span>
+    <div><h2>Duas colunas enxutas</h2><p>Trilho e painel de contexto continuam, mas o painel mostra só os agentes, agrupados por estado: Precisa de você, Trabalhando, e o resto recolhido. Painéis aparecem embaixo do agente selecionado.</p></div><span class="go">Abrir →</span></a>
+  <a class="opt" href="2-uma-lateral.html"><span class="n">2</span>
+    <div><h2>Uma lateral só</h2><p>Trilho e painel viram uma barra lateral única: cercados por nome, o atual aberto com seus agentes. O canvas ganha a largura toda e as abas do topo saem.</p></div><span class="go">Abrir →</span></a>
+  <a class="opt" href="3-inspetor.html"><span class="n">3</span>
+    <div><h2>Lateral e inspetor</h2><p>Mesma lateral única, canvas limpo. Selecionar um terminal abre à direita tudo daquele agente: laço, pedidos, painéis, modelo, uso e memórias.</p></div><span class="go">Abrir →</span></a>
+</div>
+
+<h3>Comparação</h3>
+<div class="tbl"><table>
+<thead><tr><th></th><th>1 · Duas colunas</th><th>2 · Uma lateral</th><th>3 · Inspetor</th></tr></thead>
+<tbody>
+<tr><td>Colunas fixas à esquerda</td><td>Duas (trilho + agentes)</td><td>Uma</td><td>Uma</td></tr>
+<tr><td>Espaço do canvas</td><td>Como hoje</td><td>Maior</td><td>Maior; diminui com o inspetor aberto</td></tr>
+<tr><td>Detalhes de um agente</td><td>Na linha do agente e no terminal</td><td>No terminal e no laço flutuante</td><td>Inspetor à direita</td></tr>
+<tr><td>Mudança para quem já usa</td><td>Pequena</td><td>Média</td><td>Média</td></tr>
+<tr><td>Esforço no código</td><td>Menor: enxuga ContextPanel e StatusBar</td><td>Médio: funde PaddockRail e ContextPanel</td><td>Maior: lateral nova e inspetor</td></tr>
+</tbody>
+</table></div>
+</main>
+</body>
+</html>

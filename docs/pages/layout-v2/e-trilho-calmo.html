@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · E · Trilho calmo</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A;--ease:cubic-bezier(.22,1,.36,1)}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+.m{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+button{font:inherit;color:inherit;cursor:pointer;background:none;border:0;padding:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.app{height:100%;display:flex;flex-direction:column;min-width:1100px}
+.body{flex:1;display:flex;min-height:0}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.w{background:var(--accent)}.y{background:var(--warn)}.i{background:var(--muted)}
+.pulse{animation:p 1.6s var(--ease) infinite}@keyframes p{50%{opacity:.35}}
+
+/* rail: where */
+.rail{width:64px;background:var(--sunk);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 0 12px}
+.pd{width:40px;height:40px;border-radius:12px;background:var(--raised);font-weight:600;color:var(--text2);position:relative;transition:background .18s var(--ease)}
+.pd.on{background:var(--accent);color:var(--onacc)}
+.pd .n{position:absolute;right:-4px;top:-4px;min-width:17px;height:17px;border-radius:9px;background:var(--warn);color:var(--onacc);font:600 10px/17px ui-monospace,monospace;border:2px solid var(--sunk);padding:0 3px}
+.pd.add{background:none;border:1px dashed #3A4472;font-size:20px;color:var(--muted)}
+.ib{width:40px;height:40px;border-radius:12px;color:var(--text2);display:grid;place-items:center}
+.ib:hover,.ib.on{background:var(--raised);color:var(--text)}
+
+/* context: who */
+.ctx{width:256px;background:var(--side);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.ph{padding:40px 14px 10px;display:flex;align-items:flex-start;gap:8px}
+.ph h1{font-size:18px;margin:0;font-weight:600}
+.ph .br{font-size:12px;color:var(--muted);margin-top:2px}
+.ph .more{margin-left:auto;width:28px;height:28px;border-radius:8px;color:var(--text2)}
+.ph .more:hover{background:var(--raised)}
+.newb{margin:0 14px 12px;height:30px;border-radius:8px;background:var(--accent);color:var(--onacc);font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px}
+.list{flex:1;overflow:auto;padding:0 8px 12px}
+.grp{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;padding:12px 8px 4px}
+.grp b{font-weight:500;color:var(--text2)}
+.ag{display:flex;flex-direction:column;border-radius:8px;padding:7px 8px;cursor:pointer;transition:background .15s var(--ease)}
+.ag:hover{background:#171E3A}
+.ag.on{background:var(--raised)}
+.ag .l1{display:flex;align-items:center;gap:8px}
+.ag .nm{font-weight:500;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ag .l2{color:var(--muted);font-size:12px;margin:2px 0 0 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ag .ask{color:var(--warn)}
+.ag .sub{margin:4px 0 0 16px;display:none;flex-direction:column;gap:2px}
+.ag.on .sub{display:flex}
+.ag .sub span{color:var(--text2);font-size:12px;display:flex;gap:6px;align-items:center}
+.ag .sub span::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--sec)}
+.fold{margin:6px 8px 0;color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center;padding:4px 0}
+.fold:hover{color:var(--text)}
+.quiet{display:none}.quiet.open{display:block}
+
+/* main */
+.main{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+.top{height:40px;display:flex;align-items:center;gap:6px;padding:0 12px;border-bottom:1px solid var(--border);background:var(--side)}
+.seg{display:flex;gap:2px}
+.seg button{height:28px;padding:0 12px;border-radius:7px;color:var(--muted)}
+.seg button.on{background:var(--raised);color:var(--text)}
+.cmd{margin-left:auto;width:280px;height:28px;border:1px solid var(--border);border-radius:8px;background:var(--sunk);color:var(--muted);display:flex;align-items:center;padding:0 10px}
+.view{flex:1;min-height:0;display:none;position:relative}
+.view.on{display:block}
+
+/* canvas */
+.canvas{overflow:hidden;background:var(--bg) radial-gradient(#1A2142 1px,transparent 1px) 0 0/22px 22px}
+.term{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;transition:opacity .22s var(--ease),border-color .22s var(--ease),filter .22s var(--ease)}
+.term.sel{border-color:var(--accent)}
+.canvas.focus .term:not(.sel):not(.tied){opacity:.28;filter:saturate(.4)}
+.th{height:34px;display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;background:var(--raised);border-bottom:1px solid var(--border)}
+.th .t{font-weight:600}
+.th .st{color:var(--muted);font-size:12px}
+.th .tabs{margin-left:auto;display:flex;gap:2px}
+.th .tabs button{height:24px;padding:0 9px;border-radius:6px;color:var(--muted);font-size:12px}
+.th .tabs button.on{background:var(--surface);color:var(--text)}
+.th .x{width:24px;height:24px;border-radius:6px;color:var(--muted);opacity:0;transition:opacity .15s}
+.term:hover .th .x,.term.sel .th .x{opacity:1}
+.tb{flex:1;padding:12px 14px;font:12px/1.55 ui-monospace,"SF Mono",Menlo,monospace;color:var(--text2);white-space:pre;overflow:hidden}
+.pane{display:none;flex:1}.pane.on{display:block}
+.web{flex:1;background:#F5F6FA;color:#2A2F45;padding:18px;font-size:13px}
+.web .bar{height:26px;border-radius:6px;background:#E3E6EF;margin-bottom:14px;display:flex;align-items:center;padding:0 10px;color:#4C536C;font-size:12px}
+.inline-ask{margin:0 12px 12px;padding:10px 12px;border-radius:10px;background:#2A2430;border:1px solid #5A4630;display:flex;align-items:center;gap:10px}
+.inline-ask .q{flex:1;color:var(--text)}
+.inline-ask .q small{display:block;color:#E9C9A0;font:11px ui-monospace,monospace;margin-top:2px}
+.btn{height:28px;padding:0 12px;border-radius:7px;background:var(--raised);border:1px solid var(--border);color:var(--text)}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}
+.btn:hover{filter:brightness(1.12)}
+.leash{position:absolute;inset:0;pointer-events:none;width:100%;height:100%}
+.zoom{position:absolute;right:14px;bottom:14px;display:flex;gap:2px;background:var(--side);border:1px solid var(--border);border-radius:9px;padding:2px;opacity:.55;transition:opacity .18s}
+.zoom:hover{opacity:1}
+.zoom button{height:26px;min-width:28px;padding:0 6px;border-radius:7px;color:var(--text2);font-size:12px}
+.zoom button:hover{background:var(--raised)}
+.hint{position:absolute;left:16px;bottom:14px;color:var(--muted);font-size:12px}
+
+/* status: system */
+.status{height:28px;display:flex;align-items:center;gap:4px;padding:0 8px;background:var(--sunk);border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+.status button{height:22px;padding:0 8px;border-radius:6px;display:flex;align-items:center;gap:6px;color:var(--text2)}
+.status button:hover{background:var(--raised)}
+.status .need{color:var(--warn)}
+.status .sp{flex:1}
+
+/* popovers / sheets */
+.pop{position:absolute;z-index:20;background:var(--side);border:1px solid var(--border);border-radius:12px;box-shadow:0 18px 50px #0008;padding:6px;display:none;min-width:240px}
+.pop.open{display:block;animation:in .18s var(--ease)}
+@keyframes in{from{opacity:0;transform:translateY(4px)}}
+.pop .it{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border-radius:8px}
+.pop .it:hover,.pop .it.hl{background:var(--raised)}
+.pop .it kbd{margin-left:auto;color:var(--muted);font:11px ui-monospace,monospace}
+.pop .it .d{color:var(--muted);font-size:12px}
+.pop hr{border:0;border-top:1px solid var(--border);margin:6px 4px}
+.pop .hd{color:var(--muted);font-size:12px;padding:6px 10px 2px}
+.req{padding:10px;border-radius:10px;display:flex;flex-direction:column;gap:8px}
+.req+.req{border-top:1px solid var(--border)}
+.req .who{display:flex;gap:8px;align-items:center}
+.req .path{font:11px ui-monospace,monospace;color:#E9C9A0}
+.req .acts{display:flex;gap:6px}
+.empty{padding:18px;color:var(--muted);text-align:center}
+.scrim{position:absolute;inset:0;z-index:30;background:#05081499;display:none;align-items:flex-start;justify-content:center;padding-top:90px}
+.scrim.open{display:flex;animation:fade .18s var(--ease)}
+@keyframes fade{from{opacity:0}}
+.pal{width:560px;background:var(--side);border:1px solid var(--border);border-radius:14px;box-shadow:0 24px 60px #000a;overflow:hidden}
+.pal input{width:100%;height:46px;border:0;border-bottom:1px solid var(--border);background:none;color:var(--text);font:15px inherit;padding:0 16px;outline:none}
+.pal .res{max-height:340px;overflow:auto;padding:6px}
+
+/* full-width pages (Laços, Memória, Preferências) */
+.page{height:100%;overflow:auto;padding:28px 36px}
+.page h2{margin:0 0 4px;font-size:20px}
+.page .sub{color:var(--muted);margin:0 0 20px}
+.task{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);max-width:760px}
+.task .c{width:18px;text-align:center}
+.task .meta{color:var(--muted);font-size:12px}
+
+/* notes drawer */
+.notes{position:fixed;top:0;right:0;bottom:0;width:440px;z-index:40;background:var(--side);border-left:1px solid var(--border);box-shadow:-20px 0 60px #0007;padding:22px 24px;overflow:auto;transform:translateX(100%);transition:transform .24s var(--ease)}
+.notes.open{transform:none}
+.notes h2{margin:0 0 6px;font-size:18px}
+.notes h3{font-size:14px;margin:20px 0 8px}
+.notes p,.notes li{color:var(--text2);line-height:1.55}
+.notes ul{padding-left:18px;margin:0}
+.notes table{border-collapse:collapse;width:100%;font-size:12px}
+.notes td{padding:6px 4px;border-bottom:1px solid var(--border);vertical-align:top;color:var(--text2)}
+.notes td:first-child{color:var(--text);white-space:nowrap;padding-right:10px}
+.ux{position:fixed;right:16px;top:8px;z-index:35;height:26px;padding:0 12px;border-radius:13px;background:var(--sec);color:var(--onacc);font-weight:600;font-size:12px}
+.lights{position:absolute;left:14px;top:13px;display:flex;gap:8px;z-index:5}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<button class="ux" id="uxb" aria-controls="notes" aria-expanded="false">Notas de UX</button>
+<div class="app">
+<div class="lights" aria-hidden="true"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div>
+<div class="body">
+
+<nav class="rail" aria-label="Cercados">
+  <button class="pd on" data-pd="c" title="collie-general-working · 1 pedido">C<span class="n" id="railn">1</span></button>
+  <button class="pd" data-pd="i" title="idiomas">I</button>
+  <button class="pd" data-pd="p" title="Pasto">P</button>
+  <button class="pd add" aria-label="Novo cercado" title="Novo cercado">+</button>
+  <div style="flex:1"></div>
+  <button class="ib" id="gear" aria-label="Preferências (⌘,)" title="Preferências (⌘,)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+</nav>
+
+<aside class="ctx" aria-label="Agentes do cercado">
+  <div class="ph">
+    <div><h1 id="pdname">collie-general-working</h1><div class="br m">collie/general ↑3 · limpo</div></div>
+    <button class="more" id="pmenuB" aria-label="Menu do cercado" aria-haspopup="menu">⋯</button>
+  </div>
+  <button class="newb" id="newB" aria-haspopup="menu">＋ Novo <span class="m" style="opacity:.6;font-size:11px">⌘N</span></button>
+  <div class="list" id="list">
+    <div class="grp" id="g-need"><span class="dot y"></span><b>Precisa de você</b></div>
+    <div class="ag" data-a="cli" tabindex="0" role="button">
+      <div class="l1"><span class="dot y"></span><span class="nm">l10n-cli</span><span class="m" style="color:var(--muted);font-size:11px">codex</span></div>
+      <div class="l2 ask">quer gravar fora do projeto</div>
+      <div class="sub"><span>Navegador</span></div>
+    </div>
+    <div class="grp"><span class="dot w pulse"></span><b>Trabalhando</b></div>
+    <div class="ag on" data-a="pastor" tabindex="0" role="button">
+      <div class="l1"><span class="dot w"></span><span class="nm">Pastor</span><span class="m" style="color:var(--muted);font-size:11px">claude</span></div>
+      <div class="l2">laço idiomas · 3 de 7</div>
+      <div class="sub"><span>Prévia · protótipo</span></div>
+    </div>
+    <button class="fold" id="foldB" aria-expanded="false" aria-controls="quiet">▸ Concluídos e parados · 2</button>
+    <div class="quiet" id="quiet">
+      <div class="ag" data-a="rev" tabindex="0" role="button">
+        <div class="l1"><span class="dot i"></span><span class="nm">revisor</span><span class="m" style="color:var(--muted);font-size:11px">claude</span></div>
+        <div class="l2">concluído · 13 achados</div>
+      </div>
+      <div class="ag" data-a="sh" tabindex="0" role="button">
+        <div class="l1"><span class="dot i"></span><span class="nm">shell</span><span class="m" style="color:var(--muted);font-size:11px">zsh</span></div>
+        <div class="l2">parado</div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="top">
+    <div class="seg" role="tablist">
+      <button class="on" data-v="canvas" role="tab">Canvas</button>
+      <button data-v="lacos" role="tab" id="lacosTab" hidden>Laços</button>
+      <button data-v="memoria" role="tab" id="memTab" hidden>Memória</button>
+      <button data-v="prefs" role="tab" id="prefTab" hidden>Preferências</button>
+    </div>
+    <button class="cmd" id="cmdB">Buscar ou rodar comando<span class="m" style="margin-left:auto;font-size:11px">⌘K</span></button>
+  </div>
+
+  <section class="view canvas focus on" id="v-canvas">
+    <svg class="leash" aria-hidden="true"><path d="M560 120 C 600 120 600 120 640 120" stroke="#6EE7B7" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/></svg>
+    <div class="term sel" id="t-pastor" style="left:32px;top:30px;width:528px;height:330px">
+      <div class="th"><span class="dot w"></span><span class="t">Pastor</span><span class="st">trabalhando</span>
+        <div class="tabs" role="tablist" aria-label="Pastor e seus painéis"><button class="on" data-pane="p-term">Terminal</button><button data-pane="p-prev">Prévia</button></div>
+        <button class="x" aria-label="Mais ações">⋯</button></div>
+      <div class="pane on tb" id="p-term">$ collie work status
+laço idiomas · 3 de 7
+ T1 núcleo tr()         ✔
+ T2 preferência         ✔
+ T3 CLI                 ✔
+ T4 daemon              ● tentativa 1 — check rodando
+ T5 app                 ◌
+<span style="color:var(--accent)">&gt;</span> _</div>
+      <div class="pane web" id="p-prev"><div class="bar">protótipo · Preferências › Idioma</div><b>Idioma</b><p style="color:#4C536C">Sistema · Português · English</p></div>
+    </div>
+    <div class="term tied" id="t-cli" style="left:640px;top:30px;width:420px;height:330px">
+      <div class="th"><span class="dot y"></span><span class="t">l10n-cli</span><span class="st">esperando você</span>
+        <div class="tabs"><button class="on">Terminal</button><button>Navegador</button></div>
+        <button class="x" aria-label="Mais ações">⋯</button></div>
+      <div class="tb" style="flex:1">swift build --product collie
+Build complete! (41.2s)
+gravando preferência do idioma…</div>
+      <div class="inline-ask" id="ask1">
+        <div class="q">Gravar fora do projeto?<small>~/Library/Application Support/Collie/preferences.json</small></div>
+        <button class="btn p" data-ok>Permitir</button><button class="btn" data-no>Negar</button>
+      </div>
+    </div>
+    <div class="term" id="t-rev" style="left:32px;top:392px;width:528px;height:190px">
+      <div class="th"><span class="dot i"></span><span class="t">revisor</span><span class="st">concluído</span><button class="x" aria-label="Mais ações" style="margin-left:auto">⋯</button></div>
+      <div class="tb">13 achados · 12 corrigidos
+ 1 laço recusa todo land automático     ✔
+ 2 armadilhas candidatas sempre vazias  ✔
+ …</div>
+    </div>
+    <div class="term" id="t-sh" style="left:640px;top:392px;width:420px;height:190px">
+      <div class="th"><span class="dot i"></span><span class="t">shell</span><span class="st">parado</span><button class="x" aria-label="Mais ações" style="margin-left:auto">⋯</button></div>
+      <div class="tb">$ _</div>
+    </div>
+    <div class="hint" id="hint">Pastor em foco · clique no fundo para ver todos</div>
+    <div class="zoom" aria-label="Zoom"><button aria-label="Afastar">−</button><button class="m">100%</button><button aria-label="Aproximar">+</button><button id="tidy" title="Organizar em grade">Organizar</button></div>
+  </section>
+
+  <section class="view" id="v-lacos"><div class="page">
+    <h2>Laço · idiomas</h2><p class="sub">collie-general-working · 3 de 7 tarefas · Pastor</p>
+    <div class="task"><span class="c" style="color:var(--accent)">✔</span><div style="flex:1">T1 Núcleo tr()<div class="meta">1ª tentativa · 6 min</div></div></div>
+    <div class="task"><span class="c" style="color:var(--accent)">✔</span><div style="flex:1">T2 Preferência de idioma<div class="meta">1ª tentativa · 9 min</div></div></div>
+    <div class="task"><span class="c" style="color:var(--accent)">✔</span><div style="flex:1">T3 CLI<div class="meta">2ª tentativa · 14 min</div></div></div>
+    <div class="task"><span class="c pulse" style="color:var(--warn)">●</span><div style="flex:1">T4 Daemon<div class="meta">tentativa 1 · check rodando</div></div><button class="btn" data-goto="pastor">Ver no canvas</button></div>
+    <div class="task"><span class="c" style="color:var(--muted)">◌</span><div style="flex:1">T5 App<div class="meta">na fila</div></div></div>
+    <div class="task"><span class="c" style="color:var(--muted)">◌</span><div style="flex:1">T6 Agentes<div class="meta">na fila</div></div></div>
+    <div class="task"><span class="c" style="color:var(--muted)">◌</span><div style="flex:1">T7 Changelog<div class="meta">na fila</div></div></div>
+    <div style="display:flex;gap:8px;margin-top:18px"><button class="btn">Parar laço</button><button class="btn">Histórico</button></div>
+  </div></section>
+
+  <section class="view" id="v-memoria"><div class="page">
+    <h2>Memória do projeto</h2><p class="sub">O que os agentes guardaram. Revise o que estiver errado ou velho.</p>
+    <div class="task"><span class="c" style="color:var(--sec)">◆</span><div style="flex:1">Textos relidos pelo código aceitam os dois idiomas<div class="meta">decisão · hoje · Pastor</div></div><button class="btn">Editar</button></div>
+    <div class="task"><span class="c" style="color:var(--warn)">▲</span><div style="flex:1">Trait de suíte recursivo sem TestTrait derruba o runner<div class="meta">armadilha · hoje · 1×</div></div><button class="btn">Editar</button></div>
+    <div class="task"><span class="c" style="color:var(--warn)">▲</span><div style="flex:1">Sandbox esconde preferences.json do CLI<div class="meta">armadilha · hoje</div></div><button class="btn">Editar</button></div>
+  </div></section>
+
+  <section class="view" id="v-prefs"><div class="page">
+    <h2>Preferências</h2><p class="sub">Mesmas páginas de hoje, numa aba que fecha com Esc.</p>
+    <div class="task"><div style="flex:1">Aparência<div class="meta">tema, idioma, densidade</div></div></div>
+    <div class="task"><div style="flex:1">Agentes e sandbox<div class="meta">desenho, laços, memória</div></div></div>
+    <div class="task"><div style="flex:1">Plug-ins<div class="meta">2 instalados</div></div></div>
+    <div class="task"><div style="flex:1">Dispositivos<div class="meta">celular, Android</div></div></div>
+  </div></section>
+
+  <!-- popovers -->
+  <div class="pop" id="newMenu" role="menu" style="left:-236px;top:6px">
+    <button class="it" role="menuitem">Terminal <kbd>⌘N</kbd></button>
+    <button class="it" role="menuitem">Painel… <span class="d">navegador, dispositivo, design…</span></button>
+    <hr>
+    <button class="it" role="menuitem">Aplicar rebanho… <span class="d">3 salvos</span></button>
+    <button class="it" role="menuitem">Laço a partir de um plano…</button>
+  </div>
+  <div class="pop" id="pMenu" role="menu" style="left:-60px;top:6px">
+    <div class="hd">collie/general · 3 commits à frente da main</div>
+    <button class="it" role="menuitem">Levar à main (land)…</button>
+    <button class="it" role="menuitem">Fábrica · Design system <span class="d">ativo</span></button>
+    <button class="it" role="menuitem">Lotes <span class="d">1</span></button>
+    <button class="it" role="menuitem">Rebanhos <span class="d">salvar este</span></button>
+    <hr>
+    <button class="it" role="menuitem">Renomear</button><button class="it" role="menuitem" style="color:var(--danger)">Apagar cercado…</button>
+  </div>
+  <div class="pop" id="reqPop" style="left:8px;bottom:34px;width:380px">
+    <div class="hd">Precisa de você</div>
+    <div id="reqs">
+      <div class="req" id="req1"><div class="who"><span class="dot y"></span><b>l10n-cli</b><span style="color:var(--muted)">quer gravar fora do projeto</span></div>
+        <div class="path">~/Library/Application Support/Collie/preferences.json</div>
+        <div class="acts"><button class="btn p" data-ok>Permitir</button><button class="btn">Nesta sessão</button><button class="btn" data-goto="cli">Ver no canvas</button><button class="btn" data-no style="margin-left:auto">Negar</button></div></div>
+    </div>
+    <div class="empty" id="reqEmpty" hidden>Nada esperando você.</div>
+  </div>
+  <div class="pop" id="usePop" style="right:8px;bottom:34px;width:260px">
+    <div class="hd">Uso dos agentes · esta semana</div>
+    <div class="it">claude <span class="d" style="margin-left:auto">41%</span></div><div class="it">codex <span class="d" style="margin-left:auto">18%</span></div>
+  </div>
+
+  <div class="scrim" id="pal" role="dialog" aria-label="Paleta de comandos">
+    <div class="pal"><input id="palIn" placeholder="Agente, painel, cercado ou comando" aria-label="Buscar">
+      <div class="res" id="palRes"></div></div>
+  </div>
+</main>
+</div>
+<footer class="status" aria-label="Estado">
+  <button class="need" id="needB" aria-haspopup="dialog"><span class="dot y"></span><span id="needT">1 pedido</span></button>
+  <button id="loopB"><span class="dot w pulse"></span>laço idiomas 3/7</button>
+  <button id="memB">memória · 2 novas</button>
+  <span class="sp"></span>
+  <button id="useB">uso 41%</button>
+  <span style="padding:0 8px"><span class="dot w" style="margin-right:6px"></span>conectado</span>
+</footer>
+</div>
+
+<aside class="notes" id="notes" aria-label="Notas de UX">
+  <button class="btn" id="notesX" style="float:right">Fechar</button>
+  <h2>E · Trilho calmo</h2>
+  <p>A mesma estrutura de hoje (trilho, painel de contexto, abas, canvas, barra de status), com metade das coisas na tela. Cada área responde a uma pergunta só, e o resto aparece quando você pede.</p>
+  <h3>Cada área, uma pergunta</h3>
+  <table>
+    <tr><td>Trilho</td><td><b>Onde?</b> Só os cercados. Um número aparece só quando um cercado precisa de você; sem cores de estado espalhadas.</td></tr>
+    <tr><td>Painel de contexto</td><td><b>Quem?</b> Só os agentes, agrupados por estado: Precisa de você, Trabalhando, e o resto recolhido. Os painéis de um agente aparecem embaixo dele quando ele está selecionado.</td></tr>
+    <tr><td>Canvas</td><td><b>O que estão fazendo?</b> O agente selecionado fica em foco e os não relacionados esmaecem. Os painéis viram abas no cabeçalho do agente que os usa. O pedido de sandbox aparece dentro do terminal que pediu.</td></tr>
+    <tr><td>Barra de status</td><td><b>Como está tudo?</b> Pedidos, laço, memória nova e uso, cada um clicável. Nada disso ocupa o painel de contexto.</td></tr>
+  </table>
+  <h3>O que saiu da tela (e para onde foi)</h3>
+  <table>
+    <tr><td>Rebanhos, Lotes</td><td>Botão “＋ Novo” e menu ⋯ do cercado</td></tr>
+    <tr><td>Fábrica</td><td>Menu ⋯ do cercado</td></tr>
+    <tr><td>Cartão de laço</td><td>Barra de status; clicar abre a aba Laços</td></tr>
+    <tr><td>Lista de painéis</td><td>Embaixo do agente dono e como abas no terminal dele</td></tr>
+    <tr><td>Cartões de sandbox soltos</td><td>Dentro do terminal que pediu + “1 pedido” na barra</td></tr>
+    <tr><td>Zoom</td><td>Canto do canvas, esmaecido até passar o mouse</td></tr>
+    <tr><td>Abas fixas</td><td>Só Canvas; Laços, Memória e Preferências abrem como aba quando chamadas e fecham com Esc</td></tr>
+    <tr><td>Agentes parados</td><td>Recolhidos em “Concluídos e parados”</td></tr>
+  </table>
+  <h3>Onde mora cada função</h3>
+  <table>
+    <tr><td>Canvas e terminais</td><td>Tela principal</td></tr>
+    <tr><td>Cercados</td><td>Trilho; ramo e land no menu ⋯</td></tr>
+    <tr><td>Pastor e delegação</td><td>Painel de contexto (agentes do Pastor)</td></tr>
+    <tr><td>Laços</td><td>Barra de status → aba Laços; ＋ Novo</td></tr>
+    <tr><td>Trabalho</td><td>Segunda linha de cada agente; aba Laços</td></tr>
+    <tr><td>Paleta</td><td>⌘K e campo no topo</td></tr>
+    <tr><td>Navegador, Dispositivo, Rede, Design, Prévia, Diagrama</td><td>＋ Novo › Painel; abas no agente dono</td></tr>
+    <tr><td>Memória</td><td>Barra de status → aba Memória</td></tr>
+    <tr><td>Sandbox e cartões</td><td>No terminal que pediu e “N pedidos” na barra</td></tr>
+    <tr><td>Rebanhos e Lotes</td><td>＋ Novo e menu ⋯ do cercado</td></tr>
+    <tr><td>Uso dos agentes</td><td>Barra de status</td></tr>
+    <tr><td>Plug-ins, Temas, Preferências</td><td>Engrenagem do trilho, ⌘,</td></tr>
+  </table>
+  <h3>Por que assim</h3>
+  <ul>
+    <li>Hoje o painel de contexto empilha seis listas. A pergunta que você faz ao olhar para ele é uma só: quem precisa de mim?</li>
+    <li>Estado vem primeiro, nome depois: agrupar por estado poupa ler cada linha.</li>
+    <li>Um pedido de sandbox pertence ao terminal que pediu, não a um ponto do canvas.</li>
+    <li>Nada mudou de lugar no trilho e no canvas: quem já usa o Collie não reaprende.</li>
+  </ul>
+</aside>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const canvas=$('#v-canvas');
+function show(v){
+  $$('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));
+  $$('.seg button').forEach(b=>{b.classList.toggle('on',b.dataset.v===v);if(b.dataset.v===v)b.hidden=false});
+  $('#gear').classList.toggle('on',v==='prefs');closePops();
+}
+function closeTab(){const cur=$$('.seg button').find(b=>b.classList.contains('on'));if(cur&&cur.dataset.v!=='canvas')cur.hidden=true;show('canvas')}
+$$('.seg button').forEach(b=>b.onclick=()=>show(b.dataset.v));
+const names={pastor:'Pastor',cli:'l10n-cli',rev:'revisor',sh:'shell'};
+const ties={pastor:['cli'],cli:['pastor'],rev:[],sh:[]};
+function pick(a){
+  show('canvas');
+  $$('.ag').forEach(r=>r.classList.toggle('on',r.dataset.a===a));
+  if(['rev','sh'].includes(a)&&!$('#quiet').classList.contains('open'))toggleFold();
+  $$('.term').forEach(t=>{const id=t.id.slice(2);t.classList.toggle('sel',id===a);t.classList.toggle('tied',ties[a].includes(id))});
+  canvas.classList.add('focus');$('#hint').textContent=names[a]+' em foco · clique no fundo para ver todos';
+}
+$$('.ag').forEach(r=>{r.onclick=()=>pick(r.dataset.a);r.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();pick(r.dataset.a)}}});
+$$('.term').forEach(t=>t.addEventListener('click',e=>{e.stopPropagation();pick(t.id.slice(2))}));
+canvas.addEventListener('click',()=>{canvas.classList.remove('focus');$$('.term').forEach(t=>t.classList.remove('sel','tied'));$$('.ag').forEach(r=>r.classList.remove('on'));$('#hint').textContent='Todos os agentes · clique num agente para focar'});
+$$('[data-pane]').forEach(b=>b.onclick=e=>{e.stopPropagation();const box=b.closest('.term');box.querySelectorAll('[data-pane]').forEach(x=>x.classList.toggle('on',x===b));box.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id===b.dataset.pane))});
+function toggleFold(){const q=$('#quiet'),o=q.classList.toggle('open');$('#foldB').setAttribute('aria-expanded',o);$('#foldB').textContent=(o?'▾':'▸')+' Concluídos e parados · 2'}
+$('#foldB').onclick=toggleFold;
+// requests
+function resolve(){
+  ['#ask1','#req1'].forEach(s=>$(s)&&$(s).remove());
+  $('#reqEmpty').hidden=false;$('#needB').style.display='none';$('#railn').remove();$('#g-need').remove();
+  const r=$('[data-a=cli]');r.querySelector('.dot').className='dot w';r.querySelector('.l2').className='l2';r.querySelector('.l2').textContent='gravando a preferência';
+  $('#list .grp:not(#g-need)').after(r);
+  const t=$('#t-cli');t.querySelector('.dot').className='dot w';t.querySelector('.st').textContent='trabalhando';
+}
+document.addEventListener('click',e=>{if(e.target.matches('[data-ok],[data-no]')){e.stopPropagation();resolve()}
+  const g=e.target.closest('[data-goto]');if(g){e.stopPropagation();pick(g.dataset.goto)}});
+// popovers
+const pops={'#newB':'#newMenu','#pmenuB':'#pMenu','#needB':'#reqPop','#useB':'#usePop'};
+function closePops(){$$('.pop').forEach(p=>p.classList.remove('open'))}
+function place(btn,pop){if(pop.id==='newMenu'||pop.id==='pMenu'){const r=btn.getBoundingClientRect(),m=$('.main').getBoundingClientRect();pop.style.left=(r.left-m.left)+'px';pop.style.top=(r.bottom-m.top+4)+'px'}}
+Object.entries(pops).forEach(([b,p])=>$(b).onclick=e=>{e.stopPropagation();const el=$(p),o=el.classList.contains('open');closePops();if(!o){place($(b),el);el.classList.add('open')}});
+$$('.pop').forEach(p=>p.addEventListener('click',e=>e.stopPropagation()));
+document.addEventListener('click',closePops);
+$('#loopB').onclick=()=>show('lacos');$('#memB').onclick=()=>show('memoria');$('#gear').onclick=()=>show('prefs');
+// paddocks
+$$('.pd[data-pd]').forEach(b=>b.onclick=()=>{$$('.pd[data-pd]').forEach(x=>x.classList.toggle('on',x===b));$('#pdname').textContent=b.title.split(' ·')[0]});
+// palette
+const items=[['Pastor','agente · trabalhando',()=>pick('pastor')],['l10n-cli','agente · esperando você',()=>pick('cli')],['revisor','agente · concluído',()=>pick('rev')],
+ ['Laço idiomas','3 de 7',()=>show('lacos')],['Memória','2 novas',()=>show('memoria')],['Abrir painel: Navegador','painel',()=>{}],['Abrir painel: Dispositivo','painel',()=>{}],
+ ['Aplicar rebanho…','rebanho',()=>{}],['Ir para cercado: idiomas','cercado',()=>$('[data-pd=i]').click()],['Preferências','⌘,',()=>show('prefs')]];
+let hl=0;
+function renderPal(){const q=$('#palIn').value.toLowerCase(),f=items.filter(i=>(i[0]+i[1]).toLowerCase().includes(q));hl=Math.min(hl,Math.max(f.length-1,0));
+  $('#palRes').innerHTML=f.length?f.map((i,k)=>`<button class="it${k===hl?' hl':''}" data-k="${items.indexOf(i)}">${i[0]}<kbd>${i[1]}</kbd></button>`).join(''):'<div class="empty">Nada encontrado</div>';
+  $$('#palRes .it').forEach(b=>b.onclick=()=>{closePal();items[b.dataset.k][2]()});return f}
+function openPal(){$('#pal').classList.add('open');$('#palIn').value='';hl=0;renderPal();$('#palIn').focus()}
+function closePal(){$('#pal').classList.remove('open')}
+$('#cmdB').onclick=e=>{e.stopPropagation();openPal()};
+$('#pal').onclick=e=>{if(e.target.id==='pal')closePal()};
+$('#palIn').oninput=()=>{hl=0;renderPal()};
+$('#palIn').onkeydown=e=>{const f=renderPal();if(e.key==='ArrowDown'){hl=Math.min(hl+1,f.length-1);renderPal();e.preventDefault()}if(e.key==='ArrowUp'){hl=Math.max(hl-1,0);renderPal();e.preventDefault()}if(e.key==='Enter'&&f[hl]){closePal();f[hl][2]()}};
+// notes
+function notes(o){$('#notes').classList.toggle('open',o);$('#uxb').setAttribute('aria-expanded',o)}
+$('#uxb').onclick=()=>notes(!$('#notes').classList.contains('open'));$('#notesX').onclick=()=>notes(false);
+document.addEventListener('keydown',e=>{
+  if(e.metaKey&&e.key.toLowerCase()==='k'){e.preventDefault();openPal();return}
+  if(e.metaKey&&e.key===','){e.preventDefault();show('prefs');return}
+  if(e.key==='Escape'){if($('#pal').classList.contains('open'))return closePal();if($('#notes').classList.contains('open'))return notes(false);if($$('.pop.open').length)return closePops();closeTab()}
+});
+$('#tidy').onclick=e=>e.stopPropagation();
+</script>
+</body>
+</html>

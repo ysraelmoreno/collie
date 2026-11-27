@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uma lateral só</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;
+--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A;
+--mono:ui-monospace,"SF Mono",Menlo,monospace;--ease:cubic-bezier(.2,.8,.2,1);--t:180ms;--sideW:240px}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--sunk);color:var(--text);font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+body{min-width:1100px;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--sec);outline-offset:2px;border-radius:6px}
+.kbd{font:11px var(--mono);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:0 4px;line-height:16px}
+
+/* janela */
+.win{position:fixed;inset:0;display:grid;grid-template-columns:var(--sideW) 1fr;background:var(--bg);transition:grid-template-columns var(--t) var(--ease)}
+.win.collapsed{--sideW:56px}
+
+/* lateral */
+.side{background:var(--side);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.side-top{height:38px;display:flex;align-items:center;padding:0 8px 0 14px;gap:8px;flex:none}
+.lights{display:flex;gap:8px}.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#FF5F57}.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
+.iconbtn{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--text2);flex:none}
+.iconbtn:hover{background:var(--raised);color:var(--text)}
+.side-top .iconbtn{margin-left:auto}
+.newbtn{margin:4px 10px 10px;height:32px;border-radius:8px;background:var(--accent);color:var(--onacc);font-weight:600;display:flex;align-items:center;gap:8px;padding:0 10px;flex:none}
+.newbtn:hover{filter:brightness(1.07)}
+.newbtn .kbd{margin-left:auto;color:var(--onacc);border-color:rgba(14,19,38,.35)}
+.sect{display:flex;align-items:center;padding:6px 14px 4px;color:var(--muted);font-size:12px;font-weight:600}
+.sect .iconbtn{margin-left:auto;width:22px;height:22px}
+.list{flex:1;overflow:auto;padding:0 6px 8px}
+.pad{border-radius:8px;margin-bottom:1px}
+.row{width:100%;display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:7px;text-align:left;color:var(--text2);min-width:0}
+.row:hover{background:var(--raised);color:var(--text)}
+.row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .st{font-size:12px;color:var(--muted);white-space:nowrap}
+.row .st.warn{color:var(--warn)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
+.dot.trabalhando{background:var(--accent)}.dot.espera{background:var(--warn)}.dot.concluido{background:transparent;border:1.5px solid var(--muted)}
+.dot.parado,.dot.vazio{background:transparent;border:1.5px dashed var(--border)}
+.pad.current{background:var(--surface);border:1px solid var(--border);margin:2px 0 6px;padding-bottom:6px}
+.pad.current>.row{color:var(--text);font-weight:600;height:34px}
+.pad.current>.row:hover{background:transparent}
+.branch{font:11px var(--mono);color:var(--muted);padding:0 10px 6px 26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chev{width:10px;flex:none;color:var(--muted);transition:transform var(--t) var(--ease)}
+.pad.current .chev{transform:rotate(90deg)}
+.tree{padding:0 4px}
+.node{width:100%;display:flex;align-items:center;gap:8px;height:28px;padding:0 6px;border-radius:6px;color:var(--text2);text-align:left}
+.node:hover{background:var(--raised);color:var(--text)}
+.node.sel{background:var(--raised);color:var(--text);box-shadow:inset 0 0 0 1px var(--sec)}
+.node .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .st{font-size:12px;color:var(--muted)}.node .st.warn{color:var(--warn)}
+.node.child{padding-left:24px}
+.node .role{font-size:11px;color:var(--sec)}
+.pico{width:12px;height:12px;flex:none;color:var(--muted)}
+.empty-note{color:var(--muted);font-size:12px;padding:2px 10px 4px 26px}
+.side-foot{border-top:1px solid var(--border);padding:8px 6px;display:flex;flex-direction:column;gap:2px;flex:none}
+.foot{width:100%;display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;border-radius:7px;color:var(--text2);text-align:left}
+.foot:hover{background:var(--raised);color:var(--text)}
+.foot .nm{flex:1;white-space:nowrap}
+.foot.need .badge{background:var(--warn);color:var(--onacc);border-radius:9px;padding:0 6px;font-size:11px;font-weight:700;line-height:17px}
+.foot.need.zero .badge{background:var(--raised);color:var(--muted)}
+.usage{display:flex;align-items:center;gap:10px;height:30px;padding:0 8px;color:var(--text2)}
+.usage .bar{flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden}
+.usage .bar i{display:block;height:100%;width:65%;background:var(--sec)}
+.usage .pct{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.ico{width:16px;height:16px;flex:none}
+/* recolhida */
+.win.collapsed .hide-c{display:none!important}
+.win.collapsed .side-top{padding:0;justify-content:center}
+.win.collapsed .side-top .iconbtn{margin:0}
+.win.collapsed .newbtn{width:36px;margin:4px auto 10px;justify-content:center;padding:0}
+.win.collapsed .row,.win.collapsed .foot,.win.collapsed .usage{justify-content:center;padding:0}
+.win.collapsed .pad.current{background:none;border:0;padding:0}
+.mono2{display:none;width:28px;height:24px;border-radius:6px;background:var(--raised);font-size:11px;font-weight:600;place-items:center;color:var(--text2);position:relative}
+.win.collapsed .mono2{display:grid}
+.win.collapsed .row .dot{position:absolute;margin:14px 0 0 22px;width:7px;height:7px}
+.win.collapsed .row{position:relative}
+.win.collapsed .pad.current .mono2{background:var(--sec);color:var(--onacc)}
+.win.collapsed .foot.need{position:relative}
+.win.collapsed .foot.need .badge{position:absolute;top:2px;right:8px;padding:0 4px;line-height:14px;font-size:10px}
+
+/* canvas */
+.canvas{position:relative;overflow:hidden;background-color:var(--bg);background-image:radial-gradient(circle,#232B4C 1px,transparent 1.2px);background-size:22px 22px;cursor:grab}
+.canvas.panning{cursor:grabbing}
+.world{position:absolute;left:0;top:0;transform-origin:0 0;transition:transform 220ms var(--ease)}
+.world.nodelay{transition:none}
+.leashes{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.floatbar{position:absolute;top:10px;right:12px;display:flex;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:3px;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.floatbar .search{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 10px;border-radius:7px;color:var(--muted);width:250px}
+.floatbar .search:hover{background:var(--raised);color:var(--text2)}
+.floatbar .search .kbd{margin-left:auto}
+.floatbar .sep{width:1px;height:18px;background:var(--border);margin:0 3px}
+.floatbar .zoom{font-size:12px;color:var(--text2);min-width:40px;text-align:center;font-variant-numeric:tabular-nums}
+.floatbar .txt{height:28px;padding:0 8px;border-radius:7px;color:var(--text2);font-size:12px}
+.floatbar .txt:hover{background:var(--raised);color:var(--text)}
+.floatbar [aria-pressed=true]{background:var(--raised);color:var(--text)}
+
+.term,.panel,.loop{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.28);cursor:default;transition:box-shadow var(--t) var(--ease),opacity var(--t) var(--ease)}
+.term.sel{box-shadow:0 0 0 2px var(--sec),0 10px 30px rgba(0,0,0,.28)}
+.term.done{opacity:.78}
+.thead{height:34px;display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;border-bottom:1px solid var(--border);background:var(--raised)}
+.thead .nm{font-weight:600}
+.thead .st{color:var(--muted);font-size:12px}.thead .st.warn{color:var(--warn)}.thead .st.ok{color:var(--accent)}
+.thead .more{margin-left:auto;opacity:0;transition:opacity var(--t) var(--ease)}
+.term:hover .more,.term.sel .more,.more:focus-visible,.more[aria-expanded=true]{opacity:1}
+.tbody{font:12px/1.55 var(--mono);color:var(--text2);padding:10px 12px;white-space:pre-wrap;margin:0;height:calc(100% - 34px);overflow:hidden}
+.tbody .p{color:var(--accent)}.tbody .m{color:var(--muted)}.tbody .w{color:var(--warn)}
+.req{position:absolute;left:10px;right:10px;bottom:10px;background:var(--sunk);border:1px solid var(--warn);border-radius:8px;padding:10px 12px;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px}
+.req h4{margin:0 0 4px;font-size:13px;color:var(--warn);font-weight:600}
+.req p{margin:0 0 8px;color:var(--text2)}
+.req code{font:12px var(--mono);color:var(--text);word-break:break-all}
+.btns{display:flex;gap:6px;flex-wrap:wrap}
+.b{height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--border);color:var(--text);font-size:12px;background:var(--raised)}
+.b:hover{border-color:var(--muted)}
+.b.pri{background:var(--accent);color:var(--onacc);border-color:var(--accent);font-weight:600}
+.b.dng{color:var(--danger)}
+.panel .thead .pico{color:var(--sec)}
+.prev{padding:14px;height:calc(100% - 34px);display:grid;grid-template-columns:1fr 1fr;gap:10px;background:var(--sunk)}
+.prev div{border-radius:6px;background:var(--surface);border:1px solid var(--border);padding:10px;color:var(--muted);font-size:12px}
+.prev div b{display:block;color:var(--text);font-size:13px;margin-bottom:4px}
+
+/* laço */
+.loop{width:250px;border-color:#2F3A66}
+.loop .thead{background:var(--surface)}
+.loop .thead .pico{color:var(--accent)}
+.lbody{padding:10px 12px 12px}
+.prog{height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:2px 0 10px}
+.prog i{display:block;height:100%;background:var(--accent);transition:width 220ms var(--ease)}
+.tasks{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:2px}
+.tasks li{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--muted);padding:3px 0}
+.tasks li.ok{color:var(--text2)}
+.tasks li.cur{color:var(--text);background:var(--raised);border-radius:6px;padding:6px 8px;margin:2px -8px;flex-direction:column;gap:3px}
+.tasks li.cur .meta{color:var(--muted);font-size:11px}
+.tasks .mk{width:14px;flex:none;text-align:center}
+.tasks li.ok .mk{color:var(--accent)}
+.loop.stopped .prog i{background:var(--muted)}
+.pill{position:absolute;height:30px;white-space:nowrap;display:flex;align-items:center;gap:8px;padding:0 12px;border-radius:15px;background:var(--surface);border:1px solid #2F3A66;box-shadow:0 6px 18px rgba(0,0,0,.3);font-size:12px;color:var(--text)}
+.pill:hover{border-color:var(--accent)}
+.pill .pico{color:var(--accent)}
+
+/* primeiro uso */
+.first{position:absolute;inset:0;display:grid;place-items:center;z-index:5;cursor:default}
+.first .card{width:460px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px 28px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.first h2{margin:0 0 8px;font-size:20px;font-weight:650}
+.first p{margin:0 0 12px;color:var(--text2);font-size:14px;line-height:1.5}
+.first ol{margin:6px 0 18px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.first li{display:flex;gap:10px;align-items:baseline;color:var(--text2);font-size:13px}
+.first li b{width:20px;height:20px;border-radius:50%;background:var(--raised);color:var(--text);display:grid;place-items:center;font-size:11px;flex:none}
+.first .go{height:36px;padding:0 16px;border-radius:9px;background:var(--accent);color:var(--onacc);font-weight:650;font-size:14px}
+.first .alt{color:var(--muted);font-size:12px;margin-left:12px}
+
+/* sobreposições */
+.pop{position:fixed;z-index:60;background:var(--raised);border:1px solid var(--border);border-radius:10px;padding:5px;min-width:220px;box-shadow:0 16px 40px rgba(0,0,0,.45);animation:in var(--t) var(--ease)}
+.pop .mi{width:100%;display:flex;align-items:center;gap:10px;padding:6px 9px;border-radius:6px;text-align:left;color:var(--text)}
+.pop .mi:hover,.pop .mi:focus-visible{background:var(--border);outline:none}
+.pop .mi small{display:block;color:var(--muted);font-size:11px;line-height:1.3}
+.pop .mi .r{margin-left:auto;color:var(--muted);font-size:12px}
+.pop .hd{padding:6px 9px 3px;color:var(--muted);font-size:11px;font-weight:600}
+.pop .info{padding:4px 9px 6px;color:var(--text2);font-size:12px}
+.pop .info code{font:11px var(--mono)}
+.pop hr{border:0;border-top:1px solid var(--border);margin:4px 0}
+.pop.need{width:330px;padding:12px}
+.pop.need h3{margin:0 0 8px;font-size:13px}
+.needitem{background:var(--sunk);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px}
+.needitem p{margin:0 0 8px;color:var(--text2)}.needitem code{font:11px var(--mono);color:var(--text);word-break:break-all}
+.needitem .who{display:flex;align-items:center;gap:6px;margin-bottom:4px;font-weight:600}
+.muted{color:var(--muted)}
+.scrim{position:fixed;inset:0;background:rgba(5,8,18,.55);z-index:70;display:flex;justify-content:center;align-items:flex-start;animation:fade var(--t) var(--ease)}
+.palette{margin-top:90px;width:560px;background:var(--raised);border:1px solid var(--border);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden;animation:in var(--t) var(--ease)}
+.palette input{width:100%;height:46px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font:15px -apple-system,sans-serif;padding:0 16px;outline:none}
+.palette input::placeholder{color:var(--muted)}
+.plist{max-height:360px;overflow:auto;padding:6px}
+.plist .hd{padding:8px 10px 4px;color:var(--muted);font-size:11px;font-weight:600}
+.pi{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;cursor:pointer}
+.pi.on{background:var(--border)}
+.pi small{color:var(--muted);margin-left:auto;font-size:12px}
+.sheet{margin-top:38px;width:720px;height:480px;background:var(--surface);border:1px solid var(--border);border-top:0;border-radius:0 0 12px 12px;box-shadow:0 24px 60px rgba(0,0,0,.5);display:grid;grid-template-columns:190px 1fr;overflow:hidden;animation:drop var(--t) var(--ease)}
+.sheet nav{background:var(--side);border-right:1px solid var(--border);padding:12px 8px}
+.sheet nav button{display:block;width:100%;text-align:left;padding:6px 10px;border-radius:6px;color:var(--text2)}
+.sheet nav button[aria-current=true]{background:var(--raised);color:var(--text)}
+.sheet section{padding:20px 24px;overflow:auto;position:relative}
+.sheet h3{margin:0 0 12px;font-size:16px}
+.sheet .kv{display:flex;justify-content:space-between;border-bottom:1px solid var(--border);padding:9px 0;color:var(--text2)}
+.sheet .kv span:last-child{color:var(--text);font-variant-numeric:tabular-nums}
+.sheet .close{position:absolute;top:14px;right:14px}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:560px;background:var(--surface);border-left:1px solid var(--border);z-index:80;overflow:auto;padding:22px 26px 40px;box-shadow:-20px 0 50px rgba(0,0,0,.4);transform:translateX(100%);transition:transform 220ms var(--ease);visibility:hidden}
+.drawer.open{transform:none;visibility:visible}
+.drawer h2{margin:0 0 6px;font-size:18px}
+.drawer h3{margin:22px 0 8px;font-size:14px}
+.drawer p,.drawer li{color:var(--text2);line-height:1.5}
+.drawer table{width:100%;border-collapse:collapse;font-size:12px}
+.drawer th{text-align:left;color:var(--muted);font-weight:600;padding:6px 8px 6px 0;border-bottom:1px solid var(--border)}
+.drawer td{padding:6px 8px 6px 0;border-bottom:1px solid var(--border);color:var(--text2);vertical-align:top}
+.drawer td:first-child{color:var(--text);width:42%}
+.drawer .close{position:absolute;top:16px;right:16px}
+.demo{position:fixed;bottom:14px;right:14px;z-index:50;display:flex;gap:6px;align-items:center;background:var(--sunk);border:1px dashed var(--muted);border-radius:10px;padding:5px 6px 5px 10px;font-size:12px;color:var(--muted)}
+.seg{display:flex;background:var(--raised);border-radius:7px;padding:2px}
+.seg button{padding:4px 10px;border-radius:5px;color:var(--text2);font-size:12px}
+.seg button[aria-pressed=true]{background:var(--border);color:var(--text)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:90;background:var(--raised);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--text);box-shadow:0 12px 30px rgba(0,0,0,.4);animation:in var(--t) var(--ease)}
+.minimap{position:absolute;right:12px;bottom:12px;width:170px;height:100px;background:var(--surface);border:1px solid var(--border);border-radius:8px;z-index:20;overflow:hidden}
+.minimap i{position:absolute;background:var(--border);border-radius:2px}
+.minimap i.s{background:var(--sec)}
+@keyframes in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.toast{animation-name:tin}@keyframes tin{from{opacity:0;transform:translate(-50%,6px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes drop{from{transform:translateY(-20px);opacity:0}to{transform:none;opacity:1}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+ <symbol id="i-side" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 2.5v11" stroke="currentColor" stroke-width="1.3"/></symbol>
+ <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+ <symbol id="i-chev" viewBox="0 0 10 10"><path d="M3.5 2l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+ <symbol id="i-more" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></symbol>
+ <symbol id="i-hand" viewBox="0 0 16 16"><path d="M8 1.8l5.6 10H2.4z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="10.8" r=".8" fill="currentColor"/></symbol>
+ <symbol id="i-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+ <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.3 10.3L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+ <symbol id="i-panel" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M2 6h12" stroke="currentColor" stroke-width="1.3"/></symbol>
+ <symbol id="i-loop" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 1.8v3h-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+ <symbol id="i-map" viewBox="0 0 16 16"><rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="8.5" y="7.5" width="4" height="3.5" rx=".6" fill="currentColor"/></symbol>
+ <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="win" id="win">
+  <nav class="side" aria-label="Cercados e agentes">
+    <div class="side-top">
+      <div class="lights hide-c" aria-hidden="true"><i></i><i></i><i></i></div>
+      <button class="iconbtn" id="btnSide" title="Recolher lateral (⌘\)" aria-label="Recolher lateral" aria-expanded="true"><svg class="ico"><use href="#i-side"/></svg></button>
+    </div>
+    <button class="newbtn" id="btnNew" aria-haspopup="menu" title="Novo agente"><svg class="ico"><use href="#i-plus"/></svg><span class="hide-c">Novo agente</span><span class="kbd hide-c">⌘N</span></button>
+    <div class="sect hide-c"><span>Cercados</span><button class="iconbtn" id="btnNewPad" title="Novo cercado" aria-label="Novo cercado"><svg class="ico" style="width:13px;height:13px"><use href="#i-plus"/></svg></button></div>
+    <div class="list" id="list" role="tree"></div>
+    <div class="side-foot">
+      <button class="foot need" id="btnNeed" aria-haspopup="dialog" title="Precisa de você"><svg class="ico"><use href="#i-hand"/></svg><span class="nm hide-c">Precisa de você</span><span class="badge" id="needCount">1</span></button>
+      <div class="usage" title="Uso da cota do plano nesta semana"><span class="hide-c" style="white-space:nowrap">Uso</span><span class="bar hide-c"><i></i></span><span class="pct">65%</span></div>
+      <button class="foot" id="btnPrefs" title="Preferências (⌘,)"><svg class="ico"><use href="#i-gear"/></svg><span class="nm hide-c">Preferências</span><span class="kbd hide-c">⌘,</span></button>
+    </div>
+  </nav>
+
+  <main class="canvas" id="canvas" aria-label="Canvas">
+    <div class="floatbar" role="toolbar" aria-label="Canvas">
+      <button class="search" id="btnK"><svg class="ico"><use href="#i-search"/></svg><span>Procurar ou fazer…</span><span class="kbd">⌘K</span></button>
+      <span class="sep"></span>
+      <button class="iconbtn" id="zOut" aria-label="Diminuir zoom" title="Diminuir zoom">−</button>
+      <span class="zoom" id="zoomLbl" aria-live="polite">100%</span>
+      <button class="iconbtn" id="zIn" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>
+      <button class="txt" id="zFit" title="Ajustar à tela (⌘0)">Ajustar</button>
+      <button class="iconbtn" id="btnMap" aria-pressed="false" aria-label="Minimapa" title="Minimapa"><svg class="ico"><use href="#i-map"/></svg></button>
+    </div>
+    <div class="world" id="world"><svg class="leashes" id="leashes" width="1" height="1"></svg></div>
+    <div class="minimap" id="minimap" hidden></div>
+  </main>
+</div>
+
+<div class="demo" role="group" aria-label="Controles do protótipo">
+  <span>Protótipo</span>
+  <div class="seg"><button id="mFirst" aria-pressed="false">Primeiro uso</button><button id="mUse" aria-pressed="true">Em uso</button></div>
+  <button class="b" id="btnNotes">Notas de UX</button>
+</div>
+
+<aside class="drawer" id="drawer" aria-label="Notas de UX" tabindex="-1">
+  <button class="iconbtn close" id="closeNotes" aria-label="Fechar notas"><svg class="ico"><use href="#i-x"/></svg></button>
+  <h2>Opção 2 · Uma lateral só</h2>
+  <p><b style="color:var(--text)">Ideia:</b> trilho e painel de contexto viram uma única lateral com nomes — o cercado atual se abre em árvore (cercado → agentes → painéis), o canvas ganha a janela inteira e o laço vive grudado no terminal que o roda.</p>
+
+  <h3>O que saiu da tela e para onde foi</h3>
+  <table>
+    <tr><th>Hoje (print)</th><th>Agora</th></tr>
+    <tr><td>Trilho com letras soltas (S, A, B, B, C…)</td><td>Lista de cercados por nome, estado em texto (“espera você”, “2 trabalhando”). Recolhida (⌘\) mostra 2 letras + nome no hover.</td></tr>
+    <tr><td>Bolinhas de estado do trilho</td><td>Ponto + palavra na mesma linha; cor nunca sozinha.</td></tr>
+    <tr><td>Ícone info (tour)</td><td>Preferências › Geral › “Tour das funções” e ⌘K “Tour”.</td></tr>
+    <tr><td>“65%” com barra</td><td>Pé da lateral: “Uso 65%”, com dica do que significa.</td></tr>
+    <tr><td>Engrenagem</td><td>Pé da lateral: “Preferências ⌘,” abre folha.</td></tr>
+    <tr><td>Nome do cercado (painel de contexto)</td><td>Cabeçalho do cercado expandido na lateral.</td></tr>
+    <tr><td>Ramo truncado “collie/colli…orking ← main”</td><td>Linha mono sob o nome; completo no hover e no ⋯ do cercado.</td></tr>
+    <tr><td>⋯ do cercado</td><td>Mantido, no cabeçalho do cercado atual.</td></tr>
+    <tr><td>Botão “Novo terminal”</td><td>“＋ Novo agente” no topo da lateral; “Terminal simples” dentro dele.</td></tr>
+    <tr><td>Botão painel</td><td>“＋ Novo agente › Painel…”, ⋯ do agente “Abrir painel”, ⌘K.</td></tr>
+    <tr><td>AGENTES · 2 com chips “claude”</td><td>Árvore sob o cercado; ferramenta/modelo no ⋯ do agente.</td></tr>
+    <tr><td>PAINÉIS · 2 com chips “canvas”</td><td>Filhos do agente que os abriu (Prévia sob Pastor); o chip some.</td></tr>
+    <tr><td>REBANHOS (3 de fábrica + Aplicar…)</td><td>“＋ Novo agente › A partir de rebanho…” e ⌘K “Rebanhos”.</td></tr>
+    <tr><td>LOTES (cursor-test “sem terminais”, Novo lote…)</td><td>⋯ do cercado › Lotes… e ⌘K. Lote vazio não ocupa tela.</td></tr>
+    <tr><td>FÁBRICA (toggle sem explicação)</td><td>⋯ do cercado, com uma frase do que faz; ⌘K “Fábrica”.</td></tr>
+    <tr><td>LAÇOS + Ver tudo</td><td>Painel flutuante preso ao terminal que roda o laço; histórico em ⌘K “Laços…” (Trabalho).</td></tr>
+    <tr><td>Caixa-alta espaçada em cada seção</td><td>Removida; só “Cercados” como rótulo discreto.</td></tr>
+    <tr><td>Aba “Canvas”</td><td>Removida: o canvas é a janela.</td></tr>
+    <tr><td>Aba “Preferências ⌘,”</td><td>Folha sobre a janela (pé da lateral / ⌘,).</td></tr>
+    <tr><td>Busca “Chamar, abrir painel… ⌘K”</td><td>Barra fina flutuante no canto do canvas.</td></tr>
+    <tr><td>“86%” e “Ajustar à tela”</td><td>Mesma barra flutuante (− 86% + Ajustar).</td></tr>
+    <tr><td>Cabeçalho do terminal: tag “Pastor”, “pastoreando 1”, “claude”, “claude-opus-5-5”, 3 ícones</td><td>Fica nome + estado. Papel, ferramenta, modelo e ações no ⋯ (aparece no hover/seleção). “Pastor” aparece na lateral.</td></tr>
+    <tr><td>Coleira para Prévia meio fora da tela</td><td>Painéis nascem colados ao agente; coleira curta. “Ajustar” enquadra tudo.</td></tr>
+    <tr><td>Minimapa fixo no canto</td><td>Botão na barra flutuante; desligado por padrão.</td></tr>
+    <tr><td>Barra de status “conectado · 66 MB”</td><td>Barra removida. Desconexão vira aviso na lateral só quando acontece; memória em Preferências › Diagnóstico.</td></tr>
+    <tr><td>Contadores analytics/design/device/network/preview/quadro</td><td>Preferências › Diagnóstico.</td></tr>
+  </table>
+
+  <h3>Onde mora cada uma das 17 funções</h3>
+  <table>
+    <tr><th>Função</th><th>Onde</th></tr>
+    <tr><td>Canvas e terminais</td><td>Janela inteira; ＋ Novo agente.</td></tr>
+    <tr><td>Cercados</td><td>Lista na lateral; ＋ ao lado de “Cercados”.</td></tr>
+    <tr><td>Pastor e delegação</td><td>Rótulo “Pastor” na árvore; agentes chamados por ele aparecem aninhados embaixo.</td></tr>
+    <tr><td>Laços</td><td>Painel flutuante ao lado do terminal; recolhe a pílula.</td></tr>
+    <tr><td>Trabalho</td><td>Tarefas e check dentro do laço; registro completo em ⌘K “Trabalho”.</td></tr>
+    <tr><td>Paleta de comandos</td><td>Barra flutuante ⌘K.</td></tr>
+    <tr><td>Navegador</td><td>＋ Novo agente › Painel, ⋯ do agente, ⌘K; aparece sob o agente.</td></tr>
+    <tr><td>Dispositivo</td><td>Idem.</td></tr>
+    <tr><td>Rede</td><td>Idem.</td></tr>
+    <tr><td>Design e Design Systems</td><td>Idem.</td></tr>
+    <tr><td>Prévia e Artifacts</td><td>Idem (Prévia sob Pastor no exemplo).</td></tr>
+    <tr><td>Diagrama</td><td>Idem.</td></tr>
+    <tr><td>Memória</td><td>⌘K “Memória”; Preferências › Memória.</td></tr>
+    <tr><td>Sandbox e cartões</td><td>Cartão dentro do terminal que pediu + “Precisa de você (n)” no pé; regras em Preferências › Sandbox.</td></tr>
+    <tr><td>Rebanhos e Lotes</td><td>＋ Novo agente › rebanho; ⋯ do cercado › Lotes; ⌘K.</td></tr>
+    <tr><td>Plug-ins</td><td>Preferências › Plug-ins.</td></tr>
+    <tr><td>Temas</td><td>Preferências › Aparência.</td></tr>
+  </table>
+
+  <h3>O que muda para quem já usa</h3>
+  <ul>
+    <li>Duas colunas viram uma: o mesmo lugar, mas com nomes. ⌘\ recolhe a ícones quando quiser o canvas mais largo.</li>
+    <li>Não há mais aba Canvas: ⌘, continua abrindo Preferências, agora como folha.</li>
+    <li>Rebanhos, Lotes e Fábrica saíram da vista fixa — ficam a um clique (＋ / ⋯) ou em ⌘K.</li>
+    <li>Modelo e ferramenta do terminal estão no ⋯ do cabeçalho; o papel Pastor continua visível na lateral.</li>
+    <li>Pedidos de sandbox aparecem no terminal e no pé da lateral; aprovar em um some do outro.</li>
+    <li>A barra de status sumiu; os números internos estão em Preferências › Diagnóstico.</li>
+  </ul>
+</aside>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const LABEL={trabalhando:'trabalhando',espera:'espera você',concluido:'concluído',parado:'parado'};
+const REQPATH='~/Library/Application Support/Collie/preferences.json';
+const PADS=[
+ {id:'cgw',name:'collie-general-working',branch:'collie/collie-general-working ← main',agents:[
+   {id:'pastor',name:'Pastor',tool:'claude',model:'claude-opus-5-5',role:'Pastor',state:'trabalhando',panels:[{id:'previa',name:'Prévia'}]},
+   {id:'l10n',name:'l10n-cli',tool:'codex',model:'padrão do codex',state:'espera',parent:'pastor'},
+   {id:'revisor',name:'revisor',tool:'claude',model:'claude-sonnet-5-5',state:'concluido'}]},
+ {id:'idiomas',name:'idiomas',branch:'collie/idiomas ← main',agents:[{id:'i1',name:'tradutor',tool:'claude',state:'trabalhando'},{id:'i2',name:'glossário',tool:'claude',state:'trabalhando'}]},
+ {id:'landing',name:'landing',branch:'collie/landing ← main',agents:[{id:'la1',name:'copy',tool:'claude',state:'concluido'},{id:'la2',name:'hero-anim',tool:'codex',state:'parado'}]},
+ {id:'pasto',name:'Pasto',branch:'sem repositório · conversas avulsas',agents:[]},
+ {id:'ios',name:'collie-ios',branch:'collie/ios ← main',agents:[{id:'io1',name:'simulador',tool:'claude',state:'trabalhando'}]},
+ {id:'rede',name:'rede-map-local',branch:'collie/rede-map ← main',agents:[{id:'r1',name:'interceptor',tool:'codex',state:'concluido'}]},
+ {id:'temas',name:'temas-editor',branch:'collie/temas ← main',agents:[]},
+ {id:'mkt',name:'plugin-marketplace',branch:'collie/marketplace ← main',agents:[{id:'m1',name:'catálogo',tool:'claude',state:'parado'}]},
+ {id:'dmg',name:'dmg-opcoes',branch:'collie/dmg ← main',agents:[]},
+ {id:'fig',name:'figcraft-download',branch:'collie/figcraft ← main',agents:[{id:'f1',name:'release',tool:'claude',state:'concluido'}]},
+];
+const TASKS=['Strings do menu','Mensagens de erro da CLI','Preferências','Paleta ⌘K','Cartões de sandbox','Tour das funções','Changelog'];
+const S={mode:'uso',cur:'cgw',sel:'pastor',loopOpen:true,loopStopped:false,loopDone:3,approved:false,zoom:1,px:0,py:0,minimap:false,fabrica:false};
+const pad=()=>PADS.find(p=>p.id===S.cur);
+const agentsOf=p=>S.mode==='first'&&p.id==='cgw'?[]:p.agents;
+function padSummary(p){const a=agentsOf(p);if(!a.length)return['vazio','vazio',''];
+ if(a.some(x=>x.state==='espera'))return['espera','espera você','warn'];
+ const w=a.filter(x=>x.state==='trabalhando').length;if(w)return['trabalhando',w+' trabalhando',''];
+ if(a.some(x=>x.state==='parado'))return['parado','parado',''];return['concluido','concluído',''];}
+const needCount=()=>S.mode==='first'||S.approved?0:1;
+const mono=n=>{const w=n.split(/[^a-zA-Z0-9]+/).filter(Boolean);return(w.length>1?w[0][0]+w[1][0]:n.slice(0,2)).toUpperCase();};
+
+/* lateral */
+function renderSide(){
+ const L=$('#list');let h='';
+ const pads=S.mode==='first'?PADS.filter(p=>p.id==='cgw'):PADS;
+ for(const p of pads){const [dc,txt,cls]=padSummary(p);
+  if(p.id===S.cur){
+   h+=`<div class="pad current" role="treeitem" aria-expanded="true"><div class="row"><svg class="chev hide-c" viewBox="0 0 10 10"><use href="#i-chev"/></svg><span class="mono2" title="${esc(p.name)}">${mono(p.name)}</span><span class="nm hide-c" title="${esc(p.name)}">${esc(p.name)}</span><button class="iconbtn hide-c" data-padmenu aria-label="Opções do cercado ${esc(p.name)}" aria-haspopup="menu" style="width:24px;height:24px"><svg class="ico"><use href="#i-more"/></svg></button></div>
+   <div class="branch hide-c" title="${esc(p.branch)}">${esc(p.branch)}</div><div class="tree hide-c" role="group">`;
+   const ag=agentsOf(p);
+   if(!ag.length)h+=`<div class="empty-note">Nenhum agente ainda</div>`;
+   const node=(a,child)=>{let s=`<button class="node${child?' child':''}${S.sel===a.id?' sel':''}" data-agent="${a.id}" role="treeitem"><span class="dot ${a.state}"></span><span class="nm">${esc(a.name)}</span>${a.role?`<span class="role">${a.role}</span>`:''}<span class="st${a.state==='espera'?' warn':''}">${LABEL[a.state]}</span></button>`;
+     for(const pn of a.panels||[])s+=`<button class="node child" data-agent="${a.id}" data-panel="${pn.id}" role="treeitem"><svg class="pico"><use href="#i-panel"/></svg><span class="nm">${esc(pn.name)}</span><span class="st">painel</span></button>`;
+     if(a.id==='pastor'&&S.mode==='uso'){s+=`<button class="node child" data-agent="pastor" data-loop role="treeitem"><svg class="pico" style="color:var(--accent)"><use href="#i-loop"/></svg><span class="nm">Laço idiomas</span><span class="st">${S.loopStopped?'parado':S.loopDone+'/7'}</span></button>`;}
+     return s;};
+   for(const a of ag.filter(a=>!a.parent)){h+=node(a,false);for(const c of ag.filter(c=>c.parent===a.id))h+=node(c,true);}
+   h+=`</div></div>`;
+  }else{
+   h+=`<div class="pad" role="treeitem" aria-expanded="false"><button class="row" data-pad="${p.id}" title="${esc(p.name)} — ${txt}"><svg class="chev hide-c" viewBox="0 0 10 10"><use href="#i-chev"/></svg><span class="mono2">${mono(p.name)}</span><span class="dot ${dc}"></span><span class="nm hide-c">${esc(p.name)}</span><span class="st hide-c ${cls}">${txt}</span><span class="sr">${txt}</span></button></div>`;
+  }}
+ L.innerHTML=h;
+ const n=needCount();$('#needCount').textContent=n;$('#btnNeed').classList.toggle('zero',!n);
+ $('#btnNeed').setAttribute('aria-label','Precisa de você: '+n);
+}
+
+/* canvas */
+const LAYOUT={pastor:{x:40,y:40,w:470,h:300},previa:{x:40,y:380,w:470,h:210},loop:{x:528,y:40},l10n:{x:820,y:40,w:430,h:300},revisor:{x:820,y:380,w:430,h:210}};
+function bodyFor(a){
+ if(a.id==='pastor')return`<span class="m">laço idiomas · tarefa 4/7 · tentativa 2 de 3</span>\n<span class="p">›</span> Traduzindo a paleta ⌘K para en-US…\n  Lendo Sources/CollieApp/Palette.swift\n  Chamei <b>l10n-cli</b> para as mensagens da CLI\n  <span class="m">collie summon l10n-cli --task "erros da CLI"</span>\n  Editado PaletteModel.swift (+18 −6)\n<span class="p">›</span> Rodando o check da tarefa…\n  <span class="m">swift test --filter PaletteL10n</span>`;
+ if(a.id==='l10n')return S.approved?`<span class="p">›</span> Acesso liberado. Gravando preferences.json…\n  idioma = "en-US"\n  <span class="p">✓</span> Gravado. Voltando para o Pastor.`:`<span class="p">›</span> Ajustando mensagens de erro da CLI\n  12 strings movidas para Localizable\n<span class="w">!</span> Preciso gravar fora do cercado.\n  <span class="m">Aguardando sua resposta…</span>`;
+ if(a.id==='revisor')return`<span class="p">✓</span> Revisão concluída: 2 sugestões.\n  <span class="m">Resumo enviado ao Pastor.</span>`;
+ return a.state==='trabalhando'?`<span class="p">›</span> Trabalhando em ${esc(a.name)}…\n  <span class="m">lendo arquivos do projeto</span>`:a.state==='parado'?`<span class="m">Parado. Escreva para retomar.</span>`:`<span class="p">✓</span> Terminado.`;
+}
+function termHTML(a,r){
+ const st=`<span class="st${a.state==='espera'?' warn':a.state==='trabalhando'?' ok':''}">${LABEL[a.state]}</span>`;
+ let req='';
+ if(a.id==='l10n'&&!S.approved)req=`<div class="req" role="group" aria-label="Pedido de acesso de l10n-cli"><h4>Pedido de acesso</h4><p>Quer gravar <code>${REQPATH}</code>, fora do cercado.</p><div class="btns"><button class="b pri" data-approve="once">Permitir uma vez</button><button class="b" data-approve="always">Sempre neste cercado</button><button class="b dng" data-approve="deny">Negar</button></div></div>`;
+ return`<div class="term${S.sel===a.id?' sel':''}${a.state==='concluido'?' done':''}" data-term="${a.id}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"><div class="thead"><span class="dot ${a.state}"></span><span class="nm">${esc(a.name)}</span>${st}<button class="iconbtn more" data-tmenu="${a.id}" aria-label="Mais sobre ${esc(a.name)}" aria-haspopup="menu" aria-expanded="false"><svg class="ico"><use href="#i-more"/></svg></button></div><pre class="tbody">${bodyFor(a)}</pre>${req}</div>`;
+}
+function loopHTML(){
+ const r=LAYOUT.loop;const pct=Math.round(S.loopDone/7*100);
+ if(!S.loopOpen)return`<button class="pill" data-loopopen style="left:${r.x}px;top:${r.y}px" aria-label="Abrir laço idiomas"><svg class="pico" style="width:13px;height:13px"><use href="#i-loop"/></svg>Laço idiomas · ${S.loopStopped?'parado':S.loopDone+'/7'}</button>`;
+ let li='';TASKS.forEach((t,i)=>{
+  if(i<S.loopDone)li+=`<li class="ok"><span class="mk">✓</span>${t}</li>`;
+  else if(i===S.loopDone&&!S.loopStopped)li+=`<li class="cur"><span><span class="mk" style="color:var(--accent)">›</span>${t}</span><span class="meta">Tentativa 2 de 3 · check rodando</span><span class="meta">Check anterior: falhou 1 teste</span></li>`;
+  else li+=`<li><span class="mk">○</span>${t}</li>`;});
+ return`<section class="loop${S.loopStopped?' stopped':''}" id="loopPanel" style="left:${r.x}px;top:${r.y}px" aria-label="Laço idiomas"><div class="thead"><svg class="pico"><use href="#i-loop"/></svg><span class="nm">Laço idiomas</span><span class="st">${S.loopStopped?'parado':S.loopDone+' de 7'}</span><button class="iconbtn" data-loopclose style="margin-left:auto" aria-label="Recolher laço" title="Recolher"><svg class="ico" viewBox="0 0 16 16"><path d="M4 8h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
+ <div class="lbody"><div class="prog" aria-hidden="true"><i style="width:${pct}%"></i></div><ul class="tasks">${li}</ul>
+ <div class="btns">${S.loopStopped?`<button class="b pri" data-loop="resume">Retomar</button>`:`<button class="b" data-loop="defer">Adiar tarefa</button><button class="b dng" data-loop="stop">Parar laço</button>`}</div></div></section>`;
+}
+function renderCanvas(){
+ const W=$('#world');const p=pad();const ag=agentsOf(p);
+ let h='<svg class="leashes" id="leashes" width="1" height="1"></svg>';
+ if(S.mode==='first'&&p.id==='cgw'){
+  h+='';W.innerHTML=h;
+  $('#canvas').querySelector('.first')?.remove();
+  $('#canvas').insertAdjacentHTML('beforeend',`<div class="first" id="firstCard"><div class="card" role="region" aria-label="Primeiro uso"><h2>Comece com um agente</h2>
+  <p>Um agente é uma IA (Claude, Codex…) que trabalha no seu projeto dentro de um terminal. Este espaço é um <b>cercado</b>: uma cópia isolada do seu repositório, então nada do que ele fizer mexe no seu código principal até você querer.</p>
+  <ol><li><b>1</b>Crie um agente e diga, em português, o que precisa.</li><li><b>2</b>O primeiro vira o <strong style="color:var(--text)">Pastor</strong>: ele pode chamar outros agentes e dividir o trabalho.</li><li><b>3</b>Quando algum pedir algo fora do cercado, você aprova em “Precisa de você”.</li></ol>
+  <button class="go" id="firstGo">＋ Novo agente</button><span class="alt">ou <span class="kbd">⌘K</span> para procurar qualquer coisa</span></div></div>`);
+  $('#firstGo').onclick=()=>{setMode('uso');toast('Agente criado: Pastor (demonstração)');};
+  drawMinimap();return;}
+ $('#firstCard')?.remove();
+ if(p.id==='cgw'){
+  for(const a of ag)h+=termHTML(a,LAYOUT[a.id]);
+  const r=LAYOUT.previa;h+=`<div class="panel" data-term="previa" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px"><div class="thead"><svg class="pico"><use href="#i-panel"/></svg><span class="nm">Prévia</span><span class="st">de Pastor · paleta-en.html</span></div><div class="prev"><div><b>Search or do…</b>Palette, en-US</div><div><b>Summon agent</b>⌘K › summon</div><div><b>Open panel</b>Browser, Device…</div><div><b>Go to paddock</b>10 paddocks</div></div></div>`;
+  h+=loopHTML();
+ }else{
+  ag.forEach((a,i)=>h+=termHTML(a,{x:40+i*490,y:40,w:460,h:280}));
+  if(!ag.length)h+=`<div class="term" style="left:40px;top:40px;width:420px;height:150px;opacity:.9"><div class="thead"><span class="nm">${esc(p.name)}</span><span class="st">vazio</span></div><pre class="tbody" style="font-family:inherit;font-size:13px">Nenhum agente neste cercado.\nUse “＋ Novo agente” na lateral.</pre></div>`;
+ }
+ W.innerHTML=h;drawLeashes();drawMinimap();
+}
+function drawLeashes(){
+ const svg=$('#leashes');if(!svg||pad().id!=='cgw'||S.mode==='first')return;
+ const box=id=>{const e=document.querySelector(`[data-term="${id}"]`);return e&&{x:e.offsetLeft,y:e.offsetTop,w:e.offsetWidth,h:e.offsetHeight};};
+ const P=box('pastor'),V=box('previa'),L=box('l10n');const lp=$('#loopPanel')||document.querySelector('[data-loopopen]');
+ let d='';
+ if(P&&lp){const y=P.y+40;const x2=lp.offsetLeft;d+=`<line x1="${P.x+P.w}" y1="${y}" x2="${x2}" y2="${y}" stroke="var(--accent)" stroke-width="2"/><circle cx="${P.x+P.w}" cy="${y}" r="3.5" fill="var(--accent)"/><circle cx="${x2}" cy="${y}" r="3.5" fill="var(--accent)"/>`;}
+ if(P&&V){const x=P.x+60;d+=`<path d="M${x} ${P.y+P.h} V${V.y}" stroke="var(--muted)" stroke-width="1.5" fill="none"/><circle cx="${x}" cy="${P.y+P.h}" r="3" fill="var(--muted)"/><circle cx="${x}" cy="${V.y}" r="3" fill="var(--muted)"/>`;}
+ if(P&&L){const x1=P.x+P.w-60,x2=L.x+60,y=P.y-18;d+=`<path d="M${x1} ${P.y} V${y} H${x2} V${L.y}" stroke="var(--sec)" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/><text x="${(x1+x2)/2}" y="${y-6}" fill="var(--muted)" font-size="11" text-anchor="middle">chamou</text>`;}
+ svg.innerHTML=d;
+}
+function drawMinimap(){const m=$('#minimap');m.hidden=!S.minimap;if(!S.minimap)return;
+ let h='';document.querySelectorAll('#world [data-term],#world #loopPanel').forEach(e=>{h+=`<i class="${e.dataset.term===S.sel?'s':''}" style="left:${8+e.offsetLeft/8}px;top:${8+e.offsetTop/8}px;width:${e.offsetWidth/8}px;height:${e.offsetHeight/8}px"></i>`});m.innerHTML=h;}
+
+/* zoom/pan */
+function applyT(){$('#world').style.transform=`translate(${S.px}px,${S.py}px) scale(${S.zoom})`;$('#zoomLbl').textContent=Math.round(S.zoom*100)+'%';}
+function bounds(){let x1=1e9,y1=1e9,x2=0,y2=0;document.querySelectorAll('#world [data-term],#world #loopPanel,#world [data-loopopen]').forEach(e=>{x1=Math.min(x1,e.offsetLeft);y1=Math.min(y1,e.offsetTop);x2=Math.max(x2,e.offsetLeft+e.offsetWidth);y2=Math.max(y2,e.offsetTop+e.offsetHeight)});return x2?{x1,y1,x2,y2}:null;}
+function fit(){const b=bounds(),c=$('#canvas');if(!b){S.zoom=1;S.px=0;S.py=0;return applyT();}
+ const pad=40,top=56,W=c.clientWidth-pad*2,H=c.clientHeight-top-pad;
+ S.zoom=Math.min(1,W/(b.x2-b.x1),H/(b.y2-b.y1));S.px=pad+(W-(b.x2-b.x1)*S.zoom)/2-b.x1*S.zoom;S.py=top+(H-(b.y2-b.y1)*S.zoom)/2-b.y1*S.zoom;applyT();}
+function zoomBy(f){const c=$('#canvas'),cx=c.clientWidth/2,cy=c.clientHeight/2,z=Math.max(.4,Math.min(1.6,S.zoom*f));S.px=cx-(cx-S.px)*z/S.zoom;S.py=cy-(cy-S.py)*z/S.zoom;S.zoom=z;applyT();}
+function focusTerm(id){const e=document.querySelector(`#world [data-term="${id}"]`);if(!e)return;const c=$('#canvas');
+ const cx=e.offsetLeft+e.offsetWidth/2,cy=e.offsetTop+e.offsetHeight/2,sx=cx*S.zoom+S.px,sy=cy*S.zoom+S.py;
+ if(sx<120||sx>c.clientWidth-120||sy<80||sy>c.clientHeight-80){S.px=c.clientWidth/2-cx*S.zoom;S.py=c.clientHeight/2-cy*S.zoom;applyT();}}
+(()=>{const c=$('#canvas');let st=null;
+ c.addEventListener('pointerdown',e=>{if(e.target!==c&&e.target.id!=='world'&&e.target.id!=='leashes')return;st={x:e.clientX,y:e.clientY,px:S.px,py:S.py};c.classList.add('panning');$('#world').classList.add('nodelay');c.setPointerCapture(e.pointerId);});
+ c.addEventListener('pointermove',e=>{if(!st)return;S.px=st.px+e.clientX-st.x;S.py=st.py+e.clientY-st.y;applyT();});
+ c.addEventListener('pointerup',()=>{st=null;c.classList.remove('panning');$('#world').classList.remove('nodelay');});})();
+
+/* ações */
+function render(){renderSide();renderCanvas();}
+function select(id){S.sel=id;render();focusTerm(id);const n=document.querySelector(`.node[data-agent="${id}"]:not([data-panel]):not([data-loop])`);}
+function switchPad(id){S.cur=id;const p=pad();S.sel=(agentsOf(p)[0]||{}).id||null;render();fit();}
+function approve(kind){closePop();S.approved=kind!=='deny';const a=PADS[0].agents.find(a=>a.id==='l10n');
+ if(kind==='deny'){a.state='parado';S.approved=true;toast('Negado. l10n-cli foi avisado e parou.');}
+ else{a.state='trabalhando';toast(kind==='once'?'Liberado só desta vez: preferences.json para l10n-cli':'Liberado sempre neste cercado: preferences.json');}
+ render();}
+function setMode(m){S.mode=m;$('#mFirst').setAttribute('aria-pressed',m==='first');$('#mUse').setAttribute('aria-pressed',m==='uso');
+ if(m==='first'){S.cur='cgw';S.sel=null;}else{S.sel=S.sel||'pastor';}
+ closePop();render();fit();}
+let tt;function toast(t){document.querySelector('.toast')?.remove();const d=document.createElement('div');d.className='toast';d.setAttribute('role','status');d.textContent=t;document.body.append(d);clearTimeout(tt);tt=setTimeout(()=>d.remove(),2600);}
+
+/* menus */
+let popEl=null,popAnchor=null;
+function closePop(){if(popEl){popEl.remove();popEl=null;popAnchor?.setAttribute('aria-expanded','false');popAnchor?.focus?.();popAnchor=null;}}
+function openPop(anchor,html,cls='',place='below'){closePop();const d=document.createElement('div');d.className='pop '+cls;d.innerHTML=html;d.setAttribute('role',cls==='need'?'dialog':'menu');document.body.append(d);
+ const r=anchor.getBoundingClientRect();let x=r.left,y=r.bottom+6;
+ if(place==='above'){y=r.top-d.offsetHeight-6;}if(place==='right'){x=r.right+8;y=Math.min(r.top,innerHeight-d.offsetHeight-10);}
+ x=Math.min(x,innerWidth-d.offsetWidth-10);d.style.left=x+'px';d.style.top=Math.max(8,y)+'px';
+ popEl=d;popAnchor=anchor;anchor.setAttribute('aria-expanded','true');d.querySelector('button')?.focus();
+ d.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b){const a=b.dataset.act;closePop();run(a);}});}
+const mi=(act,label,sub='',r='')=>`<button class="mi" role="menuitem" data-act="${act}"><span>${label}${sub?`<small>${sub}</small>`:''}</span>${r?`<span class="r">${r}</span>`:''}</button>`;
+function newMenu(anchor){openPop(anchor,`<div class="hd">Novo neste cercado</div>${mi('new:agent','Agente','Claude, Codex ou outro — você conversa com ele','⌘N')}${mi('new:herd','A partir de rebanho…','Time pronto: vários agentes e painéis de uma vez')}${mi('new:term','Terminal simples','Shell, sem IA')}<hr>${mi('new:panel','Painel…','Navegador, Dispositivo, Rede, Design, Prévia, Diagrama')}`,'',S.side==='c'?'right':'below');}
+function padMenu(anchor){const p=pad();openPop(anchor,`<div class="info">Ramo<br><code>${esc(p.branch)}</code></div><hr>${mi('lots','Lotes…','Agrupar agentes de um mesmo esforço')}${mi('herds','Rebanhos…','Aplicar um time pronto')}${mi('fabrica','Fábrica: '+(S.fabrica?'ligada':'desligada'),'Novos agentes já nascem com o rebanho padrão deste cercado')}<hr>${mi('rename','Renomear cercado')}${mi('close','Fechar cercado','Mantém o ramo; só tira da lista')}`);}
+function termMenu(anchor,id){const a=pad().agents.find(a=>a.id===id);if(!a)return;
+ openPop(anchor,`<div class="info">${a.role?`Papel: <b>${a.role}</b> · chama 1 agente<br>`:''}Ferramenta: ${a.tool}${a.model?` · <code>${a.model}</code>`:''}</div><hr>${mi('panel:'+id,'Abrir painel…','Navegador, Prévia, Dispositivo…')}${mi('work','Ver trabalho','Tarefas, evidências e resumo')}${mi('rename','Renomear')}${mi('kill','Encerrar terminal')}`);}
+function needPop(anchor){const n=needCount();
+ openPop(anchor,`<h3>Precisa de você${n?` (${n})`:''}</h3>${n?`<div class="needitem"><div class="who"><span class="dot espera"></span>l10n-cli <span class="muted" style="font-weight:400">· collie-general-working</span></div><p>Quer gravar <code>${REQPATH}</code>, fora do cercado.</p><div class="btns"><button class="b pri" data-ap="once">Permitir uma vez</button><button class="b" data-ap="always">Sempre</button><button class="b dng" data-ap="deny">Negar</button><button class="b" data-ap="go">Ir até ele</button></div></div>`:`<p class="muted" style="margin:0">Nada pendente. Quando um agente pedir algo fora do cercado, aparece aqui e no terminal dele.</p>`}`,'need','above');
+ popEl.addEventListener('click',e=>{const b=e.target.closest('[data-ap]');if(!b)return;if(b.dataset.ap==='go'){closePop();switchPadKeep('cgw');select('l10n');}else approve(b.dataset.ap);});}
+function switchPadKeep(id){if(S.cur!==id){S.cur=id;render();fit();}}
+function run(a){
+ if(a==='new:agent'||a==='new:term'){if(S.mode==='first'){setMode('uso');toast('Agente criado: Pastor (demonstração)');}else toast(a==='new:agent'?'Escolha a ferramenta do novo agente (demonstração)':'Terminal simples criado (demonstração)');}
+ else if(a==='new:herd'||a==='herds')toast('Rebanhos: Revisão em dupla · Front + prévia · Laço com check (demonstração)');
+ else if(a==='new:panel'||a.startsWith('panel:'))toast('Painel abre colado ao agente selecionado (demonstração)');
+ else if(a==='lots')toast('Lotes deste cercado: cursor-test (sem agentes)');
+ else if(a==='fabrica'){S.fabrica=!S.fabrica;toast('Fábrica '+(S.fabrica?'ligada':'desligada')+' neste cercado');}
+ else if(a==='prefs')openPrefs();
+ else if(a==='work')toast('Trabalho: registro das tarefas e evidências (demonstração)');
+ else if(a.startsWith('pad:'))switchPad(a.slice(4));
+ else if(a.startsWith('agent:')){const id=a.slice(6);const p=PADS.find(p=>p.agents.some(x=>x.id===id));if(p&&S.cur!==p.id){S.cur=p.id;render();fit();}select(id);}
+ else if(a==='mode:first')setMode('first');
+ else if(a==='loop')S.loopOpen=true,switchPadKeep('cgw'),render(),focusTerm('pastor');
+ else if(a==='memory')openPrefs('Memória');
+ else if(a==='tour')toast('Tour das funções (demonstração)');
+ else if(a==='side')toggleSide();
+ else if(a==='fit')fit();
+ else toast('Demonstração: '+a);
+}
+
+/* ⌘K */
+function cmds(){const c=[];
+ c.push({g:'Fazer',t:'Novo agente',k:'⌘N',a:'new:agent'},{g:'Fazer',t:'Aplicar rebanho…',a:'herds'},{g:'Fazer',t:'Novo lote…',a:'lots'},{g:'Fazer',t:'Fábrica: ligar/desligar',a:'fabrica'},{g:'Fazer',t:'Abrir laço idiomas',a:'loop'});
+ ['Navegador','Dispositivo','Rede','Design','Prévia','Diagrama'].forEach(p=>c.push({g:'Abrir painel',t:p,a:'panel:'+p}));
+ c.push({g:'Abrir painel',t:'Trabalho',a:'work'},{g:'Abrir painel',t:'Memória',a:'memory'});
+ if(S.mode==='uso')PADS.forEach(p=>p.agents.forEach(a=>c.push({g:'Ir para agente',t:a.name,s:p.name+' · '+LABEL[a.state],a:'agent:'+a.id})));
+ (S.mode==='uso'?PADS:[PADS[0]]).forEach(p=>c.push({g:'Ir para cercado',t:p.name,s:padSummary(p)[1],a:'pad:'+p.id}));
+ c.push({g:'Janela',t:'Preferências',k:'⌘,',a:'prefs'},{g:'Janela',t:'Recolher/abrir lateral',k:'⌘\\',a:'side'},{g:'Janela',t:'Ajustar à tela',k:'⌘0',a:'fit'},{g:'Janela',t:'Tour das funções',a:'tour'});return c;}
+function openK(){closePop();if($('#scrimK'))return;const s=document.createElement('div');s.className='scrim';s.id='scrimK';
+ s.innerHTML=`<div class="palette" role="dialog" aria-label="Paleta de comandos"><input id="kq" placeholder="Chamar agente, abrir painel, ir para cercado…" aria-label="Procurar" autocomplete="off"><div class="plist" id="kl" role="listbox"></div></div>`;
+ document.body.append(s);let on=0,items=[];
+ const draw=()=>{const q=$('#kq').value.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+  items=cmds().filter(c=>(c.t+' '+(c.s||'')+' '+c.g).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').includes(q));on=Math.min(on,Math.max(0,items.length-1));
+  let h='',g='';items.forEach((c,i)=>{if(c.g!==g){g=c.g;h+=`<div class="hd">${g}</div>`;}h+=`<div class="pi${i===on?' on':''}" role="option" aria-selected="${i===on}" data-i="${i}"><span>${esc(c.t)}</span><small>${esc(c.s||c.k||'')}</small></div>`;});
+  $('#kl').innerHTML=h||'<div class="hd">Nada encontrado</div>';$('#kl .pi.on')?.scrollIntoView({block:'nearest'});};
+ const go=i=>{const c=items[i];closeK();if(c)run(c.a);};
+ $('#kq').oninput=()=>{on=0;draw();};
+ $('#kq').onkeydown=e=>{if(e.key==='ArrowDown'){on=Math.min(items.length-1,on+1);draw();e.preventDefault();}else if(e.key==='ArrowUp'){on=Math.max(0,on-1);draw();e.preventDefault();}else if(e.key==='Enter')go(on);};
+ $('#kl').onclick=e=>{const p=e.target.closest('.pi');if(p)go(+p.dataset.i);};
+ s.onclick=e=>{if(e.target===s)closeK();};draw();$('#kq').focus();}
+function closeK(){$('#scrimK')?.remove();}
+
+/* Preferências */
+const PREFS={'Geral':[['Idioma','Português (Brasil)'],['Abrir ao iniciar','Último cercado'],['Tour das funções','Abrir']],'Agentes':[['Ferramenta padrão','claude'],['Modelo padrão','claude-opus-5-5']],'Aparência':[['Tema','Noite (padrão)'],['Editor de temas','Abrir']],'Plug-ins':[['Instalados','3'],['Loja','Abrir']],'Memória':[['Memórias do projeto','42'],['Revisar e descartar','Abrir']],'Sandbox':[['Pedidos fora do cercado','Perguntar sempre'],['Liberados neste cercado','0']],'Diagnóstico':[['Conexão com o daemon','conectado'],['Memória do app','66 MB'],['analytics','1'],['design','3'],['device','4'],['network','2'],['preview','10'],['quadro','1']]};
+function openPrefs(page='Geral'){closePop();closeK();$('#scrimP')?.remove();const s=document.createElement('div');s.className='scrim';s.id='scrimP';
+ const draw=pg=>{s.innerHTML=`<div class="sheet" role="dialog" aria-label="Preferências"><nav>${Object.keys(PREFS).map(k=>`<button data-pg="${k}" aria-current="${k===pg}">${k}</button>`).join('')}</nav><section><button class="iconbtn close" data-cl aria-label="Fechar Preferências"><svg class="ico"><use href="#i-x"/></svg></button><h3>${pg}</h3>${PREFS[pg].map(([k,v])=>`<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('')}${pg==='Diagnóstico'?'<p class="muted" style="margin-top:12px">Os números que antes ficavam na barra de status moram aqui.</p>':''}</section></div>`;
+  s.querySelector(`[data-pg="${pg}"]`).focus();};
+ s.onclick=e=>{const b=e.target.closest('[data-pg]');if(b)draw(b.dataset.pg);else if(e.target===s||e.target.closest('[data-cl]'))s.remove();};
+ document.body.append(s);draw(page);}
+
+/* lateral recolhível */
+function toggleSide(){const w=$('#win');const c=w.classList.toggle('collapsed');S.side=c?'c':'';const b=$('#btnSide');b.setAttribute('aria-expanded',!c);b.setAttribute('aria-label',c?'Abrir lateral':'Recolher lateral');b.title=(c?'Abrir':'Recolher')+' lateral (⌘\\)';setTimeout(fit,200);}
+
+/* eventos */
+$('#btnSide').onclick=toggleSide;
+$('#btnNew').onclick=e=>S.mode==='first'?run('new:agent'):newMenu(e.currentTarget);
+$('#btnNewPad').onclick=()=>toast('Novo cercado: escolha o ramo de partida (demonstração)');
+$('#btnNeed').onclick=e=>needPop(e.currentTarget);
+$('#btnPrefs').onclick=()=>openPrefs();
+$('#btnK').onclick=openK;
+$('#zIn').onclick=()=>zoomBy(1.15);$('#zOut').onclick=()=>zoomBy(1/1.15);$('#zFit').onclick=fit;
+$('#btnMap').onclick=e=>{S.minimap=!S.minimap;e.currentTarget.setAttribute('aria-pressed',S.minimap);drawMinimap();};
+$('#mFirst').onclick=()=>setMode('first');$('#mUse').onclick=()=>setMode('uso');
+$('#btnNotes').onclick=()=>{$('#drawer').classList.add('open');$('#drawer').focus();};
+$('#closeNotes').onclick=()=>{$('#drawer').classList.remove('open');$('#btnNotes').focus();};
+$('#list').addEventListener('click',e=>{
+ const m=e.target.closest('[data-padmenu]');if(m)return padMenu(m);
+ const p=e.target.closest('[data-pad]');if(p)return switchPad(p.dataset.pad);
+ const n=e.target.closest('[data-agent]');if(n){if(n.hasAttribute('data-loop')){S.loopOpen=true;}select(n.dataset.agent);if(n.dataset.panel)focusTerm(n.dataset.panel);}
+});
+$('#world').addEventListener('click',e=>{
+ const ap=e.target.closest('[data-approve]');if(ap)return approve(ap.dataset.approve);
+ const tm=e.target.closest('[data-tmenu]');if(tm)return termMenu(tm,tm.dataset.tmenu);
+ if(e.target.closest('[data-loopclose]')){S.loopOpen=false;renderCanvas();return document.querySelector('[data-loopopen]')?.focus();}
+ if(e.target.closest('[data-loopopen]')){S.loopOpen=true;renderCanvas();return;}
+ const lb=e.target.closest('[data-loop]');if(lb){const k=lb.dataset.loop;
+  if(k==='stop'){S.loopStopped=true;toast('Laço parado. A tentativa atual foi encerrada.');}
+  if(k==='resume'){S.loopStopped=false;toast('Laço retomado na tarefa '+(S.loopDone+1));}
+  if(k==='defer'){const t=TASKS.splice(S.loopDone,1)[0];TASKS.push(t);toast('“'+t+'” foi para o fim da fila');}
+  return render();}
+ const t=e.target.closest('.term[data-term]');if(t&&S.sel!==t.dataset.term){S.sel=t.dataset.term;renderSide();document.querySelectorAll('.term').forEach(x=>x.classList.toggle('sel',x.dataset.term===S.sel));drawMinimap();}
+});
+document.addEventListener('click',e=>{if(popEl&&!popEl.contains(e.target)&&!popAnchor?.contains(e.target))closePop();},true);
+document.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;
+ if(m&&e.key.toLowerCase()==='k'){e.preventDefault();$('#scrimK')?closeK():openK();}
+ else if(m&&e.key==='\\'){e.preventDefault();toggleSide();}
+ else if(m&&e.key===','){e.preventDefault();openPrefs();}
+ else if(m&&e.key==='0'){e.preventDefault();fit();}
+ else if(e.key==='Escape'){if($('#scrimK'))closeK();else if($('#scrimP'))$('#scrimP').remove();else if(popEl)closePop();else if($('#drawer').classList.contains('open'))$('#closeNotes').click();}});
+addEventListener('resize',fit);
+render();fit();
+</script>
+</body>
+</html>

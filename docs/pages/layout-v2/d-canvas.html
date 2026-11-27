@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · D · Canvas organizado</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A;
+  --grid:#1E2647;--frame:#121831;--shadow:0 10px 30px rgba(0,0,0,.35);--paper:#F4F6FB;--ink:#1A2036}
+html[data-theme="crepusculo"]{--bg:#17131F;--surface:#211B2C;--side:#1B1625;--sunk:#120F18;--raised:#2A2238;--border:#3A3050;--text:#F1ECF8;--text2:#CFC4E0;--muted:#A396BD;--accent:#F5B7E0;--onacc:#17131F;--warn:#FFC98A;--sec:#B7C2FF;--danger:#FF9C9C;--grid:#2A2236;--frame:#1B1625}
+html[data-theme="contraste"]{--bg:#000;--surface:#0B0B0F;--side:#050507;--sunk:#000;--raised:#17171F;--border:#5A6390;--text:#FFF;--text2:#E6E9F5;--muted:#C2C8E0;--accent:#7CFFC4;--onacc:#000;--warn:#FFC685;--sec:#B3C0FF;--danger:#FF9E9E;--grid:#1A1A24;--frame:#050507}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--sunk);color:var(--text);font:13px/1.45 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+.m{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0;padding:0}
+:focus-visible{outline:2px solid var(--sec);outline-offset:2px;border-radius:6px}
+.app{height:100vh;min-width:1100px;display:flex;flex-direction:column;background:var(--bg);overflow:hidden}
+
+/* barra de título */
+.title{height:38px;flex:none;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--side);border-bottom:1px solid var(--border);user-select:none}
+.lights{display:flex;gap:8px;width:70px}.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.wt{flex:1;text-align:center;color:var(--text2);font-weight:500}
+.wt b{color:var(--text)}
+.notes-btn{height:24px;padding:0 10px;border:1px solid var(--border);border-radius:7px;color:var(--text2);font-size:12px}
+.notes-btn:hover{background:var(--raised);color:var(--text)}
+
+/* área do canvas */
+.area{position:relative;flex:1;min-height:0}
+.vp{position:absolute;inset:0;overflow:hidden;background:var(--bg) radial-gradient(var(--grid) 1px,transparent 1px) 0 0/22px 22px;cursor:grab;touch-action:none}
+.vp.panning{cursor:grabbing}
+#world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+#world.fly{transition:transform 240ms cubic-bezier(.2,.8,.2,1)}
+.leashes{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+
+/* cercado = moldura */
+.frame{position:absolute;border:1px solid var(--border);border-radius:18px;background:color-mix(in srgb,var(--frame) 72%,transparent);transition:width .2s ease-out,height .2s ease-out,left .2s ease-out,top .2s ease-out}
+.frame.cur{border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.frame.selp{outline:2px solid var(--accent);outline-offset:4px}
+.fhead{position:absolute;left:0;bottom:calc(100% + 8px);transform-origin:0 100%;transform:scale(var(--hs,1));display:flex;align-items:center;gap:10px;white-space:nowrap;cursor:pointer;padding:4px 8px 4px 4px;border-radius:9px}
+.fhead:hover{background:color-mix(in srgb,var(--raised) 70%,transparent)}
+.fhead .fn{font-size:16px;font-weight:650;color:var(--text)}
+.fhead .fb{font:12px ui-monospace,"SF Mono",Menlo,monospace;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:6px;background:var(--sunk)}
+.fhead .fs{font-size:12px;color:var(--text2);display:flex;gap:10px;align-items:center}
+.fact{height:24px;padding:0 9px;border-radius:7px;border:1px solid var(--border);color:var(--text2);font-size:12px;background:var(--surface)}
+.fact:hover{color:var(--text);background:var(--raised)}
+.fempty{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:14px}
+
+/* nós */
+.node{position:absolute;display:flex;align-items:flex-start;transition:left .2s ease-out,top .2s ease-out}
+.term{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;cursor:default;flex:none}
+.term.sel{outline:2px solid var(--accent);outline-offset:4px}
+.term.st-wait{border-color:color-mix(in srgb,var(--warn) 60%,var(--border))}
+.th{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;border-bottom:1px solid var(--border);background:var(--raised);font-weight:600}
+.th .sp{flex:1}
+.chip{font:11px ui-monospace,"SF Mono",Menlo,monospace;padding:2px 7px;border-radius:99px;border:1px solid var(--border);color:var(--text2);white-space:nowrap;font-weight:400}
+.tb{margin:0;padding:12px;font:12px/1.6 ui-monospace,"SF Mono",Menlo,monospace;color:var(--text2);white-space:pre;overflow:hidden;flex:1}
+.tb .a{color:var(--accent)}.tb .w{color:var(--warn)}.tb .s{color:var(--sec)}.tb .mu{color:var(--muted)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.pulse{animation:pl 1.6s ease-in-out infinite}@keyframes pl{50%{opacity:.35}}
+.c-work{background:var(--accent)}.c-wait{background:var(--warn)}.c-done{background:var(--sec)}.c-idle{background:var(--muted)}
+.t-work{color:var(--accent)}.t-wait{color:var(--warn)}.t-done{color:var(--sec)}.t-idle{color:var(--muted)}
+
+/* abas presas (painéis encaixados) */
+.strip{width:30px;flex:none;display:flex;flex-direction:column;gap:4px;padding-top:40px}
+.vtab{width:30px;min-height:74px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0;border:1px solid var(--border);border-left:0;border-radius:0 9px 9px 0;background:var(--side);color:var(--muted);font-size:12px}
+.vtab span{writing-mode:vertical-rl}
+.vtab:hover{color:var(--text);background:var(--raised)}
+.vtab.on{background:var(--surface);color:var(--text)}
+.vtab.on b{color:var(--accent)}
+.vtab.add{min-height:30px;padding:4px 0;font-size:15px}
+.panel{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;flex:none;margin-left:-1px}
+.ph{height:34px;flex:none;display:flex;align-items:center;gap:8px;padding:0 6px 0 12px;border-bottom:1px solid var(--border);background:var(--raised)}
+.ph .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
+.ph .tt b{color:var(--text);font-weight:600}
+.ib{width:26px;height:26px;border-radius:7px;color:var(--muted);display:grid;place-items:center}
+.ib:hover{background:var(--surface);color:var(--text)}
+.pb{flex:1;position:relative;overflow:hidden}
+
+/* zoom semântico: afastado mostra cartões */
+.near{display:contents}.far{display:none}
+#world.zfar .near{display:none}
+#world.zfar .far{display:flex}
+#world.zfar .strip{visibility:hidden}
+#world.zfar .term,#world.zfar .panel{cursor:pointer}
+.card{flex-direction:column;gap:12px;padding:26px 30px;height:100%}
+.pill{align-self:flex-start;display:flex;align-items:center;gap:12px;font-size:26px;font-weight:600;padding:6px 18px 6px 14px;border-radius:99px;background:var(--sunk);border:2px solid var(--border)}
+.pill .dot{width:18px;height:18px}
+.cn{font-size:44px;font-weight:700;line-height:1.05;color:var(--text)}
+.cn small{font-size:24px;font-weight:500;color:var(--muted);margin-left:10px}
+.ct{font-size:26px;line-height:1.3;color:var(--text2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;flex:none}
+.cu{margin-top:auto;display:flex;align-items:center;gap:14px;font-size:22px;color:var(--muted)}
+.cu .bar{flex:1;height:10px}
+.calert{font-size:24px;color:var(--warn);font-weight:600}
+.term.st-wait .card{background:color-mix(in srgb,var(--warn) 10%,var(--surface))}
+.pcard{flex-direction:column;justify-content:center;gap:10px;padding:30px;height:100%;background:var(--side)}
+.pcard .pi{font-size:56px;color:var(--sec);line-height:1}
+.pcard .pk{font-size:34px;font-weight:650}
+.pcard .pt{font-size:22px;color:var(--muted)}
+
+.bar{height:5px;border-radius:3px;background:var(--border);overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--accent);border-radius:3px}
+.bar.w>span{background:var(--warn)}
+
+/* barra flutuante */
+.top{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;padding:4px;height:42px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);z-index:20;white-space:nowrap}
+.tbn{height:32px;padding:0 10px;border-radius:8px;display:flex;align-items:center;gap:8px;color:var(--text2)}
+.tbn:hover,.tbn[aria-expanded="true"]{background:var(--raised);color:var(--text)}
+.tbn .car{color:var(--muted);font-size:10px}
+.tsep{width:1px;height:20px;background:var(--border);margin:0 4px}
+.kbd{font:11px ui-monospace,"SF Mono",Menlo,monospace;color:var(--muted);border:1px solid var(--border);border-radius:5px;padding:1px 5px}
+.search{min-width:190px;justify-content:space-between;border:1px solid var(--border);background:var(--sunk);color:var(--muted)}
+.need{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn);font-weight:600}
+.need:hover,.need[aria-expanded="true"]{background:color-mix(in srgb,var(--warn) 26%,transparent);color:var(--warn)}
+.need .n{min-width:20px;height:20px;border-radius:99px;background:var(--warn);color:var(--onacc);display:grid;place-items:center;font-size:12px;padding:0 6px}
+.need.zero{background:none;color:var(--muted);font-weight:400}.need.zero .n{background:var(--raised);color:var(--muted)}
+.usebtn .bar{width:42px}
+
+/* popovers */
+.pop{position:absolute;top:60px;z-index:30;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);padding:6px;min-width:260px;display:none;animation:in .16s ease-out}
+.pop.on{display:block}
+@keyframes in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.mi{width:100%;display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;text-align:left;color:var(--text2)}
+.mi:hover,.mi:focus-visible{background:var(--raised);color:var(--text)}
+.mi .r{margin-left:auto;color:var(--muted);font-size:12px}
+.mi.on{color:var(--text)}
+.mh{padding:8px 10px 4px;color:var(--muted);font-size:12px}
+.msep{height:1px;background:var(--border);margin:6px 4px}
+.need-pop{width:420px}
+.nitem{padding:10px;border-radius:10px;display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.nitem:hover{background:var(--raised)}
+.nitem .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.nitem .q{background:color-mix(in srgb,var(--sec) 18%,transparent);color:var(--sec)}
+.nitem .tx{flex:1;min-width:0}
+.nitem .tx b{font-weight:600;color:var(--text)}
+.nitem .sub{color:var(--muted);font-size:12px;margin-top:2px}
+.acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.btn{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border);color:var(--text2);background:var(--surface);font-size:12px}
+.btn:hover{background:var(--raised);color:var(--text)}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}
+.btn.p:hover{filter:brightness(1.05)}
+.btn.d{color:var(--danger)}
+.empty{padding:18px;color:var(--muted);text-align:center}
+
+/* inspetor */
+.insp{position:absolute;right:12px;top:66px;bottom:12px;width:340px;z-index:15;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;transform:translateX(calc(100% + 24px));transition:transform .2s ease-out;visibility:hidden}
+.insp.on{transform:none;visibility:visible}
+.ih{display:flex;align-items:center;gap:10px;padding:14px 12px 10px 16px}
+.ih h2{margin:0;font-size:17px;flex:1}
+.ib2{flex:1;overflow:auto;padding:0 16px 16px}
+.meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.sec{margin-top:16px}
+.sec h3{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--muted);display:flex;align-items:center;justify-content:space-between}
+.sec h3 button{color:var(--sec);font-weight:500}
+.sec h3 button:hover{text-decoration:underline}
+.box{background:var(--side);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.box.w{background:color-mix(in srgb,var(--warn) 9%,var(--side));border-color:color-mix(in srgb,var(--warn) 45%,var(--border))}
+.tl{display:flex;gap:8px;align-items:baseline;padding:3px 0;color:var(--text2)}
+.tl .k{width:16px;text-align:center;font-family:ui-monospace,monospace;flex:none}
+.mem{padding:8px 0;border-top:1px solid var(--border)}
+.mem:first-child{border-top:0;padding-top:0}
+.mem .mk{font-size:11px;color:var(--muted)}
+.ra{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:16px}
+.ra .btn{height:30px}
+.reply{display:flex;gap:6px;margin-top:8px}
+.reply input{flex:1;height:28px;border-radius:7px;border:1px solid var(--border);background:var(--sunk);padding:0 8px;min-width:0}
+
+/* gavetas */
+.drawer{position:absolute;left:12px;top:66px;bottom:12px;width:390px;z-index:16;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);display:flex;flex-direction:column;transform:translateX(calc(-100% - 24px));transition:transform .2s ease-out;visibility:hidden}
+.drawer.on{transform:none;visibility:visible}
+.drawer.wide{width:min(720px,calc(100% - 380px))}
+.dh{display:flex;align-items:center;gap:10px;padding:14px 12px 6px 18px}
+.dh h2{margin:0;font-size:18px;flex:1}
+.dsub{padding:0 18px 10px;color:var(--muted)}
+.db{flex:1;overflow:auto;padding:4px 18px 18px}
+.fil{display:flex;gap:6px;margin:4px 0 12px;flex-wrap:wrap}
+.fbtn{height:26px;padding:0 10px;border-radius:99px;border:1px solid var(--border);color:var(--text2);font-size:12px}
+.fbtn.on{background:var(--raised);color:var(--text);border-color:var(--muted)}
+.inp{width:100%;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--sunk);padding:0 10px;margin-bottom:10px}
+.row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)}
+.row:first-child{border-top:0}
+.row .gr{flex:1;min-width:0}
+.row .gr b{font-weight:600}
+.row .gr div{color:var(--muted);font-size:12px}
+.sw{width:34px;height:20px;border-radius:99px;background:var(--border);position:relative;flex:none;transition:background .15s}
+.sw::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--text);transition:transform .15s ease-out}
+.sw[aria-checked="true"]{background:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(14px);background:var(--onacc)}
+.theme{display:flex;gap:12px;align-items:center;padding:10px;border:1px solid var(--border);border-radius:10px;width:100%;text-align:left;margin-bottom:8px}
+.theme.on{border-color:var(--accent)}
+.theme .sws{display:flex}.theme .sws i{width:18px;height:28px;display:block}
+.theme .sws i:first-child{border-radius:6px 0 0 6px}.theme .sws i:last-child{border-radius:0 6px 6px 0}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:7px 8px;border-top:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-weight:600;border-top:0}
+td:first-child{color:var(--text);font-weight:500;white-space:nowrap}
+td{color:var(--text2)}
+.ux h3{font-size:14px;margin:18px 0 6px}
+.ux p,.ux li{color:var(--text2)}
+.ux ol,.ux ul{padding-left:20px;margin:6px 0}
+.ux li{margin:4px 0}
+.lead{font-size:15px;color:var(--text)!important}
+
+/* canto: zoom, minimapa */
+.zoom{position:absolute;left:12px;bottom:12px;z-index:14;display:flex;align-items:center;gap:4px;padding:4px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow)}
+.zoom .zb{width:28px;height:28px;border-radius:7px;color:var(--text2);font-size:16px}
+.zoom .zb:hover{background:var(--raised);color:var(--text)}
+.zl{width:46px;text-align:center;font:12px ui-monospace,monospace;color:var(--text2)}
+.seg{display:flex;background:var(--sunk);border-radius:8px;padding:2px;margin-left:4px}
+.seg button{height:24px;padding:0 10px;border-radius:6px;color:var(--muted);font-size:12px}
+.seg button.on{background:var(--raised);color:var(--text)}
+.hint{position:absolute;left:12px;bottom:58px;z-index:13;color:var(--text2);font-size:12px;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px;transition:opacity .25s ease-out}.hint.off{opacity:0}
+.mm{position:absolute;right:12px;bottom:12px;z-index:14;width:196px;background:color-mix(in srgb,var(--surface) 92%,transparent);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);padding:6px}
+.insp.on~.mm{right:364px}
+.mmc{position:relative;height:110px;border-radius:7px;background:var(--sunk);overflow:hidden;cursor:pointer}
+.mmf{position:absolute;border:1px solid var(--border);border-radius:3px;background:var(--side)}
+.mmf.cur{border-color:var(--accent)}
+.mmd{position:absolute;width:6px;height:6px;border-radius:50%;margin:-3px 0 0 -3px}
+.mmv{position:absolute;border:1.5px solid var(--text2);border-radius:3px;pointer-events:none}
+.mmb{display:flex;align-items:center;gap:6px;margin-top:6px}
+.mmb .cp{flex:1;font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* paleta */
+.ov{position:fixed;inset:0;z-index:50;background:rgba(5,8,18,.45);display:none;align-items:flex-start;justify-content:center;padding-top:14vh}
+.ov.on{display:flex}
+.pal{width:580px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;animation:in .16s ease-out}
+.pal input{width:100%;height:48px;border:0;border-bottom:1px solid var(--border);background:transparent;padding:0 16px;font-size:15px;outline:none}
+.pl{max-height:340px;overflow:auto;padding:6px}
+.pl .mi[aria-selected="true"]{background:var(--raised);color:var(--text)}
+.pf{padding:8px 14px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;gap:14px}
+
+.toast{position:absolute;left:50%;bottom:64px;transform:translateX(-50%);z-index:60;background:var(--raised);border:1px solid var(--border);border-radius:10px;padding:8px 14px;box-shadow:var(--shadow);display:none}
+.toast.on{display:block;animation:in .16s ease-out}
+
+/* mocks de painel */
+.mock{position:absolute;inset:12px;border-radius:8px;background:var(--paper);color:var(--ink);padding:14px;font-size:12px;overflow:hidden}
+.mock .mb{background:#DCE1EE;border-radius:5px}
+.pin{position:absolute;width:22px;height:22px;border-radius:50% 50% 50% 2px;background:#D4642A;color:#fff;font-size:11px;font-weight:700;display:grid;place-items:center}
+.url{height:24px;border-radius:6px;background:var(--sunk);margin:8px 10px 0;display:flex;align-items:center;padding:0 8px;font:11px ui-monospace,monospace;color:var(--text2)}
+.phone{position:absolute;left:50%;top:14px;bottom:14px;aspect-ratio:9/19;transform:translateX(-50%);border:6px solid #2C3452;border-radius:26px;background:var(--paper);overflow:hidden;color:var(--ink);padding:24px 10px 10px;font-size:11px}
+.netr{display:flex;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border);font:11px ui-monospace,monospace;color:var(--text2)}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="title">
+    <div class="lights" aria-hidden="true"><i style="background:#FF5F57"></i><i style="background:#FEBC2E"></i><i style="background:#28C840"></i></div>
+    <div class="wt"><b>Collie</b> — <span id="wtp">collie-general-working</span></div>
+    <button class="notes-btn" id="notesBtn" aria-label="Abrir Notas de UX">Notas de UX</button>
+  </header>
+
+  <div class="area" id="area">
+    <div class="vp" id="vp" aria-label="Canvas">
+      <div id="world"><svg class="leashes" id="leashes" width="1" height="1" aria-hidden="true"></svg></div>
+    </div>
+
+    <!-- barra flutuante -->
+    <nav class="top" id="top" aria-label="Barra do canvas">
+      <button class="tbn" id="bPad" aria-haspopup="true" aria-expanded="false" title="Ir para cercado"><span class="dot c-work" id="padDot"></span><b id="padName" style="font-weight:600">collie-general-working</b><span class="car">▾</span></button>
+      <span class="tsep"></span>
+      <button class="tbn" id="bNew" aria-haspopup="true" aria-expanded="false">＋ Novo <span class="car">▾</span></button>
+      <button class="tbn search" id="bK" aria-label="Paleta de comandos (⌘K)"><span>Buscar ou rodar…</span><span class="kbd">⌘K</span></button>
+      <button class="tbn" id="bMem" title="Memória" aria-label="Memória">◈ Memória</button>
+      <button class="tbn" id="bLoop" title="Laços" aria-label="Laços">⟳ <span id="loopLbl">3/7</span></button>
+      <button class="tbn" id="bMore" aria-haspopup="true" aria-expanded="false" aria-label="Mais gavetas">⋯</button>
+      <span class="tsep"></span>
+      <button class="tbn usebtn" id="bUse" aria-haspopup="true" aria-expanded="false" aria-label="Uso dos agentes"><span class="m" style="font-size:12px">Uso</span><span class="bar"><span style="width:50%"></span></span><span class="m" style="font-size:12px">50%</span></button>
+      <button class="tbn need" id="bNeed" aria-haspopup="true" aria-expanded="false"><span>Precisa de você</span><span class="n" id="needN">2</span></button>
+    </nav>
+
+    <div class="pop" id="popPad" role="menu" aria-label="Ir para cercado"></div>
+    <div class="pop" id="popNew" role="menu" aria-label="Novo"></div>
+    <div class="pop" id="popMore" role="menu" aria-label="Gavetas"></div>
+    <div class="pop" id="popUse" aria-label="Uso" style="width:300px"></div>
+    <div class="pop need-pop" id="popNeed" aria-label="Precisa de você"></div>
+
+    <aside class="drawer" id="drawer" aria-label="Gaveta"><div class="dh"><h2 id="dT">Gaveta</h2><button class="ib" id="dX" aria-label="Fechar gaveta">✕</button></div><div class="dsub" id="dS"></div><div class="db" id="dB"></div></aside>
+
+    <aside class="insp" id="insp" aria-label="Inspetor"><div class="ih"><span class="dot" id="iDot"></span><h2 id="iT">—</h2><button class="ib" id="iX" aria-label="Fechar inspetor">✕</button></div><div class="ib2" id="iB"></div></aside>
+
+    <div class="hint" id="hint">⌘ + roda ou pinça: zoom · roda ou arrastar o fundo: mover · duplo clique no cartão: chegar perto</div>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button class="zb" id="zOut" aria-label="Afastar (⌘−)">−</button>
+      <span class="zl" id="zLbl" aria-live="polite">45%</span>
+      <button class="zb" id="zIn" aria-label="Aproximar (⌘=)">＋</button>
+      <div class="seg" role="radiogroup" aria-label="Nível">
+        <button id="zFar" role="radio" aria-checked="true" class="on" title="⌘0">Visão geral</button>
+        <button id="zNear" role="radio" aria-checked="false" title="⌘1">Perto</button>
+      </div>
+    </div>
+    <div class="mm" id="mm"><div class="mmc" id="mmc" aria-label="Minimapa: clique para ir"></div>
+      <div class="mmb"><span class="cp" id="mmCur">collie-general-working</span><button class="btn" id="bOrg" title="Realinha os nós do cercado em grade">Organizar</button></div></div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+</div>
+
+<div class="ov" id="ov"><div class="pal" role="dialog" aria-label="Paleta de comandos"><input id="pIn" placeholder="Ir para cercado ou agente, abrir gaveta, rodar comando…" aria-label="Comando" role="combobox" aria-expanded="true" aria-controls="pL"><div class="pl" id="pL" role="listbox"></div><div class="pf"><span>↑↓ escolher</span><span>↵ rodar</span><span>esc fechar</span></div></div></div>
+
+<script>
+const $=id=>document.getElementById(id), Q=(s,r=document)=>[...r.querySelectorAll(s)];
+const RM=matchMedia('(prefers-reduced-motion: reduce)');
+const ST={work:'trabalhando',wait:'esperando você',done:'concluído',idle:'parado'};
+const PK={prev:['◧','Prévia',380],nav:['◎','Navegador',400],dev:['▯','Dispositivo',250],des:['✎','Design',400],net:['⇅','Rede',380],diag:['⧉','Diagrama',360]};
+
+const paddocks=[
+ {id:'cgw',name:'collie-general-working',branch:'collie/collie-general-working ← main',path:'.collie/paddocks/collie-general-working'},
+ {id:'idi',name:'idiomas',branch:'collie/idiomas ← main',path:'.collie/paddocks/idiomas'},
+ {id:'pasto',name:'Pasto',branch:'main · checkout principal',path:'~/Documents/codes/collie'}
+];
+const nodes=[
+ {id:'pastor',p:'cgw',name:'Pastor',eng:'claude',model:'opus 5.5',st:'work',use:41,x:40,y:40,w:520,h:300,
+  task:'Laço layout-v2 · escrevendo d-canvas.html',panels:[{k:'prev',t:'Protótipo · layout D'},{k:'nav',t:'localhost:4173'}],open:0,
+  lines:`<span class="mu">$</span> collie work status
+laço <b>layout-v2</b> · 3/7
+ <span class="a">✔</span> A Conversa
+ <span class="a">✔</span> B Estúdio
+ <span class="a">✔</span> C Torre de controle
+ <span class="w">●</span> D Canvas organizado — tentativa 1
+ <span class="mu">◌</span> índice · revisão cruzada · commit
+<span class="s">→ delegou revisão de c-torre para revisor</span>
+<span class="a">›</span> _`,
+  work:{t:'Layout v2 · protótipos',done:3,n:7,ev:['a-conversa.html ✔','b-estudio.html ✔','c-torre.html ✔','d-canvas.html (escrevendo)'],sum:'3 modelos prontos; D em andamento, revisão depois.'},mems:['m1','m3']},
+ {id:'revisor',p:'cgw',name:'revisor',eng:'claude',model:'sonnet 5.5',st:'done',use:9,x:170,y:430,w:440,h:260,parent:'pastor',
+  task:'Revisão de c-torre.html · 3 achados',panels:[],open:-1,
+  lines:`<span class="mu">chamado pelo Pastor · leitura</span>
+achado 1  foco some ao fechar gaveta
+achado 2  rótulo "lote" sem explicação
+achado 3  contraste do chip mudo 4.1:1
+<span class="a">✔ concluído</span> · resumo enviado ao Pastor`,
+  work:{t:'Revisão c-torre',done:1,n:1,ev:['3 achados · relatório no Trabalho'],sum:'Pronto. 3 achados, nenhum bloqueante.'},mems:['m2']},
+ {id:'l10n',p:'idi',name:'l10n-cli',eng:'codex',model:'gpt-5',st:'wait',use:18,x:40,y:40,w:480,h:300,
+  task:'Traduzir chaves pt-PT · 412 de 530',panels:[{k:'dev',t:'iPhone 16 · iOS 26'},{k:'net',t:'api.local'}],open:0,
+  lines:`<span class="mu">›</span> traduzindo Sources/CollieApp/L10n/pt-PT
+  412 de 530 chaves
+<span class="w">⚑ pedido fora do sandbox</span>
+  escrever ~/Library/Application Support/
+  Collie/l10n-cache/pt-PT.json
+<span class="s">? Mantenho "cercado" em pt-PT ou uso "redil"?</span>
+<span class="mu">aguardando você…</span>`,
+  work:{t:'Idiomas · pt-PT',done:412,n:530,unit:'chaves',ev:['pt-PT.strings parcial'],sum:'Parado em 2 pedidos seus.'},mems:['m4']},
+ {id:'ds',p:'pasto',name:'design-sys',eng:'claude',model:'sonnet 5.5',st:'idle',use:0,x:40,y:40,w:440,h:260,
+  task:'Design System Collie Noite · parado há 2 h',panels:[{k:'des',t:'Collie Noite'},{k:'diag',t:'Fluxo do laço'}],open:-1,
+  lines:`<span class="mu">última execução há 2 h</span>
+tokens: 14 cores · 2 fontes · 6 raios
+<span class="a">✔</span> Collie Noite publicado
+<span class="a">›</span> _`,
+  work:null,mems:['m1']}
+];
+const mems=[
+ {id:'m1',k:'decisão',t:'Conferência visual no app real é feita pelo dono',d:'testes não cobrem troca de paleta, galeria e editor.',rev:false},
+ {id:'m2',k:'armadilha',t:'Comportamento nunca lê texto traduzido',d:'usar marcas estáveis, não fragmentos de erro em pt.',rev:true},
+ {id:'m3',k:'decisão',t:'Delegar no mesmo cercado',d:'summon sem --paddock; não abrir cercado novo por agente.',rev:false},
+ {id:'m4',k:'armadilha',t:'Laço confiado ainda respeita sandbox estrito',d:'escrita fora do cercado sempre vira cartão.',rev:true},
+ {id:'m5',k:'decisão',t:'Ramo vai à main só depois do teste do dono',d:'bundle → teste com agente real → PR → CI.',rev:false}
+];
+let needs=[
+ {id:'sb1',kind:'sandbox',a:'l10n',t:'l10n-cli quer escrever em ~/Library/…',d:'~/Library/Application Support/Collie/l10n-cache/pt-PT.json · fora do cercado'},
+ {id:'q1',kind:'pergunta',a:'l10n',t:'l10n-cli pergunta: “cercado” ou “redil” em pt-PT?',d:'há 2 min · resposta vai direto para o terminal'}
+];
+const loop={name:'layout-v2',tasks:[['A Conversa','done'],['B Estúdio','done'],['C Torre de controle','done'],['D Canvas organizado','run'],['Índice dos modelos','q'],['Revisão cruzada','q'],['Commit e resumo','q']],check:'test -s docs/pages/layout-v2/$T.html'};
+const plugins=[['Vizinho','ganchos de agente · lê o projeto',true],['Figcraft','painel Design · Figma',true],['Linear','cartões de tarefa no Trabalho',false]];
+
+const S={z:.45,px:0,py:0,sel:null,selP:null,drawer:null,pop:null};
+const world=$('world'),vp=$('vp');
+const byId=id=>nodes.find(n=>n.id===id), pad=id=>paddocks.find(p=>p.id===id);
+
+/* ---------- geometria ---------- */
+function fp(n){const pw=n.open>=0?PK[n.panels[n.open].k][2]:0;return{w:n.w+30+pw,h:n.h}}
+function frameBox(p){const ns=nodes.filter(n=>n.p===p.id);let w=600,h=320;ns.forEach(n=>{const f=fp(n);w=Math.max(w,n.x+f.w+40);h=Math.max(h,n.y+f.h+40)});return{w,h}}
+function layoutFrames(){
+  // ponytail: molduras em 2 colunas automáticas; arrastar cercado não existe no protótipo
+  const [a,...rest]=paddocks;const ba=frameBox(a);Object.assign(a,{fx:0,fy:0},ba);
+  let y=0,x=ba.w+220;rest.forEach(p=>{Object.assign(p,{fx:x,fy:y},frameBox(p));y+=p.h+190});
+}
+function arrange(pid){
+  const order={wait:0,work:1,done:2,idle:3};
+  const ns=nodes.filter(n=>n.p===pid).sort((a,b)=>order[a.st]-order[b.st]);
+  let x=40,y=40,rh=0;ns.forEach(n=>{const f=fp(n);if(x>40&&x+f.w>1040){x=40;y+=rh+48;rh=0}n.x=x;n.y=y;x+=f.w+48;rh=Math.max(rh,f.h)});
+}
+
+/* ---------- DOM ---------- */
+function nodeHTML(n){
+  const p=n.open>=0?n.panels[n.open]:null, pend=needs.filter(x=>x.a===n.id);
+  const tabs=n.panels.map((q,i)=>`<button class="vtab${i===n.open?' on':''}" data-tab="${i}" aria-pressed="${i===n.open}" aria-label="Painel ${PK[q.k][1]} preso a ${n.name}"><b>${PK[q.k][0]}</b><span>${PK[q.k][1]}</span></button>`).join('')
+    +`<button class="vtab add" data-addp aria-label="Prender painel a ${n.name}">＋</button>`;
+  return `<div class="term st-${n.st}${S.sel===n.id?' sel':''}" tabindex="0" role="button" aria-label="${n.name}, ${ST[n.st]}" style="width:${n.w}px;height:${n.h}px">
+   <div class="near"><div class="th"><span class="dot c-${n.st}${n.st==='work'?' pulse':''}"></span>${n.name}<span class="sp"></span><span class="chip">${n.eng} · ${n.model}</span><span class="chip t-${n.st}">${ST[n.st]}</span></div><pre class="tb">${n.lines}</pre></div>
+   <div class="far card"><div class="pill t-${n.st}"><span class="dot c-${n.st}${n.st==='work'?' pulse':''}"></span>${ST[n.st]}</div>
+     <div class="cn">${n.name}<small>${n.eng}</small></div><div class="ct">${n.task}</div>
+     ${pend.length?`<div class="calert">⚑ ${pend.length} ${pend.length>1?'pedidos':'pedido'} para você</div>`:''}
+     <div class="cu"><span>uso</span><span class="bar"><span style="width:${n.use}%"></span></span><span class="m">${n.use}%</span>${n.panels.length?`<span>· ${n.panels.length} painel${n.panels.length>1?'s':''}</span>`:''}</div></div>
+  </div>
+  <div class="strip" style="height:${n.h}px">${tabs}</div>
+  ${p?`<div class="panel" style="width:${PK[p.k][2]}px;height:${n.h}px">
+    <div class="near"><div class="ph"><span style="color:var(--sec)">${PK[p.k][0]}</span><span class="tt"><b>${PK[p.k][1]}</b> · ${p.t}</span>${p.k==='prev'?'<span class="chip">2 comentários</span>':''}<button class="ib" data-pfit title="Enquadrar agente e painel" aria-label="Enquadrar">⤢</button><button class="ib" data-pclose title="Recolher para a aba" aria-label="Recolher painel">✕</button></div><div class="pb">${mock(p.k)}</div></div>
+    <div class="far pcard"><div class="pi">${PK[p.k][0]}</div><div class="pk">${PK[p.k][1]}</div><div class="pt">${p.t}<br>preso a ${n.name}</div></div>
+  </div>`:''}`;
+}
+function mock(k){
+  if(k==='prev')return `<div class="mock"><div class="mb" style="height:18px;width:60%"></div><div style="display:flex;gap:8px;margin-top:12px"><div class="mb" style="flex:1;height:120px"></div><div class="mb" style="width:70px;height:120px"></div></div><div class="mb" style="height:10px;width:80%;margin-top:12px"></div><div class="mb" style="height:10px;width:55%;margin-top:8px"></div><span class="pin" style="left:62%;top:40px">1</span><span class="pin" style="left:20%;top:150px">2</span><div style="position:absolute;bottom:10px;left:14px;color:#4A5272">artifact · d-canvas.html</div></div>`;
+  if(k==='nav')return `<div class="url">localhost:4173/layout-v2/</div><div class="mock" style="top:42px"><b>Layout v2</b><div style="margin-top:8px;display:grid;gap:6px">${['A · Conversa','B · Estúdio','C · Torre','D · Canvas'].map(x=>`<div class="mb" style="padding:6px 8px;background:#E4E8F3">${x}</div>`).join('')}</div></div>`;
+  if(k==='dev')return `<div class="phone"><b>Collie</b><div style="margin-top:10px;display:grid;gap:6px"><div class="mb" style="height:22px"></div><div class="mb" style="height:22px"></div><div class="mb" style="height:60px"></div></div><div style="position:absolute;bottom:10px;left:10px;right:10px;color:#4A5272">pt-PT · Cercados</div></div>`;
+  if(k==='des')return `<div class="mock" style="background:#ECEFF7"><div style="display:flex;gap:6px">${['#0E1326','#161C36','#6EE7B7','#FFB86B','#93A4FF'].map(c=>`<i style="width:34px;height:34px;border-radius:6px;background:${c};display:block"></i>`).join('')}</div><div class="mb" style="height:110px;margin-top:12px;background:#fff;border:1px solid #CBD2E4"></div><div style="margin-top:8px;color:#4A5272">Design System · Collie Noite</div></div>`;
+  if(k==='net')return ['GET /api/strings 200','POST /api/sync 201 · regra','GET /api/locale 304','GET /health 200'].map(r=>`<div class="netr"><span style="color:var(--accent)">●</span>${r}</div>`).join('')+`<div class="netr" style="color:var(--warn)">regra: /api/sync → responde 201</div>`;
+  return `<svg viewBox="0 0 340 240" width="100%" height="100%" aria-hidden="true"><g fill="none" stroke="#93A4FF" stroke-width="1.5"><rect x="20" y="30" width="90" height="40" rx="8"/><rect x="200" y="30" width="110" height="40" rx="8"/><rect x="110" y="150" width="110" height="40" rx="8"/><path d="M110 50H200M255 70L190 150M65 70L140 150"/></g><g fill="#B6BEDB" font-size="12" font-family="ui-sans-serif"><text x="38" y="55">tarefa</text><text x="225" y="55">check</text><text x="135" y="175">próxima</text></g></svg>`;
+}
+function build(){
+  layoutFrames();
+  // molduras
+  paddocks.forEach(p=>{
+    let f=$('f-'+p.id);
+    if(!f){f=document.createElement('div');f.className='frame';f.id='f-'+p.id;world.insertBefore(f,$('leashes'));}
+    const ns=nodes.filter(n=>n.p===p.id), cnt={};ns.forEach(n=>cnt[n.st]=(cnt[n.st]||0)+1);
+    const summ=Object.keys(ST).filter(k=>cnt[k]).map(k=>`<span><span class="dot c-${k}"></span> ${cnt[k]} ${ST[k]}</span>`).join('')||'<span>vazio</span>';
+    f.innerHTML=`<div class="fhead" data-pad="${p.id}" tabindex="0" role="button" aria-label="Cercado ${p.name}"><span class="fn">${p.name}</span><span class="fb">${p.branch}</span><span class="fs">${summ}</span><button class="fact" data-org="${p.id}">Organizar</button><button class="fact" data-addt="${p.id}" aria-label="Novo terminal em ${p.name}">＋ terminal</button></div>${ns.length?'':'<div class="fempty">Cercado vazio · ＋ terminal ou solte um rebanho</div>'}`;
+    Object.assign(f.style,{left:p.fx+'px',top:p.fy+'px',width:p.w+'px',height:p.h+'px'});
+    f.classList.toggle('selp',S.selP===p.id);
+  });
+  Q('.frame').forEach(f=>{if(!pad(f.id.slice(2)))f.remove()});
+  nodes.forEach(n=>{
+    let e=$('n-'+n.id);
+    if(!e){e=document.createElement('div');e.className='node';e.id='n-'+n.id;e.dataset.id=n.id;world.appendChild(e);}
+    e.innerHTML=nodeHTML(n);const p=pad(n.p);
+    e.style.left=(p.fx+n.x)+'px';e.style.top=(p.fy+n.y)+'px';
+  });
+  leashes();minimap();needUI();
+}
+function abs(n){const p=pad(n.p);return{x:p.fx+n.x,y:p.fy+n.y}}
+function leashes(){
+  let h='';
+  nodes.forEach(n=>{const a=abs(n);
+    if(n.open>=0){const x1=a.x+n.w-6,y1=a.y+n.h/2,x2=a.x+n.w+36,y2=y1;
+      h+=`<path d="M${x1} ${y1} L ${x2} ${y2}" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 5" fill="none"/><circle cx="${x1}" cy="${y1}" r="4" fill="var(--accent)"/><circle cx="${x2}" cy="${y2}" r="4" fill="var(--accent)"/>`;}
+    if(n.parent){const m=byId(n.parent);if(m){const b=abs(m),x1=b.x+80,y1=b.y+m.h,x2=a.x+80,y2=a.y;
+      h+=`<path d="M${x1} ${y1} C ${x1} ${y1+40}, ${x2} ${y2-40}, ${x2} ${y2}" stroke="var(--sec)" stroke-width="2" stroke-dasharray="6 6" fill="none"/><text x="${(x1+x2)/2+10}" y="${(y1+y2)/2}" fill="var(--sec)" font-size="13">delegou</text>`;}}
+  });
+  $('leashes').innerHTML=h;
+}
+
+/* ---------- vista ---------- */
+const FAR=.6;
+function vpSize(){const r=vp.getBoundingClientRect();return{w:r.width,h:r.height}}
+function apply(){
+  world.style.transform=`translate(${S.px}px,${S.py}px) scale(${S.z})`;
+  world.classList.toggle('zfar',S.z<FAR);
+  world.style.setProperty('--hs',Math.max(1,.9/S.z).toFixed(3));
+  $('zLbl').textContent=Math.round(S.z*100)+'%';
+  const far=S.z<FAR;$('zFar').classList.toggle('on',far);$('zNear').classList.toggle('on',!far);$('zFar').setAttribute('aria-checked',far);$('zNear').setAttribute('aria-checked',!far);
+  const c=curPad();$('padName').textContent=c.name;$('mmCur').textContent=c.name;$('wtp').textContent=c.name;
+  const ns=nodes.filter(n=>n.p===c.id);$('padDot').className='dot c-'+(ns.some(n=>n.st==='wait')?'wait':ns.some(n=>n.st==='work')?'work':'idle');
+  Q('.frame').forEach(f=>f.classList.toggle('cur',f.id==='f-'+c.id));
+  minimap();
+}
+function curPad(){
+  if(S.sel)return pad(byId(S.sel).p); if(S.selP)return pad(S.selP);
+  const v=vpSize(),cx=(v.w/2-S.px)/S.z,cy=(v.h/2-S.py)/S.z;let best=paddocks[0],bd=1e12;
+  paddocks.forEach(p=>{const dx=Math.max(p.fx-cx,0,cx-p.fx-p.w),dy=Math.max(p.fy-cy,0,cy-p.fy-p.h),d=dx*dx+dy*dy;if(d<bd){bd=d;best=p}});return best;
+}
+function zoomAt(f,cx,cy){const z=Math.min(1.6,Math.max(.18,S.z*f)),k=z/S.z;S.px=cx-(cx-S.px)*k;S.py=cy-(cy-S.py)*k;S.z=z;apply()}
+function setView(z,px,py,anim=true){
+  if(anim&&!RM.matches){world.classList.add('fly');clearTimeout(setView.t);setView.t=setTimeout(()=>world.classList.remove('fly'),260)}
+  const goingFar=z<FAR;
+  Object.assign(S,{px,py});
+  if(anim&&!RM.matches&&!goingFar&&S.z<FAR){S.z=z;world.style.transform=`translate(${px}px,${py}px) scale(${z})`;setTimeout(apply,130)}else{S.z=z;apply()}
+}
+function fitRect(x,y,w,h,maxZ,rightGap=0){
+  const v=vpSize(),aw=v.w-rightGap-80,ah=v.h-170;const z=Math.min(maxZ,aw/w,ah/h);
+  setView(z,(v.w-rightGap)/2-(x+w/2)*z,(v.h+60)/2-(y+h/2)*z);
+}
+function fitAll(){layoutFrames();let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;paddocks.forEach(p=>{x0=Math.min(x0,p.fx);y0=Math.min(y0,p.fy-60);x1=Math.max(x1,p.fx+p.w);y1=Math.max(y1,p.fy+p.h)});fitRect(x0,y0,x1-x0,y1-y0,.55,S.sel||S.selP?352:0)}
+function flyTo(id,z=1){const n=byId(id),a=abs(n),f=fp(n),gap=S.sel?352:0;fitRect(a.x,a.y,f.w,f.h,z,gap)}
+function flyPad(pid){const p=pad(pid);fitRect(p.fx,p.fy-50,p.w,p.h+50,1,S.sel||S.selP?352:0)}
+
+/* ---------- seleção / inspetor ---------- */
+function select(id,{fly=false}={}){
+  S.sel=id;S.selP=null;closePop();
+  Q('.term').forEach(t=>t.classList.toggle('sel',t.parentElement.dataset.id===id));
+  Q('.frame').forEach(f=>f.classList.remove('selp'));
+  renderInsp();if(fly)flyTo(id);else apply();
+}
+function selectPad(pid){S.sel=null;S.selP=pid;Q('.term').forEach(t=>t.classList.remove('sel'));Q('.frame').forEach(f=>f.classList.toggle('selp',f.id==='f-'+pid));renderInsp();apply()}
+function deselect(){S.sel=null;S.selP=null;Q('.term').forEach(t=>t.classList.remove('sel'));Q('.frame').forEach(f=>f.classList.remove('selp'));renderInsp();apply()}
+function needHTML(x,inline){return `<div class="nitem" data-need="${x.id}" tabindex="0" role="button" aria-label="${x.t}"><span class="ic ${x.kind==='pergunta'?'q':''}">${x.kind==='pergunta'?'?':'⚑'}</span><div class="tx"><b>${x.t}</b><div class="sub">${x.d}</div>
+  ${x.kind==='sandbox'?`<div class="acts"><button class="btn p" data-res="${x.id}" data-how="Permitido uma vez">Permitir</button><button class="btn" data-res="${x.id}" data-how="Permitido nesta sessão">Nesta sessão</button><button class="btn" data-res="${x.id}" data-how="Permitido sempre em idiomas">Sempre neste cercado</button><button class="btn d" data-res="${x.id}" data-how="Negado">Negar</button></div>`
+  :`<div class="reply"><input aria-label="Resposta para l10n-cli" placeholder="Responder…" value="Mantém “cercado”."><button class="btn p" data-res="${x.id}" data-how="Resposta enviada ao l10n-cli">Enviar</button></div>`}</div></div>`}
+function renderInsp(){
+  const el=$('insp');
+  if(S.selP){const p=pad(S.selP),ns=nodes.filter(n=>n.p===p.id);
+    $('iDot').className='dot c-'+(ns.some(n=>n.st==='wait')?'wait':'work');$('iT').textContent=p.name;
+    $('iB').innerHTML=`<div class="meta"><span class="chip">cercado</span><span class="chip">${ns.length} nós</span></div>
+     <div class="box"><div class="m" style="font-size:12px;color:var(--text2)">${p.branch}</div><div class="m" style="font-size:11px;color:var(--muted);margin-top:4px">${p.path}</div></div>
+     <div class="sec"><h3>Nós</h3><div class="box">${ns.map(n=>`<div class="tl" style="cursor:pointer" data-go="${n.id}"><span class="dot c-${n.st}"></span><span style="flex:1">${n.name}</span><span class="t-${n.st}" style="font-size:12px">${ST[n.st]}</span></div>`).join('')||'<span style="color:var(--muted)">vazio</span>'}</div></div>
+     <div class="ra"><button class="btn" data-org="${p.id}">Organizar</button><button class="btn" data-addt="${p.id}">＋ terminal</button><button class="btn" data-act="Abrindo no Finder">Abrir no Finder</button><button class="btn" data-act="collie paddock land: só quem criou o cercado">Fundir na main…</button></div>`;
+    el.classList.add('on');return;}
+  if(!S.sel){el.classList.remove('on');return}
+  const n=byId(S.sel),p=pad(n.p),pend=needs.filter(x=>x.a===n.id);
+  $('iDot').className='dot c-'+n.st+(n.st==='work'?' pulse':'');$('iT').textContent=n.name;
+  let w='';
+  if(n.id==='pastor')w=`<div class="sec"><h3>Trabalho · laço ${loop.name}<button data-drawer="lacos">Abrir laço</button></h3><div class="box"><div style="display:flex;justify-content:space-between"><b style="font-weight:600">${n.work.t}</b><span class="m t-work">${n.work.done}/${n.work.n}</span></div><div class="bar" style="margin:8px 0"><span style="width:${n.work.done/n.work.n*100}%"></span></div>${loop.tasks.slice(2,5).map(([t,s])=>`<div class="tl"><span class="k ${s==='done'?'t-work':s==='run'?'t-wait':'t-idle'}">${s==='done'?'✔':s==='run'?'●':'◌'}</span>${t}</div>`).join('')}<div style="color:var(--muted);font-size:12px;margin-top:6px">check: <span class="m">${loop.check}</span></div></div></div>`;
+  else if(n.work)w=`<div class="sec"><h3>Trabalho</h3><div class="box"><div style="display:flex;justify-content:space-between"><b style="font-weight:600">${n.work.t}</b><span class="m">${n.work.done}/${n.work.n}${n.work.unit?' '+n.work.unit:''}</span></div><div class="bar${n.st==='wait'?' w':''}" style="margin:8px 0"><span style="width:${n.work.done/n.work.n*100}%"></span></div><div style="color:var(--text2)">${n.work.sum}</div></div></div>`;
+  if(n.work)w+=`<div class="sec"><h3>Evidências</h3><div class="box">${n.work.ev.map(e=>`<div class="tl m" style="font-size:12px"><span class="k">·</span>${e}</div>`).join('')}</div></div>`;
+  $('iB').innerHTML=`<div class="meta"><span class="chip t-${n.st}">${ST[n.st]}</span><span class="chip">${n.eng} · ${n.model}</span><span class="chip">${p.name}</span>${n.parent?`<span class="chip">chamado pelo ${byId(n.parent).name}</span>`:''}</div>
+   ${pend.length?`<div class="sec"><h3>Precisa de você</h3><div class="box w" style="padding:2px">${pend.map(x=>needHTML(x)).join('')}</div></div>`:''}
+   <div class="sec"><h3>Tarefa</h3><div style="color:var(--text)">${n.task}</div></div>
+   ${w}
+   <div class="sec"><h3>Painéis presos<button data-addp-i="${n.id}">＋ prender</button></h3><div class="box">${n.panels.map((q,i)=>`<div class="tl"><span class="k" style="color:var(--sec)">${PK[q.k][0]}</span><span style="flex:1">${PK[q.k][1]} · <span style="color:var(--muted)">${q.t}</span></span><button class="btn" data-iopen="${i}">${i===n.open?'Recolher':'Abrir'}</button></div>`).join('')||'<span style="color:var(--muted)">nenhum</span>'}</div></div>
+   <div class="sec"><h3>Memórias recentes<button data-drawer="memoria">Ver todas</button></h3><div class="box">${n.mems.map(id=>mems.find(m=>m.id===id)).filter(Boolean).map(m=>`<div class="mem"><div class="mk">${m.k}${m.rev?' · revisar':''}</div>${m.t}</div>`).join('')||'<span style="color:var(--muted)">nenhuma</span>'}</div></div>
+   <div class="sec"><h3>Uso</h3><div style="display:flex;align-items:center;gap:10px"><span class="bar" style="flex:1"><span style="width:${n.use}%"></span></span><span class="m" style="font-size:12px">${n.use}% da janela de 5 h</span></div></div>
+   <div class="ra"><button class="btn p" data-near="${n.id}">Abrir terminal</button><button class="btn" data-act="Delegar: escolha o agente no ＋ Novo" data-deleg>Delegar…</button><button class="btn" data-act="Movido para o lote Layout v2">Mover para lote</button><button class="btn d" data-stop="${n.id}">Parar</button></div>`;
+  el.classList.add('on');
+}
+
+/* ---------- precisa de você ---------- */
+function needUI(){const b=$('bNeed');$('needN').textContent=needs.length;b.classList.toggle('zero',!needs.length);
+  $('popNeed').innerHTML=`<div class="mh">Cartões de sandbox e perguntas · clique para ir até o agente</div>`+(needs.length?needs.map(x=>needHTML(x)).join(''):'<div class="empty">Nada esperando você. Os agentes seguem sozinhos.</div>')}
+function resolve(id,how){const x=needs.find(q=>q.id===id);needs=needs.filter(q=>q.id!==id);
+  const n=byId(x.a);if(!needs.some(q=>q.a===n.id)){n.st='work';n.lines=n.lines.replace(/<span class="mu">aguardando você…<\/span>/,'<span class="a">✔ liberado · continuando</span>')}
+  if(x.kind==='sandbox')n.lines=n.lines.replace('⚑ pedido fora do sandbox','✔ '+how.toLowerCase());
+  toast(how);build();renderInsp();if(S.pop==='popNeed')positionPop('popNeed','bNeed');}
+
+/* ---------- popovers ---------- */
+function positionPop(pid,bid){const r=$(bid).getBoundingClientRect(),a=$('area').getBoundingClientRect(),p=$(pid);p.classList.add('on');let l=r.left-a.left;l=Math.min(l,a.width-p.offsetWidth-12);p.style.left=l+'px';p.style.top=(r.bottom-a.top+8)+'px'}
+function openPop(pid,bid){if(S.pop===pid){closePop();return}closePop();fillPop(pid);positionPop(pid,bid);S.pop=pid;$(bid).setAttribute('aria-expanded','true');const f=$(pid).querySelector('button,[tabindex]');f&&f.focus()}
+function closePop(){if(!S.pop)return;$(S.pop).classList.remove('on');Q('.top [aria-expanded]').forEach(b=>b.setAttribute('aria-expanded','false'));S.pop=null}
+function fillPop(pid){
+  if(pid==='popPad')$('popPad').innerHTML=`<div class="mh">Ir para cercado</div>`+paddocks.map(p=>{const ns=nodes.filter(n=>n.p===p.id);const st=ns.some(n=>n.st==='wait')?'wait':ns.some(n=>n.st==='work')?'work':'idle';return `<button class="mi${curPad().id===p.id?' on':''}" role="menuitem" data-gopad="${p.id}"><span class="dot c-${st}"></span>${p.name}<span class="r m">${p.branch.split(' ')[0]}</span></button>`}).join('')+`<div class="msep"></div><button class="mi" role="menuitem" data-newpad>＋ Novo cercado…</button><button class="mi" role="menuitem" data-fitall>Ver todos os cercados<span class="r">⌘0</span></button>`;
+  if(pid==='popNew'){const tgt=S.sel?byId(S.sel).name:'agente do cercado';$('popNew').innerHTML=`<div class="mh">Terminal em ${curPad().name}</div>`+['claude','codex','cursor'].map(e=>`<button class="mi" role="menuitem" data-newt="${e}">›_ Agente ${e}${S.sel?`<span class="r">chamado por ${byId(S.sel).name}</span>`:''}</button>`).join('')+`<div class="msep"></div><div class="mh">Painel preso a ${tgt}</div>`+Object.entries(PK).map(([k,v])=>`<button class="mi" role="menuitem" data-newp="${k}"><span style="color:var(--sec);width:14px">${v[0]}</span>${v[1]}</button>`).join('')+`<div class="msep"></div><button class="mi" role="menuitem" data-drawer="rebanhos">⁂ Rebanho…<span class="r">time pronto</span></button><button class="mi" role="menuitem" data-newpad>▣ Cercado</button>`}
+  if(pid==='popMore')$('popMore').innerHTML=[['memoria','◈ Memória'],['lacos','⟳ Laços'],['rebanhos','⁂ Rebanhos e Lotes'],['plugins','⧉ Plug-ins'],['temas','◐ Temas'],['prefs','⚙ Preferências','⌘,'],['notas','ⓘ Notas de UX']].map(([k,l,s])=>`<button class="mi" role="menuitem" data-drawer="${k}">${l}${s?`<span class="r">${s}</span>`:''}</button>`).join('');
+  if(pid==='popUse')$('popUse').innerHTML=`<div class="mh">Janela de 5 h · renova às 18:40</div><div style="padding:4px 10px 8px">${[['claude',50],['codex',18],['cursor',0]].map(([e,u])=>`<div style="display:flex;align-items:center;gap:10px;margin:6px 0"><span style="width:52px">${e}</span><span class="bar" style="flex:1"><span style="width:${u}%"></span></span><span class="m" style="font-size:12px;width:34px;text-align:right">${u}%</span></div>`).join('')}</div><div class="msep"></div><div class="mh">Por agente</div>${nodes.map(n=>`<button class="mi" data-go="${n.id}"><span class="dot c-${n.st}"></span>${n.name}<span class="r m">${n.use}%</span></button>`).join('')}`;
+  if(pid==='popNeed')needUI();
+}
+
+/* ---------- gavetas ---------- */
+const D={
+ memoria:()=>['Memória',`${mems.length} memórias · ${mems.filter(m=>m.rev).length} para revisar`,`<input class="inp" placeholder="Buscar memória" aria-label="Buscar memória" id="memQ"><div class="fil">${['todas','decisão','armadilha','revisar'].map((f,i)=>`<button class="fbtn${(D.mf||'todas')===f?' on':''}" data-mf="${f}">${f}</button>`).join('')}</div><div id="memL">${memList()}</div>`],
+ lacos:()=>['Laços',`Laço ${loop.name} · ${curPad().id==='cgw'?'neste cercado':'em collie-general-working'} · confiado`,`<div class="box"><div style="display:flex;justify-content:space-between"><b style="font-weight:600">${loop.name}</b><span class="m t-work">3/7</span></div><div class="bar" style="margin:8px 0"><span style="width:43%"></span></div><div style="color:var(--muted);font-size:12px">check: <span class="m">${loop.check}</span></div></div>
+   <div style="margin-top:12px">${loop.tasks.map(([t,s],i)=>`<div class="row"><span class="k m ${s==='done'?'t-work':s==='run'?'t-wait pulse':'t-idle'}" style="width:18px;text-align:center">${s==='done'?'✔':s==='run'?'●':'◌'}</span><div class="gr"><b>${i+1}. ${t}</b><div>${s==='done'?'1ª tentativa · check ok':s==='run'?'tentativa 1 · rodando no Pastor':'na fila'}</div></div>${s==='q'?`<button class="btn" data-act="Tarefa adiada">Adiar</button>`:''}</div>`).join('')}</div>
+   <div class="acts" style="margin-top:14px"><button class="btn" data-near="pastor">Ver no Pastor</button><button class="btn" data-act="Laço pausado depois da tarefa atual">Pausar</button><button class="btn d" data-act="Laço parado">Parar laço</button><button class="btn p" data-act="collie work run: escolha a lista">Rodar lista nova…</button></div>`],
+ rebanhos:()=>['Rebanhos e Lotes','Times prontos para soltar no cercado atual, e grupos de terminais',`<div class="sec" style="margin-top:0"><h3>Rebanhos</h3>${[['Revisão independente','revisor + cético · leitura'],['Tradução','l10n-cli + revisor-pt'],['Front com prévia','designer + Navegador + Prévia']].map(([t,d],i)=>`<div class="row"><div class="gr"><b>${t}</b><div>${d}</div></div><button class="btn p" data-herd="${i}">Soltar em ${curPad().name}</button></div>`).join('')}</div>
+   <div class="sec"><h3>Lotes</h3><div class="row"><div class="gr"><b>Layout v2</b><div>Pastor, revisor · 4 recados no quadro</div></div><button class="btn" data-act="Quadro do lote aberto">Ver quadro</button></div><div class="row"><div class="gr"><b>Idiomas</b><div>l10n-cli · 1 recado</div></div><button class="btn" data-act="Quadro do lote aberto">Ver quadro</button></div></div>`],
+ plugins:()=>['Plug-ins','Ganchos, painéis e comandos de terceiros',plugins.map(([t,d,on],i)=>`<div class="row"><div class="gr"><b>${t}</b><div>${d}</div></div><button class="sw" role="switch" aria-checked="${on}" aria-label="${t}" data-plug="${i}"></button></div>`).join('')+`<div class="acts" style="margin-top:12px"><button class="btn" data-act="Escolha uma pasta de plug-in">Instalar de pasta…</button></div>`],
+ temas:()=>['Temas','Aplicado na hora, sem sair do canvas',[['noite','Collie Noite','padrão',['#0E1326','#161C36','#6EE7B7','#FFB86B']],['crepusculo','Crepúsculo','escuro quente',['#17131F','#211B2C','#F5B7E0','#FFC98A']],['contraste','Alto contraste','acessibilidade',['#000','#17171F','#7CFFC4','#FFC685']]].map(([k,t,d,c])=>`<button class="theme${(document.documentElement.dataset.theme||'noite')===k?' on':''}" data-theme="${k}" aria-pressed="${(document.documentElement.dataset.theme||'noite')===k}"><span class="sws">${c.map(x=>`<i style="background:${x}"></i>`).join('')}</span><span><b style="font-weight:600">${t}</b><div style="color:var(--muted);font-size:12px">${d}</div></span></button>`).join('')+`<div class="acts"><button class="btn" data-act="Editor de tema aberto">Editar tema…</button></div>`],
+ prefs:()=>['Preferências','As mesmas de hoje, numa gaveta',['Aparência','Terminal e fontes','Desenho e sandbox','Laços','Memória','Celular e Android','Atualizações'].map(t=>`<div class="row"><div class="gr"><b>${t}</b></div><span style="color:var(--muted)">›</span></div>`).join('')],
+ notas:()=>['Notas de UX · D · Canvas organizado','',notesHTML()]
+};
+function memList(){const f=D.mf||'todas',q=(($('memQ')||{}).value||'').toLowerCase();return mems.filter(m=>(f==='todas'||m.k===f||(f==='revisar'&&m.rev))&&(m.t+m.d).toLowerCase().includes(q)).map(m=>`<div class="row"><div class="gr"><b>${m.t}</b><div>${m.k}${m.rev?' · <span class="t-wait">revisar</span>':''} · ${m.d}</div></div><button class="btn" data-act="Editando memória">Editar</button><button class="btn d" data-drop="${m.id}">Descartar</button></div>`).join('')||'<div class="empty">Nenhuma memória</div>'}
+function openDrawer(k){closePop();if(S.drawer===k){closeDrawer();return}const [t,s,b]=D[k]();S.drawer=k;$('dT').textContent=t;$('dS').textContent=s;$('dS').style.display=s?'':'none';$('dB').innerHTML=b;$('drawer').classList.toggle('wide',k==='notas');$('drawer').classList.add('on');$('dX').focus();
+  const mq=$('memQ');if(mq)mq.oninput=()=>$('memL').innerHTML=memList();}
+function closeDrawer(){S.drawer=null;$('drawer').classList.remove('on')}
+function notesHTML(){
+  const rows=[['Canvas e terminais','A própria tela: terminais vivem nas molduras; cartão afastado, terminal real perto'],['Cercados','Moldura nomeada com ramo e estado; seletor “ir para” na barra; minimapa'],['Pastor e delegação','Coleira azul “delegou” entre terminais; Delegar… no inspetor; ＋ Novo › Agente chamado por'],['Laços','Botão ⟳ 3/7 na barra → gaveta; resumo no inspetor do Pastor'],['Trabalho','Seção Trabalho/Evidências no inspetor do agente'],['Paleta ⌘K','Botão na barra; leva a cercado, agente, gaveta ou comando'],['Navegador','Aba presa ao agente que dirige; abre ao lado dele'],['Dispositivo','Aba presa (l10n-cli · iPhone)'],['Rede','Aba presa (l10n-cli · api.local)'],['Design e Design Systems','Aba presa (design-sys no Pasto); temas da DS na gaveta Temas'],['Prévia e Artifacts','Aba presa ao agente que escreveu, com contagem de comentários'],['Diagrama','Aba presa; ＋ Novo › Painel'],['Memória','Gaveta ◈ na barra; “recentes” no inspetor do agente'],['Sandbox e cartões','“Precisa de você” com contador; cartão no inspetor e no cartão afastado'],['Rebanhos e Lotes','＋ Novo › Rebanho ou ⋯ → gaveta; solta o time na moldura atual'],['Plug-ins','⋯ → gaveta Plug-ins'],['Temas','⋯ → gaveta Temas (aplica ao vivo)'],['Uso dos agentes','Medidor na barra → popover por motor e por agente; barra no cartão'],['Preferências','⋯ ou ⌘, → gaveta']];
+  return `<div class="ux"><p class="lead">O canvas infinito continua sendo a tela, mas organizado: cada cercado é uma moldura, cada agente um cartão vivo que vira terminal quando você chega perto, e o resto aparece só quando você pede.</p>
+  <h3>Para quem</h3><p>Quem roda vários agentes em paralelo e pensa no trabalho “no espaço”: precisa ver de relance quem trabalha, quem espera e quem terminou, sem abrir uma lista, e chegar no terminal certo em um clique.</p>
+  <h3>Princípios</h3><ol><li><b>Geografia é navegação.</b> O lugar de um agente (moldura do cercado) é o índice; não há árvore paralela que repita o canvas.</li><li><b>Zoom muda o significado, não só o tamanho.</b> Afastado: estado, tarefa e uso legíveis. Perto: o terminal real.</li><li><b>Painel pertence a alguém.</b> Painéis são abas presas ao agente; a coleira é a ligação visível, nunca soltos pelo canvas.</li><li><b>Interromper só quando for sua vez.</b> Cartões de sandbox e perguntas sobem para “Precisa de você” e levam até o agente.</li><li><b>Cromo sob demanda.</b> Inspetor só com seleção; Memória, Laços, Rebanhos, Plug-ins e Temas em gavetas sobre o canvas.</li></ol>
+  <h3>Onde mora cada função</h3><table><tr><th>Função</th><th>Casa no modelo D</th></tr>${rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>
+  <h3>Comparação com o Trilho: o que sai e por quê</h3><table><tr><th>No Trilho</th><th>No D</th><th>Por quê</th></tr>
+  <tr><td>Trilho de cercados (ícones C/W/A)</td><td>Sai. Molduras no canvas + seletor “ir para” + minimapa</td><td>Iniciais não dizem nada; a moldura mostra nome, ramo e estado no próprio lugar do trabalho</td></tr>
+  <tr><td>Painel de contexto (árvore, painéis, laços, lotes)</td><td>Sai. Vira o inspetor, só com seleção</td><td>Repetia o canvas em lista e roubava 248 px o tempo todo; a geografia já é a árvore</td></tr>
+  <tr><td>Abas Canvas / Prévia / Laços / Preferências</td><td>Saem. Prévia é aba presa ao agente; Laços e Preferências são gavetas</td><td>Trocar de aba escondia o canvas e quebrava o vínculo painel ↔ agente</td></tr>
+  <tr><td>Painéis soltos e coleiras longas</td><td>Painel encaixado ao lado do agente, coleira curta</td><td>Fim da bagunça; mover o agente leva os painéis junto</td></tr>
+  <tr><td>Cartão de sandbox flutuando no canvas</td><td>“Precisa de você” com contador + no inspetor</td><td>No Trilho o cartão podia ficar fora da vista; aqui sempre tem contador e voo até o agente</td></tr>
+  <tr><td>Barra de status (conectado, n terminais)</td><td>Sai. Uso na barra; estado no cartão de cada agente</td><td>Informação passiva demais para ocupar uma faixa</td></tr></table>
+  <h3>Perde</h3><ul><li>A lista vertical de todos os agentes sempre visível: quem não gosta de orientação espacial depende de ⌘K e do minimapa.</li><li>Prévia em tela cheia como aba: aqui é ⤢ “enquadrar” (ou ⌘K), menos direto para revisar artifacts longos.</li><li>Descoberta passiva das funções: Memória, Rebanhos e Plug-ins ficam atrás de botão/⋯ em vez de expostos num painel.</li></ul>
+  <h3>Ganha</h3><ul><li>Canvas usa a janela inteira; nenhum cromo fixo além da barra pequena.</li><li>Leitura de estado do time inteiro de relance (visão geral) sem abrir nada.</li><li>Uma resposta única para “onde está?”: no cercado dele, ao lado dos painéis dele.</li><li>“Organizar” desfaz a bagunça em um clique, por cercado.</li></ul></div>`;
+}
+
+/* ---------- ações ---------- */
+let seq=4;
+function addTerminal(pid,eng='claude',parent=null){const ns=nodes.filter(n=>n.p===pid);const y=ns.reduce((m,n)=>Math.max(m,n.y+n.h+48),40);const id='t'+(++seq);
+  nodes.push({id,p:pid,name:`terminal-${seq}`,eng,model:eng==='claude'?'sonnet 5.5':eng==='codex'?'gpt-5':'auto',st:'idle',use:0,x:40,y,w:440,h:260,parent,task:'Novo terminal · sem tarefa',panels:[],open:-1,lines:`<span class="mu">${eng} pronto em ${pad(pid).name}</span>\n<span class="a">›</span> _`,work:null,mems:[]});
+  build();select(id,{fly:true});toast(`terminal-${seq} criado em ${pad(pid).name}`)}
+function addPanel(k,nid){const n=byId(nid)||nodes.find(x=>x.p===curPad().id);if(!n){toast('Crie um terminal antes de prender um painel');return}n.panels.push({k,t:k==='nav'?'about:blank':k==='prev'?'sem artifact':'novo'});n.open=n.panels.length-1;build();select(n.id,{fly:true});toast(`${PK[k][1]} preso a ${n.name}`)}
+function toast(t){const e=$('toast');e.textContent=t;e.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('on'),2200)}
+function organize(pid){arrange(pid);build();flyPad(pid);toast(`${pad(pid).name} organizado em grade`)}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('button,[data-need],[data-pad],[data-go]');if(!t)return;const d=t.dataset;
+  if(d.res!==undefined){e.stopPropagation();resolve(d.res,d.how);return}
+  if(d.need!==undefined&&!e.target.closest('input,button')){const x=needs.find(q=>q.id===d.need);closePop();select(x.a,{fly:true});return}
+  if(d.org){e.stopPropagation();organize(d.org);return}
+  if(d.addt){e.stopPropagation();addTerminal(d.addt);return}
+  if(d.pad!==undefined&&!e.target.closest('button')){selectPad(d.pad);return}
+  if(d.go){closePop();select(d.go,{fly:true});return}
+  if(d.gopad){closePop();S.sel=null;selectPad(d.gopad);flyPad(d.gopad);return}
+  if(d.fitall!==undefined){closePop();fitAll();return}
+  if(d.newpad!==undefined){closePop();const k=paddocks.length+1;const id='p'+k;paddocks.push({id,name:`cercado-${k}`,branch:`collie/cercado-${k} ← main`,path:`.collie/paddocks/cercado-${k}`});build();selectPad(id);flyPad(id);toast(`Cercado cercado-${k} criado (cópia isolada do repo)`);return}
+  if(d.newt){closePop();addTerminal(curPad().id,d.newt,S.sel);return}
+  if(d.newp){closePop();addPanel(d.newp,S.sel);return}
+  if(d.drawer){openDrawer(d.drawer);return}
+  if(d.near){closeDrawer();select(d.near,{fly:true});return}
+  if(d.stop){const n=byId(d.stop);n.st='idle';build();renderInsp();toast(`${n.name} parado`);return}
+  if(d.iopen!==undefined){const n=byId(S.sel),i=+d.iopen;n.open=n.open===i?-1:i;build();renderInsp();if(n.open>=0)flyTo(n.id);return}
+  if(d.addpI){closePop();openPop('popNew','bNew');return}
+  if(d.deleg!==undefined){openPop('popNew','bNew');return}
+  if(d.act){toast(d.act);return}
+  if(d.mf){D.mf=d.mf;openDrawer('memoria');openDrawer('memoria');return}
+  if(d.drop){const i=mems.findIndex(m=>m.id===d.drop);const m=mems.splice(i,1)[0];$('memL').innerHTML=memList();$('dS').textContent=`${mems.length} memórias · ${mems.filter(m=>m.rev).length} para revisar`;toast(`Descartada: ${m.t}`);return}
+  if(d.herd){const pid=curPad().id;const names=[['revisor-2','cético'],['l10n-2','revisor-pt'],['designer','navegador']][d.herd];names.forEach(nm=>{addTerminal(pid);const n=nodes[nodes.length-1];n.name=nm;n.st='work';n.task='Solto pelo rebanho · começando';});build();closeDrawer();flyPad(pid);toast('Rebanho solto em '+pad(pid).name);return}
+  if(d.plug){const p=plugins[d.plug];p[2]=!p[2];t.setAttribute('aria-checked',p[2]);toast(`${p[0]} ${p[2]?'ativado':'desativado'}`);return}
+  if(d.theme){document.documentElement.dataset.theme=d.theme==='noite'?'':d.theme;if(d.theme==='noite')delete document.documentElement.dataset.theme;openDrawer('temas');openDrawer('temas');build();return}
+});
+
+/* cliques no canvas: nós e abas */
+world.addEventListener('click',e=>{
+  if(moved)return;
+  const node=e.target.closest('.node');if(!node)return;const n=byId(node.dataset.id);
+  const tab=e.target.closest('[data-tab]');
+  if(tab){const i=+tab.dataset.tab;n.open=n.open===i?-1:i;build();select(n.id);return}
+  if(e.target.closest('[data-addp]')){select(n.id);openPop('popNew','bNew');return}
+  if(e.target.closest('[data-pclose]')){n.open=-1;build();select(n.id);return}
+  if(e.target.closest('[data-pfit]')){select(n.id);flyTo(n.id,1.2);return}
+  if(S.sel!==n.id)select(n.id);
+});
+world.addEventListener('dblclick',e=>{const node=e.target.closest('.node');if(node)select(node.dataset.id,{fly:true})});
+world.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){const t=e.target;if(t.classList.contains('term')){e.preventDefault();const id=t.parentElement.dataset.id;S.sel===id?flyTo(id):select(id)}else if(t.dataset.pad){e.preventDefault();selectPad(t.dataset.pad)}}});
+
+/* pan e zoom */
+let drag=null,moved=false;
+vp.addEventListener('pointerdown',e=>{if(e.button!==0||e.target.closest('.term,.panel,.strip,.fhead'))return;drag={x:e.clientX,y:e.clientY,px:S.px,py:S.py};moved=false;vp.setPointerCapture(e.pointerId)});
+vp.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>3){moved=true;vp.classList.add('panning')}S.px=drag.px+dx;S.py=drag.py+dy;apply()});
+vp.addEventListener('pointerup',e=>{if(!drag)return;vp.classList.remove('panning');if(!moved){closePop();if(S.sel||S.selP)deselect()}drag=null;setTimeout(()=>moved=false)});
+vp.addEventListener('wheel',e=>{e.preventDefault();const r=vp.getBoundingClientRect();
+  if(e.ctrlKey||e.metaKey)zoomAt(Math.exp(-e.deltaY*(e.ctrlKey&&!e.metaKey?.012:.004)),e.clientX-r.left,e.clientY-r.top);
+  else{S.px-=e.deltaX;S.py-=e.deltaY;apply()}},{passive:false});
+let gs=1;vp.addEventListener('gesturestart',e=>{e.preventDefault();gs=1});
+vp.addEventListener('gesturechange',e=>{e.preventDefault();const r=vp.getBoundingClientRect();zoomAt(e.scale/gs,e.clientX-r.left,e.clientY-r.top);gs=e.scale});
+function zoomCenter(f){const v=vpSize();zoomAt(f,v.w/2,v.h/2)}
+$('zIn').onclick=()=>zoomCenter(1.25);$('zOut').onclick=()=>zoomCenter(.8);
+$('zFar').onclick=fitAll;$('zNear').onclick=()=>{const id=S.sel||(nodes.find(n=>n.p===curPad().id)||nodes[0]).id;select(id,{fly:true})};
+
+/* minimapa */
+function minimap(){
+  const c=$('mmc');if(!paddocks[0].w)return;let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;paddocks.forEach(p=>{x0=Math.min(x0,p.fx);y0=Math.min(y0,p.fy);x1=Math.max(x1,p.fx+p.w);y1=Math.max(y1,p.fy+p.h)});
+  const W=184,H=110,s=Math.min((W-12)/(x1-x0),(H-12)/(y1-y0)),ox=(W-(x1-x0)*s)/2-x0*s,oy=(H-(y1-y0)*s)/2-y0*s;minimap.t={s,ox,oy};
+  const cur=curPad().id,v=vpSize();
+  c.innerHTML=paddocks.map(p=>`<div class="mmf${p.id===cur?' cur':''}" style="left:${ox+p.fx*s}px;top:${oy+p.fy*s}px;width:${p.w*s}px;height:${p.h*s}px"></div>`).join('')
+   +nodes.map(n=>{const a=abs(n);return `<span class="mmd c-${n.st}" style="left:${ox+(a.x+n.w/2)*s}px;top:${oy+(a.y+n.h/2)*s}px"></span>`}).join('')
+   +`<div class="mmv" style="left:${ox+(-S.px/S.z)*s}px;top:${oy+(-S.py/S.z)*s}px;width:${v.w/S.z*s}px;height:${v.h/S.z*s}px"></div>`;
+}
+$('mmc').addEventListener('click',e=>{const r=$('mmc').getBoundingClientRect(),{s,ox,oy}=minimap.t,wx=(e.clientX-r.left-ox)/s,wy=(e.clientY-r.top-oy)/s,v=vpSize();setView(S.z,v.w/2-wx*S.z,v.h/2-wy*S.z)});
+$('bOrg').onclick=()=>organize(curPad().id);
+
+/* barra */
+$('bPad').onclick=()=>openPop('popPad','bPad');$('bNew').onclick=()=>openPop('popNew','bNew');$('bMore').onclick=()=>openPop('popMore','bMore');
+$('bUse').onclick=()=>openPop('popUse','bUse');$('bNeed').onclick=()=>openPop('popNeed','bNeed');
+$('bMem').onclick=()=>openDrawer('memoria');$('bLoop').onclick=()=>openDrawer('lacos');$('notesBtn').onclick=()=>openDrawer('notas');
+$('dX').onclick=closeDrawer;$('iX').onclick=deselect;$('bK').onclick=openPal;
+document.addEventListener('pointerdown',e=>{if(S.pop&&!e.target.closest('.pop,.top'))closePop()});
+
+/* paleta ⌘K */
+let pIdx=0,pItems=[];
+function cmds(){return [
+  ...paddocks.map(p=>({l:`Ir para cercado ${p.name}`,h:'cercado',r:()=>{selectPad(p.id);flyPad(p.id)}})),
+  ...nodes.map(n=>({l:`Ir para ${n.name}`,h:ST[n.st],r:()=>select(n.id,{fly:true})})),
+  ...needs.map(x=>({l:x.t,h:'precisa de você',r:()=>select(x.a,{fly:true})})),
+  {l:'Abrir Memória',h:'gaveta',r:()=>openDrawer('memoria')},{l:'Abrir Laços',h:'gaveta',r:()=>openDrawer('lacos')},{l:'Abrir Rebanhos e Lotes',h:'gaveta',r:()=>openDrawer('rebanhos')},{l:'Abrir Plug-ins',h:'gaveta',r:()=>openDrawer('plugins')},{l:'Abrir Temas',h:'gaveta',r:()=>openDrawer('temas')},{l:'Preferências',h:'⌘,',r:()=>openDrawer('prefs')},
+  {l:'Novo terminal claude no cercado atual',h:'＋',r:()=>addTerminal(curPad().id,'claude',S.sel)},
+  ...Object.entries(PK).map(([k,v])=>({l:`Prender painel ${v[1]}`,h:'＋ painel',r:()=>addPanel(k,S.sel)})),
+  {l:'Organizar cercado atual',h:'grade',r:()=>organize(curPad().id)},{l:'Visão geral',h:'⌘0',r:fitAll},{l:'Chegar perto',h:'⌘1',r:()=>$('zNear').click()},
+  {l:'Precisa de você',h:'lista',r:()=>openPop('popNeed','bNeed')},{l:'Notas de UX',h:'',r:()=>openDrawer('notas')}
+]}
+const norm=s=>s.normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+function renderPal(){const q=norm($('pIn').value);pItems=cmds().filter(c=>norm(c.l+' '+c.h).includes(q)).slice(0,40);pIdx=Math.min(pIdx,Math.max(0,pItems.length-1));
+  $('pL').innerHTML=pItems.map((c,i)=>`<div class="mi" role="option" id="po${i}" aria-selected="${i===pIdx}" data-pi="${i}">${c.l}<span class="r">${c.h}</span></div>`).join('')||'<div class="empty">Nada encontrado</div>';
+  $('pIn').setAttribute('aria-activedescendant','po'+pIdx);const s=$('po'+pIdx);s&&s.scrollIntoView({block:'nearest'})}
+function openPal(){closePop();$('ov').classList.add('on');$('pIn').value='';pIdx=0;renderPal();$('pIn').focus()}
+function closePal(){$('ov').classList.remove('on')}
+function runPal(i){const c=pItems[i];closePal();c&&c.r()}
+$('pIn').oninput=()=>{pIdx=0;renderPal()};
+$('pIn').onkeydown=e=>{if(e.key==='ArrowDown'){e.preventDefault();pIdx=Math.min(pIdx+1,pItems.length-1);renderPal()}else if(e.key==='ArrowUp'){e.preventDefault();pIdx=Math.max(pIdx-1,0);renderPal()}else if(e.key==='Enter'){e.preventDefault();runPal(pIdx)}};
+$('pL').onclick=e=>{const o=e.target.closest('[data-pi]');o&&runPal(+o.dataset.pi)};
+$('ov').onclick=e=>{if(e.target.id==='ov')closePal()};
+
+document.addEventListener('keydown',e=>{
+  const mod=e.metaKey||e.ctrlKey;
+  if(mod&&e.key.toLowerCase()==='k'){e.preventDefault();$('ov').classList.contains('on')?closePal():openPal();return}
+  if(mod&&e.key===','){e.preventDefault();openDrawer('prefs');return}
+  if(mod&&e.key==='0'){e.preventDefault();fitAll();return}
+  if(mod&&e.key==='1'){e.preventDefault();$('zNear').click();return}
+  if(mod&&(e.key==='='||e.key==='+')){e.preventDefault();zoomCenter(1.25);return}
+  if(mod&&e.key==='-'){e.preventDefault();zoomCenter(.8);return}
+  if(e.key==='Escape'){if($('ov').classList.contains('on'))closePal();else if(S.pop)closePop();else if(S.drawer)closeDrawer();else if(S.sel||S.selP)deselect()}
+});
+addEventListener('resize',apply);
+
+build();fitAll();
+const hideHint=()=>$('hint').classList.add('off');setTimeout(hideHint,8000);vp.addEventListener('wheel',hideHint,{once:true});
+</script>
+</body>
+</html>

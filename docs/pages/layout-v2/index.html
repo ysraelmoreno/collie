@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · Novo layout</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:48px 24px 72px}
+h1{font-size:28px;margin:0 0 8px;text-wrap:balance}
+.lede{color:var(--text2);max-width:68ch;margin:0 0 36px}
+.opts{display:flex;flex-direction:column;gap:14px}
+a.opt{display:grid;grid-template-columns:52px 1fr auto;gap:18px;align-items:start;padding:20px 22px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:inherit;text-decoration:none;transition:border-color .18s ease-out,background .18s ease-out}
+a.opt:hover,a.opt:focus-visible{border-color:var(--accent);background:var(--raised);outline:none}
+.letter{width:52px;height:52px;border-radius:12px;background:var(--raised);display:grid;place-items:center;font:600 22px ui-monospace,Menlo,monospace;color:var(--accent)}
+.opt h2{margin:0 0 4px;font-size:18px}
+.opt p{margin:0;color:var(--text2);max-width:70ch}
+.who{margin-top:8px;color:var(--muted);font-size:13px}
+.go{color:var(--accent);white-space:nowrap;align-self:center}
+h3{font-size:16px;margin:44px 0 12px}
+.tbl{width:100%;overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:720px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-weight:500}
+td:first-child{color:var(--text2);width:200px}
+.y{color:var(--accent)}.n{color:var(--warn)}
+.note{color:var(--muted);font-size:13px;margin-top:28px;max-width:70ch}
+@media (max-width:640px){a.opt{grid-template-columns:1fr}.letter{display:none}.go{justify-self:start}}
+@media (prefers-reduced-motion:reduce){a.opt{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Quatro jeitos de reorganizar o Collie</h1>
+<p class="lede">O Trilho atual põe tudo no mesmo canvas: cercados, agentes, painéis, laços e memória disputam o mesmo espaço, e boa parte das funções só aparece pelo ⌘K ou por comando. Cada modelo abaixo parte de uma pergunta diferente sobre como você trabalha. Abra, clique e use o botão “Notas de UX” de cada um para ver onde cada uma das 17 funções foi parar.</p>
+
+<div class="opts">
+  <a class="opt" href="a-conversa.html">
+    <span class="letter">A</span>
+    <div><h2>Conversa</h2>
+      <p>Você fala com um Pastor, como num chat. Agentes convocados viram sub-fios dentro da conversa, o painel que o agente está usando aparece sozinho à direita, e cartões de sandbox chegam inline para aprovar ali mesmo.</p>
+      <p class="who">Para quem delega: descreve o objetivo e acompanha o resultado.</p></div>
+    <span class="go">Abrir →</span>
+  </a>
+  <a class="opt" href="b-estudio.html">
+    <span class="letter">B</span>
+    <div><h2>Estúdio</h2>
+      <p>Um ambiente tipo IDE: terminais e painéis em blocos com abas e divisões, uma barra de atividade com um ícone fixo para cada função e uma gaveta de Atividade com eventos e pedidos pendentes.</p>
+      <p class="who">Para quem põe a mão na massa: vê vários agentes e painéis ao mesmo tempo, organizado.</p></div>
+    <span class="go">Abrir →</span>
+  </a>
+  <a class="opt" href="c-torre.html">
+    <span class="letter">C</span>
+    <div><h2>Torre de controle</h2>
+      <p>A tela inicial mostra tudo que está rodando: “Precisa de você” no topo e um quadro com uma coluna por cercado e um cartão por agente. Clicar num agente entra no modo Foco; Esc volta.</p>
+      <p class="who">Para quem orquestra muitos agentes em vários cercados.</p></div>
+    <span class="go">Abrir →</span>
+  </a>
+  <a class="opt" href="d-canvas.html">
+    <span class="letter">D</span>
+    <div><h2>Canvas organizado</h2>
+      <p>O canvas continua sendo a tela principal, mas cada cercado vira uma moldura nomeada, o zoom afastado mostra cartões de estado e o próximo mostra o terminal real. Painéis ficam presos ao agente que os usa, e o inspetor só aparece com algo selecionado.</p>
+      <p class="who">Para quem gosta do canvas espacial e quer ordem sem perdê-lo.</p></div>
+    <span class="go">Abrir →</span>
+  </a>
+</div>
+
+<h3>Comparação</h3>
+<div class="tbl"><table>
+<thead><tr><th></th><th>A · Conversa</th><th>B · Estúdio</th><th>C · Torre</th><th>D · Canvas</th></tr></thead>
+<tbody>
+<tr><td>Tela inicial</td><td>Conversa com o Pastor</td><td>Área de trabalho em blocos</td><td>Visão geral de todos os agentes</td><td>Canvas com molduras por cercado</td></tr>
+<tr><td>Canvas infinito</td><td>Vista opcional “Mapa”</td><td>Sai; blocos no lugar</td><td>Vista avançada “Mapa”</td><td class="y">Fica, com zoom semântico</td></tr>
+<tr><td>Pedidos de sandbox</td><td>Inline na conversa</td><td>Gaveta Atividade com contador</td><td>Faixa “Precisa de você”</td><td>Botão com contador; voa até o agente</td></tr>
+<tr><td>Achar uma função</td><td>Paleta e menu de ajustes</td><td class="y">Ícone fixo para cada uma</td><td>Barra lateral com 6 seções</td><td>Barra flutuante, gavetas e ⌘K</td></tr>
+<tr><td>Vários agentes ao mesmo tempo</td><td class="n">Um por vez, os outros em sub-fios</td><td class="y">Lado a lado</td><td class="y">Todos no quadro, um em foco</td><td class="y">Todos no espaço, cartões afastados</td></tr>
+<tr><td>Curva de aprendizado</td><td class="y">Menor</td><td>Média (familiar a quem usa IDE)</td><td>Média</td><td class="y">Menor para quem já usa o Collie</td></tr>
+<tr><td>Esforço para implementar</td><td>Alto: conversa nova sobre os terminais</td><td>Médio: tiling substitui o canvas</td><td>Médio: quadro e Foco novos, canvas fica</td><td class="y">Menor: evolui o canvas atual</td></tr>
+</tbody>
+</table></div>
+<p class="note">São protótipos de navegação, não telas finais. Dá para combinar: por exemplo, a faixa “Precisa de você” da C dentro do Estúdio da B.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Remanejamento · Lateral e inspetor</title>
+<style>
+:root{
+  --bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;
+  --text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;
+  --sec:#93A4FF;--danger:#FF8A8A;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --t:180ms;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--sunk);color:var(--text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;min-width:1100px;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+:focus-visible{outline:2px solid var(--sec);outline-offset:2px;border-radius:6px}
+.mono{font-family:var(--mono);font-size:12px}
+.muted{color:var(--muted)}
+.t2{color:var(--text2)}
+
+/* janela */
+.win{position:fixed;inset:0;display:grid;grid-template-rows:40px 1fr;background:var(--bg)}
+.titlebar{display:flex;align-items:center;gap:10px;padding:0 12px;background:var(--side);border-bottom:1px solid var(--border)}
+.lights{display:flex;gap:8px;margin-right:8px}
+.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.lights i:nth-child(1){background:#FF5F57}.lights i:nth-child(2){background:#FEBC2E}.lights i:nth-child(3){background:#28C840}
+.tabs{display:flex;gap:2px}
+.tab{padding:5px 10px;border-radius:6px;color:var(--text2)}
+.tab[aria-selected=true]{background:var(--raised);color:var(--text)}
+.tab kbd{color:var(--muted);margin-left:6px}
+kbd{font-family:var(--mono);font-size:11px}
+.search{flex:0 1 340px;margin-left:auto;display:flex;align-items:center;gap:8px;height:26px;padding:0 10px;border:1px solid var(--border);border-radius:7px;background:var(--sunk);color:var(--muted)}
+.search kbd{margin-left:auto}
+.search:hover{color:var(--text2)}
+.seg{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.seg button{padding:4px 10px;color:var(--text2)}
+.seg button[aria-pressed=true]{background:var(--raised);color:var(--text)}
+.ghost{padding:4px 10px;border:1px solid var(--border);border-radius:7px;color:var(--text2)}
+.ghost:hover{color:var(--text);background:var(--raised)}
+.iconbtn{width:26px;height:26px;display:grid;place-items:center;border-radius:6px;color:var(--text2)}
+.iconbtn:hover{background:var(--raised);color:var(--text)}
+
+.main{display:grid;grid-template-columns:240px 1fr auto;min-height:0}
+
+/* lateral */
+.side{background:var(--side);border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+.side-h{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 6px}
+.side-h h2{margin:0;font-size:12px;font-weight:600;color:var(--text2)}
+.new{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;color:var(--accent);font-weight:600}
+.new:hover{background:var(--raised)}
+.plist{flex:1;overflow:auto;padding:2px 6px 8px}
+.pd{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border-radius:7px;text-align:left;color:var(--text2)}
+.pd:hover{background:var(--raised);color:var(--text)}
+.pd[aria-current=true]{color:var(--text);background:var(--surface)}
+.pd .chev{width:10px;color:var(--muted);transition:transform var(--t) var(--ease)}
+.pd[aria-expanded=true] .chev{transform:rotate(90deg)}
+.pd .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pd .ct{color:var(--muted);font-size:12px}
+.need{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--warn);color:var(--onacc);font-size:11px;font-weight:700;display:grid;place-items:center}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted)}
+.dot.work{background:var(--accent)}
+.dot.wait{background:var(--warn)}
+.dot.done{background:var(--sec)}
+.dot.idle{background:transparent;border:1.5px solid var(--muted)}
+@media (prefers-reduced-motion:no-preference){.dot.work{animation:pulse 1.6s ease-out infinite}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(110,231,183,.5)}100%{box-shadow:0 0 0 6px rgba(110,231,183,0)}}
+.kids{margin:2px 0 8px 18px;padding-left:8px;border-left:1px solid var(--border)}
+.branch{padding:2px 8px 6px;color:var(--muted);font-size:12px;display:flex;gap:6px;align-items:center}
+.branch .mono{font-size:11px;color:var(--text2);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.branch>span:not(.mono){white-space:nowrap}
+.ag{display:flex;align-items:center;gap:8px;width:100%;padding:5px 8px;border-radius:6px;text-align:left;color:var(--text2)}
+.ag:hover{background:var(--raised);color:var(--text)}
+.ag[aria-pressed=true]{background:var(--raised);color:var(--text)}
+.ag .nm{flex:1}
+.ag .st{font-size:12px;color:var(--muted)}
+.ag .st.wait{color:var(--warn)}
+.kid-empty{padding:4px 8px;color:var(--muted);font-size:12px}
+.kid-label{padding:6px 8px 2px;color:var(--muted);font-size:12px}
+.side-f{border-top:1px solid var(--border);padding:8px 10px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.usage{flex:1;display:flex;flex-direction:column;gap:3px}
+.bar{height:4px;border-radius:2px;background:var(--raised);overflow:hidden}
+.bar b{display:block;height:100%;width:65%;background:var(--sec)}
+
+/* canvas */
+.canvas{position:relative;overflow:auto;background:var(--bg);background-image:radial-gradient(var(--border) 1px,transparent 1px);background-size:22px 22px}
+.canvas-tools{position:sticky;top:10px;left:0;z-index:20;display:flex;justify-content:flex-end;gap:6px;padding:0 12px;height:0}
+.canvas-tools .ghost{background:var(--side)}
+.world{position:absolute;left:0;top:0;transform-origin:0 0}
+.sizer{pointer-events:none}
+svg.leash{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+svg.leash path{fill:none;stroke:var(--border);stroke-width:2}
+svg.leash path.hot{stroke:var(--sec)}
+.node{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;transition:box-shadow var(--t) var(--ease),border-color var(--t) var(--ease)}
+.node.sel{border-color:var(--sec);box-shadow:0 0 0 3px rgba(147,164,255,.18)}
+.nh{display:flex;align-items:center;gap:8px;height:34px;padding:0 8px 0 12px;border-bottom:1px solid var(--border);background:var(--raised);cursor:pointer}
+.nh .nm{font-weight:600}
+.nh .st{color:var(--muted);font-size:12px}
+.nh .st.wait{color:var(--warn)}
+.nh .more{margin-left:auto;opacity:0;transition:opacity var(--t) var(--ease)}
+.node:hover .more,.node.sel .more,.nh .more:focus-visible{opacity:1}
+.nb{flex:1;padding:10px 12px;font-family:var(--mono);font-size:12px;color:var(--text2);line-height:1.6;white-space:pre-wrap;overflow:hidden}
+.nb .p{color:var(--accent)}
+.nb .w{color:var(--warn)}
+.ask{margin:0 10px 10px;padding:8px 10px;border:1px solid var(--warn);border-radius:8px;background:rgba(255,184,107,.08);display:flex;align-items:center;gap:8px;font-size:12px}
+.ask span{flex:1;color:var(--text)}
+.panelnode .nh{cursor:default}
+.prev{flex:1;margin:10px;border-radius:6px;background:var(--sunk);display:grid;place-items:center;color:var(--muted)}
+.prev .mock{width:70%;display:grid;gap:8px}
+.prev .mock i{display:block;height:10px;border-radius:3px;background:var(--raised)}
+.prev .mock i:nth-child(1){width:45%;height:16px;background:var(--border)}
+
+/* laço */
+.pill{position:absolute;z-index:5;display:flex;align-items:center;gap:8px;height:28px;padding:0 12px 0 10px;border:1px solid var(--border);border-left:0;border-radius:0 14px 14px 0;background:var(--raised);color:var(--text);font-size:12px;white-space:nowrap}
+.pill:hover{background:var(--surface);border-color:var(--sec)}
+.pill .sp{width:10px;height:10px;border-radius:50%;border:2px solid var(--accent);border-right-color:transparent}
+@media (prefers-reduced-motion:no-preference){.pill .sp,.spin{animation:spin 1s linear infinite}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loop{position:absolute;z-index:6;width:270px;background:var(--surface);border:1px solid var(--sec);border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.35);opacity:0;transform:translateX(-8px);pointer-events:none;transition:opacity var(--t) var(--ease),transform var(--t) var(--ease)}
+.loop.open{opacity:1;transform:none;pointer-events:auto}
+.loop-h{display:flex;align-items:center;gap:8px;padding:10px 10px 6px 12px}
+.loop-h b{flex:1}
+.loop-sum{padding:0 12px 8px;color:var(--text2);font-size:12px}
+.tasks{list-style:none;margin:0;padding:0 6px 6px}
+.tasks li{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:6px;font-size:12px}
+.tasks li.now{background:var(--raised);color:var(--text)}
+.tasks li .ic{width:14px;text-align:center}
+.tasks .ok{color:var(--accent)}
+.tasks .todo{color:var(--muted)}
+.check{margin:0 12px 10px;padding:8px 10px;border-radius:8px;background:var(--sunk);font-family:var(--mono);font-size:11.5px;color:var(--text2)}
+.check .spin{display:inline-block;width:9px;height:9px;border-radius:50%;border:2px solid var(--accent);border-right-color:transparent;vertical-align:-1px;margin-right:6px}
+.acts{display:flex;gap:6px;padding:0 12px 12px}
+.btn{padding:5px 10px;border-radius:7px;border:1px solid var(--border);color:var(--text)}
+.btn:hover{background:var(--raised)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}
+.btn.pri:hover{filter:brightness(1.08)}
+.btn.dng{color:var(--danger)}
+.btn.sm{padding:3px 8px;font-size:12px}
+
+/* inspetor */
+.insp{width:310px;background:var(--side);border-left:1px solid var(--border);display:flex;flex-direction:column;min-height:0;transition:width var(--t) var(--ease)}
+.insp.closed{width:36px}
+.insp.closed .ins-body,.insp.closed .ins-title{display:none}
+.ins-h{display:flex;align-items:center;gap:8px;height:42px;padding:0 6px 0 14px;border-bottom:1px solid var(--border)}
+.insp.closed .ins-h{padding:0 5px;justify-content:center}
+.ins-title{flex:1;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ins-body{flex:1;overflow:auto;padding:4px 0 20px}
+.sec{padding:12px 14px;border-bottom:1px solid var(--border)}
+.sec:last-child{border-bottom:0}
+.sec h3{margin:0 0 8px;font-size:12px;font-weight:600;color:var(--text2)}
+.kv{display:grid;grid-template-columns:84px 1fr;gap:5px 10px;font-size:12px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;color:var(--text);min-width:0;overflow-wrap:anywhere}
+.card{padding:10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);margin-bottom:8px}
+.card .who{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);margin-bottom:4px}
+.card p{margin:0 0 8px}
+.card .path{font-family:var(--mono);font-size:11.5px;color:var(--text2);overflow-wrap:anywhere;margin-bottom:8px}
+.card .row{display:flex;gap:6px}
+.linkbtn{color:var(--sec)}
+.linkbtn:hover{text-decoration:underline}
+.mem{font-size:12px;color:var(--text2);padding:4px 0}
+.mem b{color:var(--text);font-weight:500}
+.chiprow{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:3px 8px;border-radius:6px;background:var(--raised);font-size:12px;color:var(--text2)}
+.empty{color:var(--muted);font-size:12px}
+.hello{padding:16px 14px}
+.hello h3{margin:0 0 6px;font-size:14px}
+.steps{margin:10px 0 0;padding-left:18px;color:var(--text2)}
+.steps li{margin-bottom:6px}
+
+/* primeiro uso */
+.first{position:absolute;inset:0;display:grid;place-items:center;padding:24px}
+.first-card{width:440px;padding:28px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.first-card h1{margin:0 0 8px;font-size:20px}
+.first-card p{margin:0 0 12px;color:var(--text2)}
+.first-card .row{display:flex;gap:8px;margin-top:18px}
+.first-card .btn.pri{padding:8px 16px;font-size:14px}
+.first-art{display:flex;gap:10px;align-items:center;margin:16px 0 4px;color:var(--muted);font-size:12px}
+.first-art .box{flex:1;border:1px dashed var(--border);border-radius:8px;padding:8px;text-align:center}
+.empty-pd{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);text-align:center}
+
+/* popovers */
+.menu{position:fixed;z-index:60;min-width:240px;padding:6px;background:var(--raised);border:1px solid var(--border);border-radius:10px;box-shadow:0 14px 40px rgba(0,0,0,.45)}
+.menu[hidden]{display:none}
+.mi{display:flex;flex-direction:column;width:100%;padding:6px 10px;border-radius:6px;text-align:left}
+.mi:hover,.mi:focus-visible{background:var(--surface)}
+.mi small{color:var(--muted);font-size:11.5px}
+.msep{height:1px;background:var(--border);margin:5px 4px}
+
+.scrim{position:fixed;inset:0;z-index:70;background:rgba(5,8,18,.55);display:grid;place-items:start center;padding-top:90px}
+.scrim[hidden]{display:none}
+.pal{width:560px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.pal input{width:100%;height:46px;padding:0 16px;border:0;border-bottom:1px solid var(--border);background:transparent;color:var(--text);font:inherit;font-size:15px}
+.pal input:focus{outline:none}
+.pal ul{list-style:none;margin:0;padding:6px;max-height:360px;overflow:auto}
+.pal .grp{padding:8px 10px 4px;color:var(--muted);font-size:12px}
+.pal .it{display:flex;justify-content:space-between;gap:10px;padding:7px 10px;border-radius:7px;cursor:pointer}
+.pal .it small{color:var(--muted)}
+.pal .it[aria-selected=true]{background:var(--raised)}
+
+.drawer{position:fixed;z-index:80;top:0;right:0;bottom:0;width:min(720px,92vw);background:var(--side);border-left:1px solid var(--border);box-shadow:-20px 0 60px rgba(0,0,0,.4);overflow:auto;padding:22px 26px 40px;transform:translateX(100%);transition:transform 220ms var(--ease);visibility:hidden}
+.drawer.open{transform:none;visibility:visible}
+.drawer h2{margin:0 0 4px;font-size:18px}
+.drawer h3{margin:22px 0 8px;font-size:14px}
+.drawer p{color:var(--text2);margin:0 0 8px}
+.drawer table{width:100%;border-collapse:collapse;font-size:12.5px}
+.drawer th,.drawer td{text-align:left;vertical-align:top;padding:6px 8px;border-bottom:1px solid var(--border)}
+.drawer th{color:var(--muted);font-weight:500}
+.drawer td:first-child{color:var(--text);width:42%}
+.drawer td{color:var(--text2)}
+.drawer ul{color:var(--text2);padding-left:18px}
+
+.toast{position:fixed;z-index:90;left:50%;bottom:22px;transform:translate(-50%,10px);padding:8px 14px;border-radius:9px;background:var(--raised);border:1px solid var(--border);opacity:0;pointer-events:none;transition:opacity var(--t) var(--ease),transform var(--t) var(--ease)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+@media (prefers-reduced-motion:reduce){*{transition-duration:1ms!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="win">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true">Canvas</button>
+      <button class="tab" role="tab" aria-selected="false" data-act="prefs">Preferências<kbd>⌘,</kbd></button>
+    </div>
+    <button class="search" id="openPal" aria-label="Abrir paleta de comandos">
+      <span aria-hidden="true">⌕</span><span>Chamar agente, abrir painel, ir para cercado…</span><kbd>⌘K</kbd>
+    </button>
+    <div class="seg" role="group" aria-label="Estado de demonstração">
+      <button id="mFirst" aria-pressed="false">Primeiro uso</button>
+      <button id="mUse" aria-pressed="true">Em uso</button>
+    </div>
+    <button class="ghost" id="openNotes">Notas de UX</button>
+  </header>
+
+  <div class="main">
+    <nav class="side" aria-label="Cercados">
+      <div class="side-h">
+        <h2>Cercados</h2>
+        <button class="new" id="newBtn" aria-haspopup="menu" aria-expanded="false">＋ Novo</button>
+      </div>
+      <div class="plist" id="plist"></div>
+      <div class="side-f">
+        <span class="dot work" style="animation:none" title="Conectado ao serviço do Collie" aria-label="Conectado"></span>
+        <div class="usage" title="Uso do plano nesta janela de 5 horas">
+          <span>Uso do plano · 65%</span>
+          <div class="bar"><b></b></div>
+        </div>
+        <button class="iconbtn" data-act="prefs" aria-label="Preferências">⚙</button>
+      </div>
+    </nav>
+
+    <section class="canvas" id="canvas" aria-label="Canvas">
+      <div class="canvas-tools">
+        <button class="ghost" id="fitBtn">Ajustar à tela</button>
+      </div>
+      <div class="sizer" id="sizer"></div>
+      <div class="world" id="world"></div>
+    </section>
+
+    <aside class="insp" id="insp" aria-label="Inspetor">
+      <div class="ins-h">
+        <span class="ins-title" id="insTitle">Precisa de você</span>
+        <button class="iconbtn" id="insToggle" aria-expanded="true" aria-label="Recolher inspetor">⇥</button>
+      </div>
+      <div class="ins-body" id="insBody"></div>
+    </aside>
+  </div>
+</div>
+
+<div class="menu" id="newMenu" role="menu" hidden>
+  <button class="mi" role="menuitem" data-act="newAgent">Novo agente<small>Claude ou Codex num terminal deste cercado</small></button>
+  <button class="mi" role="menuitem" data-act="newPaddock">Novo cercado<small>Outra cópia isolada do repositório, com ramo próprio</small></button>
+  <div class="msep"></div>
+  <button class="mi" role="menuitem" data-act="herd">Aplicar rebanho…<small>Um time pronto de terminais e painéis, de uma vez</small></button>
+  <button class="mi" role="menuitem" data-act="lot">Novo lote…<small>Agrupa terminais do mesmo esforço</small></button>
+  <button class="mi" role="menuitem" data-act="panel">Abrir painel…<small>Prévia, Navegador, Dispositivo, Rede, Design…</small></button>
+</div>
+
+<div class="menu" id="pdMenu" role="menu" hidden>
+  <button class="mi" role="menuitem" data-act="factory">Ligar fábrica<small>Ao fim do laço, o resultado entra sozinho no main</small></button>
+  <button class="mi" role="menuitem" data-act="rename">Renomear cercado</button>
+  <button class="mi" role="menuitem" data-act="land">Integrar no main…</button>
+</div>
+
+<div class="menu" id="termMenu" role="menu" hidden>
+  <button class="mi" role="menuitem" data-act="details">Ver detalhes no inspetor</button>
+  <button class="mi" role="menuitem" data-act="model">Trocar modelo…</button>
+  <button class="mi" role="menuitem" data-act="leash">Ligar a um painel…</button>
+  <div class="msep"></div>
+  <button class="mi" role="menuitem" data-act="close" style="color:var(--danger)">Fechar terminal</button>
+</div>
+
+<div class="scrim" id="palScrim" hidden>
+  <div class="pal" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
+    <input id="palIn" placeholder="Chamar agente, abrir painel, ir para cercado…" aria-label="Buscar comando" autocomplete="off">
+    <ul id="palList" role="listbox"></ul>
+  </div>
+</div>
+
+<aside class="drawer" id="notes" aria-label="Notas de UX" tabindex="-1">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <h2>Notas de UX · Opção 3, Lateral e inspetor</h2>
+    <button class="iconbtn" id="closeNotes" aria-label="Fechar notas">✕</button>
+  </div>
+  <p><b style="color:var(--text)">Ideia:</b> o canvas mostra só quem está trabalhando; tudo o que se sabe sobre um agente mora num inspetor à direita, que aparece quando você o seleciona e, sem seleção, mostra o que precisa de você.</p>
+
+  <h3>O que saiu da tela e para onde foi</h3>
+  <table>
+    <thead><tr><th>Item do print</th><th>Agora</th></tr></thead>
+    <tbody>
+      <tr><td>Trilho de letras soltas (S, A, B, B, C…) com bolinhas</td><td>Lista de cercados com nome inteiro, bolinha de estado, número de agentes e contador laranja de “precisa de você”. O cercado atual abre e mostra seus agentes e painéis.</td></tr>
+      <tr><td>Ícone info no pé do trilho</td><td>Saiu. Ajuda e tour ficam em ⌘K (“Como funciona”) e no estado Primeiro uso.</td></tr>
+      <tr><td>“65%” com barra</td><td>Fica no pé da lateral com rótulo: “Uso do plano · 65%”. Uso por agente aparece no inspetor.</td></tr>
+      <tr><td>Engrenagem</td><td>Fica no pé da lateral, ao lado do uso. Também na aba Preferências ⌘,.</td></tr>
+      <tr><td>Painel de contexto de 248 pt</td><td>Absorvido pela lateral única: não há mais segunda coluna.</td></tr>
+      <tr><td>Nome do cercado + ramo truncados, ⋯</td><td>Nome inteiro na lista; ramo em uma linha abaixo, só no cercado aberto; ⋯ do cercado fica na linha do ramo. Ramo também no inspetor do agente.</td></tr>
+      <tr><td>Botão “Novo terminal” + botão painel</td><td>“＋ Novo” no topo da lateral: Novo agente, Novo cercado, Aplicar rebanho, Novo lote, Abrir painel.</td></tr>
+      <tr><td>AGENTES · 2 (árvore com chips “claude”)</td><td>Agentes aninhados no cercado aberto, com nome e estado em palavras. O ferramental (claude/codex) foi para o inspetor.</td></tr>
+      <tr><td>PAINÉIS · 2 (chips “canvas”)</td><td>Painéis aninhados abaixo dos agentes do cercado; no inspetor, “Painéis ligados” daquele agente.</td></tr>
+      <tr><td>REBANHOS com 3 itens “de fábrica” + “Aplicar…”</td><td>＋ Novo › Aplicar rebanho… e ⌘K.</td></tr>
+      <tr><td>LOTES com cursor-test + “Novo lote…”</td><td>＋ Novo › Novo lote… e ⌘K. Lote vazio não ocupa mais espaço.</td></tr>
+      <tr><td>FÁBRICA (toggle sem explicação)</td><td>Menu ⋯ do cercado › “Ligar fábrica”, com a frase “ao fim do laço, o resultado entra sozinho no main”. Também em ⌘K.</td></tr>
+      <tr><td>LAÇOS + “Ver tudo”</td><td>Pílula colada no terminal que roda o laço, painel flutuante ao clicar, e seção “Laço” no inspetor. Histórico completo em ⌘K › Trabalho.</td></tr>
+      <tr><td>Caixa-alta espaçada em cada seção</td><td>Títulos em caixa normal, pouco peso.</td></tr>
+      <tr><td>Abas Canvas / Preferências ⌘,</td><td>Mantidas.</td></tr>
+      <tr><td>Busca ⌘K</td><td>Mantida, centro do acesso a tudo que saiu da vista.</td></tr>
+      <tr><td>“86%” (zoom)</td><td>Saiu do topo; o zoom segue o gesto de pinça e ⌘+ / ⌘−.</td></tr>
+      <tr><td>“Ajustar à tela”</td><td>Flutua no canto do canvas.</td></tr>
+      <tr><td>Cabeçalho do terminal: tag Pastor, “pastoreando 1”, claude, claude-opus-5-5, “trabalhando”, 3 ícones</td><td>Só nome + estado. Papel, ferramenta, modelo e quem ele pastoreia vão para o inspetor; os 3 ícones viram um ⋯ que aparece no hover.</td></tr>
+      <tr><td>Coleira para Prévia meio fora da tela</td><td>Guia mantida; o painel fica perto e “Ajustar à tela” enquadra tudo. A guia do agente selecionado acende.</td></tr>
+      <tr><td>Minimapa no canto</td><td>Saiu da vista fixa: com nomes na lateral, clicar no agente já leva até ele. Volta por ⌘K se fizer falta.</td></tr>
+      <tr><td>Barra de status com contadores internos</td><td>Removida. “Conectado” virou a bolinha no pé da lateral; memória RAM e contadores por painel não aparecem.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Onde mora cada uma das 17 funções</h3>
+  <table>
+    <thead><tr><th>Função</th><th>Onde</th></tr></thead>
+    <tbody>
+      <tr><td>Canvas e terminais</td><td>Centro da janela; ＋ Novo › Novo agente.</td></tr>
+      <tr><td>Cercados</td><td>Lateral esquerda; ＋ Novo › Novo cercado.</td></tr>
+      <tr><td>Pastor e delegação</td><td>Agentes aninhados na lateral, guias no canvas; inspetor › “Pastoreia”.</td></tr>
+      <tr><td>Laços</td><td>Pílula no terminal → painel flutuante; inspetor › Laço.</td></tr>
+      <tr><td>Trabalho</td><td>Inspetor › Laço › “Abrir Trabalho”; ⌘K.</td></tr>
+      <tr><td>Paleta de comandos</td><td>⌘K no topo.</td></tr>
+      <tr><td>Navegador</td><td>＋ Novo › Abrir painel; ⌘K; ⋯ do terminal › Ligar a um painel.</td></tr>
+      <tr><td>Dispositivo</td><td>Idem Navegador.</td></tr>
+      <tr><td>Rede</td><td>Idem Navegador.</td></tr>
+      <tr><td>Design e Design Systems</td><td>Idem Navegador.</td></tr>
+      <tr><td>Prévia e Artifacts</td><td>Painel no canvas e na lateral; inspetor › Painéis ligados.</td></tr>
+      <tr><td>Diagrama</td><td>Idem Navegador.</td></tr>
+      <tr><td>Memória</td><td>Inspetor › Memórias recentes (do agente); ⌘K › Memória para o painel inteiro.</td></tr>
+      <tr><td>Sandbox e cartões</td><td>Cartão colado no terminal que pediu, inspetor “Precisa de você” e contador na lateral.</td></tr>
+      <tr><td>Rebanhos e Lotes</td><td>＋ Novo; ⌘K.</td></tr>
+      <tr><td>Plug-ins</td><td>Preferências › Plug-ins; ⌘K.</td></tr>
+      <tr><td>Temas</td><td>Preferências › Aparência; ⌘K.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>O que muda para quem já usa</h3>
+  <ul>
+    <li>Uma coluna a menos: o painel de contexto deixa de existir; a lista de cercados faz o papel dos dois.</li>
+    <li>Modelo, ferramenta e papel saem do terminal; quem procura isso clica no terminal e lê no inspetor.</li>
+    <li>Rebanhos, Lotes e Fábrica mudam de lugar: ＋ Novo, ⋯ do cercado e ⌘K.</li>
+    <li>Laços saem da lista lateral e passam a viver junto do terminal que os roda.</li>
+    <li>Aprovar sandbox fica a um clique de três lugares (terminal, inspetor, contador do cercado), sem abrir outro painel.</li>
+  </ul>
+</aside>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const ST = {work:'trabalhando', wait:'esperando você', done:'concluído', idle:'parado'};
+
+const LOOP = {
+  name:'idiomas', n:3, total:7, attempt:2, maxAttempt:3,
+  tasks:[
+    ['ok','Extrair textos da barra de status'],
+    ['ok','Traduzir Preferências'],
+    ['now','Traduzir mensagens de erro do CLI'],
+    ['todo','Paleta de comandos em inglês'],
+    ['todo','Tour de funções em inglês'],
+    ['todo','Notificações do sistema'],
+    ['todo','Revisar textos cortados'],
+  ],
+  check:'swift test --filter L10nCLITests',
+};
+
+const PADDOCKS = [
+  {id:'cgw', name:'collie-general-working', branch:'collie/collie-general-working', base:'main', agents:[
+    {id:'pastor', name:'Pastor', role:'Pastor', tool:'claude', model:'claude-opus-5-5', st:'work', loop:true, x:400, y:40, w:400, h:270,
+     herds:['l10n-cli','revisor'], panels:['Prévia'], usage:'41 mil tokens · 12 min',
+     mem:[['decisão','Comportamento nunca lê texto traduzido'],['armadilha','Testes do daemon usam o idioma do processo']],
+     out:'<span class="p">›</span> laço idiomas · tarefa 3 de 7\n  editando Sources/CollieCLI/Errors.swift\n  12 mensagens movidas para tr()\n<span class="p">›</span> chamou l10n-cli para revisar o CLI\n<span class="p">›</span> rodando o check…'},
+    {id:'l10n-cli', name:'l10n-cli', role:'agente', tool:'codex', model:'gpt-5-codex', st:'wait', x:0, y:0, w:330, h:180,
+     herds:[], panels:[], usage:'9 mil tokens · 4 min', by:'Pastor',
+     mem:[['decisão','Prefixo “fora do projeto” é etiqueta estável']],
+     out:'<span class="p">›</span> gravar preferência de idioma\n  precisa de acesso fora do sandbox\n<span class="w">  aguardando aprovação…</span>'},
+    {id:'revisor', name:'revisor', role:'agente', tool:'claude', model:'claude-sonnet-5-5', st:'done', x:0, y:280, w:330, h:170,
+     herds:[], panels:[], usage:'15 mil tokens · 6 min', by:'Pastor',
+     mem:[['lição','Trechos de erro casam por etiqueta, não por texto']],
+     out:'<span class="p">›</span> revisão concluída\n  3 achados, 3 corrigidos\n  nada pendente'},
+  ], panels:[{name:'Prévia', x:400, y:350, w:400, h:200, of:'pastor'}]},
+  {id:'idiomas', name:'idiomas', branch:'collie/idiomas', base:'main', agents:[
+    {id:'trad', name:'tradutor', role:'agente', tool:'claude', model:'claude-sonnet-5-5', st:'work', x:0, y:0, w:400, h:220, herds:[], panels:[], usage:'22 mil tokens', mem:[], out:'<span class="p">›</span> traduzindo FeatureTour.swift'}], panels:[]},
+  {id:'landing', name:'landing', branch:'collie/landing', base:'main', agents:[
+    {id:'site', name:'site', role:'agente', tool:'claude', model:'claude-opus-5-5', st:'done', x:0, y:0, w:400, h:200, herds:[], panels:[], usage:'30 mil tokens', mem:[], out:'<span class="p">›</span> página publicada na prévia'}], panels:[]},
+  {id:'pasto', name:'Pasto', branch:'main', base:null, agents:[], panels:[]},
+  {id:'cursor', name:'cursor-spike', branch:'collie/cursor-spike', base:'main', agents:[{id:'c1', name:'cursor', role:'agente', tool:'cursor', model:'—', st:'idle', x:0,y:0,w:400,h:200,herds:[],panels:[],usage:'—',mem:[],out:'precisa de rebase'}], panels:[]},
+  {id:'figcraft', name:'figcraft-download', branch:'collie/figcraft-download', base:'main', agents:[], panels:[]},
+  {id:'mem2', name:'memoria-fase-2', branch:'collie/memoria-fase-2', base:'main', agents:[], panels:[]},
+  {id:'temas', name:'editor-de-temas', branch:'collie/editor-de-temas', base:'main', agents:[], panels:[]},
+  {id:'rede', name:'rede-respostas', branch:'collie/rede-respostas', base:'main', agents:[], panels:[]},
+  {id:'dmg', name:'dmg-assinado', branch:'collie/dmg-assinado', base:'main', agents:[], panels:[]},
+];
+
+const S = {
+  first:false, pd:'cgw', sel:null, inspOpen:true, loopOpen:false, loopStopped:false,
+  req:[{id:'r1', pd:'cgw', agent:'l10n-cli', what:'quer gravar', path:'~/Library/Application Support/Collie/preferences.json', why:'Salvar o idioma escolhido entre sessões.'}],
+};
+
+const pd = () => PADDOCKS.find(p => p.id === S.pd);
+const agents = () => S.first && S.pd === 'cgw' ? [] : pd().agents;
+const reqsFor = pid => S.req.filter(r => r.pd === pid);
+const toast = (m) => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200); };
+
+/* ---------- lateral ---------- */
+function renderSide(){
+  const html = PADDOCKS.map(p => {
+    const cur = p.id === S.pd;
+    const ags = (S.first && p.id === 'cgw') ? [] : p.agents;
+    const need = S.first ? 0 : reqsFor(p.id).length;
+    const top = ags.some(a=>a.st==='wait') ? 'wait' : ags.some(a=>a.st==='work') ? 'work' : ags.length ? 'done' : 'idle';
+    let h = `<div class="pdrow"><button class="pd" data-pd="${p.id}" aria-current="${cur}" aria-expanded="${cur}">
+      <span class="chev" aria-hidden="true">›</span><span class="dot ${top}" aria-hidden="true"></span>
+      <span class="nm">${esc(p.name)}</span>
+      ${need ? `<span class="need" aria-label="${need} precisa de você">${need}</span>` : `<span class="ct">${ags.length || ''}</span>`}
+    </button></div>`;
+    if (cur){
+      h += `<div class="kids">
+        <div class="branch"><span aria-hidden="true">⎇</span><span class="mono" title="${esc(p.branch)}">${esc(p.branch)}</span>${p.base ? `<span>← ${p.base}</span>` : ''}
+          <button class="iconbtn" style="margin-left:auto;width:22px;height:22px" data-pdmenu aria-label="Opções do cercado">⋯</button></div>`;
+      if (!ags.length) h += `<div class="kid-empty">Nenhum agente ainda</div>`;
+      ags.forEach(a => {
+        h += `<button class="ag" data-ag="${a.id}" aria-pressed="${S.sel===a.id}">
+          <span class="dot ${a.st}" aria-hidden="true"></span><span class="nm">${esc(a.name)}</span>
+          <span class="st ${a.st==='wait'?'wait':''}">${ST[a.st]}</span></button>`;
+      });
+      if (ags.length && p.panels.length){
+        h += `<div class="kid-label">Painéis</div>` + p.panels.map(x => `<button class="ag" data-panel="${esc(x.name)}"><span aria-hidden="true" class="muted">▢</span><span class="nm">${esc(x.name)}</span></button>`).join('');
+      }
+      h += `</div>`;
+    }
+    return h;
+  }).join('');
+  $('#plist').innerHTML = html;
+}
+
+/* ---------- canvas ---------- */
+function renderCanvas(){
+  const w = $('#world'), p = pd(), ags = agents();
+  $('#canvas').querySelectorAll('.first,.empty-pd').forEach(n => n.remove());
+  if (S.first && S.pd === 'cgw'){
+    w.innerHTML = ''; $('#sizer').style.cssText = '';
+    w.style.transform = '';
+    const f = document.createElement('div'); f.className = 'first';
+    f.innerHTML = `<div class="first-card">
+      <h1>Comece com um agente</h1>
+      <p>Um agente é o Claude ou o Codex trabalhando num terminal aqui no canvas. Você escreve o que quer, ele lê e edita o código, e você acompanha tudo.</p>
+      <p>Ele trabalha num <b style="color:var(--text)">cercado</b>, uma cópia isolada do repositório com ramo próprio. Quando a tarefa é grande, um agente <b style="color:var(--text)">Pastor</b> chama outros e coordena.</p>
+      <div class="first-art" aria-hidden="true"><div class="box">você pede</div>→<div class="box">o agente trabalha</div>→<div class="box">você aprova</div></div>
+      <div class="row"><button class="btn pri" data-act="startFirst">Novo agente</button><button class="btn" data-act="tour">Como funciona</button></div>
+    </div>`;
+    $('#canvas').appendChild(f);
+    return;
+  }
+  if (!ags.length){
+    w.innerHTML = ''; $('#sizer').style.cssText='';
+    const e = document.createElement('div'); e.className = 'empty-pd';
+    e.innerHTML = `<div><p>Nenhum agente em <b style="color:var(--text)">${esc(p.name)}</b>.</p><button class="btn pri" data-act="newAgent">Novo agente</button></div>`;
+    $('#canvas').appendChild(e);
+    return;
+  }
+  let h = '';
+  // guias
+  const byId = Object.fromEntries(ags.map(a=>[a.name,a]));
+  const lines = [];
+  ags.forEach(a => (a.herds||[]).forEach(n => { const b = byId[n]; if (b) lines.push({a, b, kind:'ag'}); }));
+  p.panels.forEach(x => { const a = ags.find(g=>g.id===x.of); if (a) lines.push({a, b:x, kind:'pn'}); });
+  h += `<svg class="leash" width="1" height="1">` + lines.map(({a,b,kind}) => {
+    const hot = S.sel && (S.sel===a.id || S.sel===b.id) ? 'hot' : '';
+    if (kind==='pn'){ const x1=a.x+a.w/2, y1=a.y+a.h, x2=b.x+b.w/2, y2=b.y; return `<path class="${hot}" d="M${x1} ${y1} C${x1} ${y1+20} ${x2} ${y2-20} ${x2} ${y2}"/>`; }
+    const x1=a.x, y1=a.y+60, x2=b.x+b.w, y2=b.y+b.h/2;
+    return `<path class="${hot}" d="M${x1} ${y1} C${x1-40} ${y1} ${x2+40} ${y2} ${x2} ${y2}"/>`;
+  }).join('') + `</svg>`;
+  ags.forEach(a => {
+    const r = reqsFor(S.pd).find(q => q.agent === a.name);
+    h += `<div class="node ${S.sel===a.id?'sel':''}" style="left:${a.x}px;top:${a.y}px;width:${a.w}px;height:${a.h + (r?52:0)}px" data-node="${a.id}">
+      <div class="nh" data-ag="${a.id}" tabindex="0" role="button" aria-label="Selecionar ${esc(a.name)}">
+        <span class="dot ${a.st}" aria-hidden="true"></span><span class="nm">${esc(a.name)}</span><span class="st ${a.st==='wait'?'wait':''}">${ST[a.st]}</span>
+        <button class="iconbtn more" data-termmenu="${a.id}" aria-label="Mais opções de ${esc(a.name)}">⋯</button>
+      </div>
+      <div class="nb">${a.out}</div>
+      ${r ? `<div class="ask"><span>Pede acesso fora do sandbox</span><button class="btn sm" data-ag="${a.id}">Ver</button><button class="btn sm pri" data-approve="${r.id}">Aprovar</button></div>` : ''}
+    </div>`;
+    if (a.loop && !S.loopStopped){
+      const px = a.x + a.w, py = a.y + 46;
+      h += `<button class="pill" id="pill" style="left:${px}px;top:${py}px;${S.loopOpen?'visibility:hidden':''}" aria-expanded="${S.loopOpen}" aria-controls="loopPanel">
+        <span class="sp" aria-hidden="true"></span>laço ${LOOP.n}/${LOOP.total} · check rodando</button>`;
+      h += `<div class="loop ${S.loopOpen?'open':''}" id="loopPanel" style="left:${px+12}px;top:${a.y}px" role="region" aria-label="Laço ${LOOP.name}">${loopHTML(true)}</div>`;
+    }
+  });
+  p.panels.forEach(x => {
+    h += `<div class="node panelnode" style="left:${x.x}px;top:${x.y}px;width:${x.w}px;height:${x.h}px">
+      <div class="nh"><span aria-hidden="true" class="muted">▢</span><span class="nm">${esc(x.name)}</span><span class="st">ligado ao Pastor</span></div>
+      <div class="prev"><div class="mock"><i></i><i></i><i></i><i style="width:60%"></i></div></div></div>`;
+  });
+  w.innerHTML = h;
+  fit(false);
+}
+
+function loopHTML(floating){
+  const L = LOOP;
+  return `${floating ? `<div class="loop-h"><b>Laço ${L.name}</b><span class="muted">${L.n}/${L.total}</span><button class="iconbtn" data-act="loopClose" aria-label="Recolher laço">–</button></div>` : ''}
+    <div class="loop-sum">Tarefa ${L.n} · tentativa ${L.attempt} de ${L.maxAttempt}. Um agente novo por tentativa; só o check decide se passou.</div>
+    <ul class="tasks">${L.tasks.map(([s,t]) => `<li class="${s==='now'?'now':''}"><span class="ic ${s==='ok'?'ok':s==='todo'?'todo':''}" aria-hidden="true">${s==='ok'?'✓':s==='now'?'◐':'○'}</span><span class="${s==='todo'?'muted':''}">${esc(t)}</span><span class="sr" style="position:absolute;left:-9999px">${s==='ok'?'passou':s==='now'?'em andamento':'na fila'}</span></li>`).join('')}</ul>
+    <div class="check"><span class="spin" aria-hidden="true"></span>check rodando<br><span class="muted">${esc(L.check)}</span></div>
+    <div class="acts"><button class="btn sm" data-act="defer">Adiar tarefa</button><button class="btn sm dng" data-act="stop">Parar laço</button>${floating ? '' : '<button class="btn sm" data-act="work">Abrir Trabalho</button>'}</div>`;
+}
+
+function fit(force){
+  const c = $('#canvas'), w = $('#world');
+  if (!w.firstChild) return;
+  const W = 1140, H = 570, pad = 32;
+  let s = Math.min((c.clientWidth - pad*2) / W, (c.clientHeight - pad*2) / H);
+  // ponytail: escala mínima 0,72 para o texto do terminal continuar legível; o resto rola
+  s = force ? Math.min(s, 1) : Math.max(0.72, Math.min(s, 1));
+  w.style.transform = `translate(${pad}px,${pad+18}px) scale(${s})`;
+  $('#sizer').style.cssText = `width:${W*s+pad*2}px;height:${H*s+pad*2+18}px`;
+}
+
+/* ---------- inspetor ---------- */
+function reqCard(r){
+  return `<div class="card"><div class="who"><span class="dot wait" aria-hidden="true"></span><b style="color:var(--text)">${esc(r.agent)}</b> · sandbox</div>
+    <p>${esc(r.what)}</p><div class="path">${esc(r.path)}</div><p class="t2" style="font-size:12px">${esc(r.why)}</p>
+    <div class="row"><button class="btn sm pri" data-approve="${r.id}">Aprovar</button><button class="btn sm" data-deny="${r.id}">Negar</button></div></div>`;
+}
+
+function renderInsp(){
+  const I = $('#insp'), body = $('#insBody'), title = $('#insTitle');
+  I.classList.toggle('closed', !S.inspOpen);
+  $('#insToggle').setAttribute('aria-expanded', S.inspOpen);
+  $('#insToggle').setAttribute('aria-label', S.inspOpen ? 'Recolher inspetor' : 'Abrir inspetor');
+  $('#insToggle').textContent = S.inspOpen ? '⇥' : '⇤';
+  const p = pd();
+  if (S.first && S.pd === 'cgw'){
+    title.textContent = 'Primeiros passos';
+    body.innerHTML = `<div class="hello"><h3>Nada precisa de você ainda</h3>
+      <p class="t2">Quando um agente pedir algo, aparece aqui.</p>
+      <ol class="steps"><li>Clique em <b>Novo agente</b> e escolha Claude ou Codex.</li><li>Escreva o que quer no terminal, como numa conversa.</li><li>Se ele pedir acesso fora do cercado, você aprova ou nega aqui.</li></ol>
+      <p class="muted" style="margin-top:12px">Tudo o mais fica em <kbd>⌘K</kbd>.</p></div>`;
+    return;
+  }
+  const a = agents().find(x => x.id === S.sel);
+  if (!a){
+    title.textContent = 'Precisa de você';
+    const rs = reqsFor(S.pd);
+    const looping = agents().find(x => x.loop) && !S.loopStopped;
+    body.innerHTML = `<div class="sec"><h3>${esc(p.name)}</h3>${rs.length ? rs.map(reqCard).join('') : '<p class="empty">Nada pendente neste cercado.</p>'}</div>
+      ${looping ? `<div class="sec"><h3>Rodando sozinho</h3><div class="card" style="margin:0"><div class="who"><span class="dot work" aria-hidden="true"></span>Pastor · laço ${LOOP.name}</div><p>Tarefa ${LOOP.n} de ${LOOP.total}, check rodando.</p><button class="linkbtn" data-ag="pastor">Ver o Pastor</button></div></div>` : ''}
+      <div class="sec"><p class="muted" style="margin:0">Selecione um terminal para ver o que ele faz, o modelo, o uso e as memórias.</p></div>`;
+    return;
+  }
+  title.textContent = a.name;
+  const rs = reqsFor(S.pd).filter(r => r.agent === a.name);
+  body.innerHTML = `
+    <div class="sec"><dl class="kv">
+      <dt>Estado</dt><dd><span class="dot ${a.st}" style="display:inline-block;margin-right:6px" aria-hidden="true"></span>${ST[a.st]}</dd>
+      <dt>Papel</dt><dd>${esc(a.role)}${a.by ? ` · chamado por ${esc(a.by)}` : ''}</dd>
+      ${a.herds.length ? `<dt>Pastoreia</dt><dd>${a.herds.map(esc).join(', ')}</dd>` : ''}
+    </dl></div>
+    ${a.loop && !S.loopStopped ? `<div class="sec"><h3>Laço ${LOOP.name} · ${LOOP.n}/${LOOP.total}</h3><div style="margin:0 -12px">${loopHTML(false)}</div></div>` : ''}
+    <div class="sec"><h3>Pedidos de sandbox</h3>${rs.length ? rs.map(reqCard).join('') : '<p class="empty">Nenhum pedido.</p>'}</div>
+    <div class="sec"><h3>Painéis ligados</h3>${a.panels.length ? `<div class="chiprow">${a.panels.map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div>` : '<p class="empty">Nenhum. ⋯ › Ligar a um painel.</p>'}</div>
+    <div class="sec"><dl class="kv">
+      <dt>Cercado</dt><dd>${esc(p.name)}</dd>
+      <dt>Ramo</dt><dd class="mono">${esc(p.branch)}${p.base ? ` ← ${p.base}` : ''}</dd>
+      <dt>Ferramenta</dt><dd>${esc(a.tool)}</dd>
+      <dt>Modelo</dt><dd class="mono">${esc(a.model)}</dd>
+      <dt>Uso</dt><dd>${esc(a.usage)}</dd>
+    </dl></div>
+    <div class="sec"><h3>Memórias recentes</h3>${a.mem.length ? a.mem.map(([k,t]) => `<div class="mem"><span class="muted">${k}</span> · <b>${esc(t)}</b></div>`).join('') : '<p class="empty">Nenhuma ainda.</p>'}</div>`;
+}
+
+function render(){
+  $('#mFirst').setAttribute('aria-pressed', S.first);
+  $('#mUse').setAttribute('aria-pressed', !S.first);
+  renderSide(); renderCanvas(); renderInsp();
+}
+
+/* ---------- ações ---------- */
+function select(id){
+  S.sel = (S.sel === id) ? null : id;
+  if (S.sel) S.inspOpen = true;
+  render();
+  if (S.sel) document.querySelector(`[data-node="${S.sel}"]`)?.scrollIntoView({block:'nearest', inline:'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+}
+function approve(id, ok){
+  const r = S.req.find(x => x.id === id); if (!r) return;
+  S.req = S.req.filter(x => x.id !== id);
+  const a = PADDOCKS.find(p=>p.id===r.pd).agents.find(x => x.name === r.agent);
+  if (a){ a.st = 'work'; a.out = ok ? '<span class="p">›</span> acesso aprovado\n  gravando preferences.json\n  idioma salvo: pt-BR' : '<span class="p">›</span> pedido negado\n  seguindo sem gravar preferências'; if(!ok) a.st='idle'; }
+  render(); toast(ok ? `Aprovado: ${r.agent} pode gravar preferences.json` : `Negado: ${r.agent} segue sem esse acesso`);
+}
+function act(name){
+  closeMenus();
+  const msgs = {
+    prefs:'Abriria Preferências (⌘,)', newPaddock:'Novo cercado: escolher nome e ramo', herd:'Aplicar rebanho: lista de times prontos',
+    lot:'Novo lote: agrupa terminais do mesmo esforço', panel:'Abrir painel: Prévia, Navegador, Dispositivo, Rede, Design, Diagrama',
+    rename:'Renomear cercado', land:'Integrar no main: mostra o diff antes', tour:'Abriria o tour de 17 funções',
+    model:'Trocar modelo', leash:'Ligar a um painel', close:'Fecharia o terminal (pede confirmação)', work:'Abriria o painel Trabalho',
+    defer:'Tarefa 3 adiada para o fim da fila',
+  };
+  if (name === 'newAgent' || name === 'startFirst'){ if (S.first){ S.first = false; S.pd='cgw'; S.sel='pastor'; render(); toast('Agente criado. Escreva o que quer no terminal.'); } else toast('Novo agente: Claude ou Codex neste cercado'); return; }
+  if (name === 'loopClose'){ S.loopOpen = false; render(); $('#pill')?.focus(); return; }
+  if (name === 'stop'){ S.loopStopped = true; S.loopOpen = false; render(); toast('Laço idiomas parado na tarefa 3'); return; }
+  if (name === 'details'){ select(menuTarget); return; }
+  if (name === 'factory'){ const b = $('#pdMenu [data-act=factory]'); const on = b.firstChild.textContent.startsWith('Ligar'); b.firstChild.textContent = on ? 'Desligar fábrica' : 'Ligar fábrica'; toast(on ? 'Fábrica ligada neste cercado' : 'Fábrica desligada'); return; }
+  if (msgs[name]) toast(msgs[name]);
+}
+
+let menuTarget = null;
+function openMenu(m, anchor){
+  closeMenus();
+  const r = anchor.getBoundingClientRect();
+  m.hidden = false;
+  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + 'px';
+  m.style.top = (r.bottom + 6) + 'px';
+  anchor.setAttribute('aria-expanded','true');
+  m.querySelector('.mi')?.focus();
+  openMenu.anchor = anchor;
+}
+function closeMenus(){
+  document.querySelectorAll('.menu').forEach(m => m.hidden = true);
+  openMenu.anchor?.setAttribute('aria-expanded','false');
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('button,[data-ag],[data-pd]');
+  if (!e.target.closest('.menu') && !e.target.closest('#newBtn,[data-pdmenu],[data-termmenu]')) closeMenus();
+  if (!t) return;
+  if (t.dataset.termmenu){ e.stopPropagation(); menuTarget = t.dataset.termmenu; openMenu($('#termMenu'), t); return; }
+  if (t.hasAttribute('data-pdmenu')){ openMenu($('#pdMenu'), t); return; }
+  if (t.id === 'newBtn'){ openMenu($('#newMenu'), t); return; }
+  if (t.dataset.approve){ approve(t.dataset.approve, true); return; }
+  if (t.dataset.deny){ approve(t.dataset.deny, false); return; }
+  if (t.dataset.ag){ select(t.dataset.ag); return; }
+  if (t.dataset.pd){ if (S.pd !== t.dataset.pd){ S.pd = t.dataset.pd; S.sel = null; S.loopOpen = false; render(); } return; }
+  if (t.dataset.panel){ toast(`${t.dataset.panel}: ligado ao Pastor`); return; }
+  if (t.id === 'pill'){ S.loopOpen = true; render(); $('#loopPanel [data-act=loopClose]')?.focus(); return; }
+  if (t.id === 'insToggle'){ S.inspOpen = !S.inspOpen; renderInsp(); setTimeout(() => fit(false), 200); return; }
+  if (t.id === 'fitBtn'){ fit(true); return; }
+  if (t.id === 'mFirst'){ S.first = true; S.pd = 'cgw'; S.sel = null; S.loopOpen = false; render(); return; }
+  if (t.id === 'mUse'){ S.first = false; render(); return; }
+  if (t.id === 'openPal'){ openPal(); return; }
+  if (t.id === 'openNotes'){ $('#notes').classList.add('open'); $('#notes').focus(); return; }
+  if (t.id === 'closeNotes'){ $('#notes').classList.remove('open'); $('#openNotes').focus(); return; }
+  if (t.dataset.act){ act(t.dataset.act); return; }
+});
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k'){ e.preventDefault(); openPal(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === ','){ e.preventDefault(); act('prefs'); return; }
+  if (e.key === 'Escape'){
+    if (!$('#palScrim').hidden) return closePal();
+    if ($('#notes').classList.contains('open')){ $('#notes').classList.remove('open'); return; }
+    if (document.querySelector('.menu:not([hidden])')) return closeMenus();
+    if (S.loopOpen){ act('loopClose'); return; }
+    if (S.sel){ S.sel = null; render(); }
+  }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.nh[role=button]')){ e.preventDefault(); select(e.target.dataset.ag); }
+});
+addEventListener('resize', () => fit(false));
+
+/* ---------- ⌘K ---------- */
+const CMDS = () => [
+  ['Agentes','Novo agente','Claude ou Codex neste cercado',()=>act('newAgent')],
+  ...agents().map(a => ['Agentes',`Ir para ${a.name}`, ST[a.st], ()=>select(a.id)]),
+  ...PADDOCKS.filter(p=>p.id!==S.pd).map(p => ['Cercados',`Ir para ${p.name}`, p.branch, ()=>{S.pd=p.id;S.sel=null;S.loopOpen=false;render();}]),
+  ['Cercados','Novo cercado','',()=>act('newPaddock')],
+  ['Cercados','Ligar fábrica','ao fim do laço, integra no main',()=>act('factory')],
+  ...['Prévia','Navegador','Dispositivo','Rede','Design','Diagrama','Artifacts','Trabalho','Memória'].map(n => ['Painéis',`Abrir ${n}`,'',()=>toast(`Abriria ${n}`)]),
+  ['Times','Aplicar rebanho…','times prontos',()=>act('herd')],
+  ['Times','Novo lote…','',()=>act('lot')],
+  ['Ajuda','Como funciona','tour das 17 funções',()=>act('tour')],
+  ['Ajuda','Preferências','⌘,',()=>act('prefs')],
+  ['Ajuda','Plug-ins','Preferências › Plug-ins',()=>toast('Abriria Preferências › Plug-ins')],
+  ['Ajuda','Temas','Preferências › Aparência',()=>toast('Abriria Preferências › Aparência')],
+];
+let palItems = [], palIdx = 0, palReturn = null;
+function openPal(){ palReturn = document.activeElement; closeMenus(); $('#palScrim').hidden = false; $('#palIn').value=''; drawPal(); $('#palIn').focus(); }
+function closePal(){ $('#palScrim').hidden = true; palReturn?.focus?.(); }
+function drawPal(){
+  const q = $('#palIn').value.trim().toLowerCase();
+  palItems = CMDS().filter(c => !q || (c[1]+' '+c[2]+' '+c[0]).toLowerCase().includes(q));
+  palIdx = Math.min(palIdx, Math.max(0, palItems.length-1));
+  let g = '', h = '';
+  palItems.forEach((c,i) => { if (c[0]!==g){ g=c[0]; h += `<li class="grp" role="presentation">${g}</li>`; }
+    h += `<li class="it" role="option" data-i="${i}" aria-selected="${i===palIdx}"><span>${esc(c[1])}</span><small>${esc(c[2])}</small></li>`; });
+  $('#palList').innerHTML = h || '<li class="grp">Nada encontrado</li>';
+  $('#palList [aria-selected=true]')?.scrollIntoView({block:'nearest'});
+}
+function runPal(i){ const c = palItems[i]; if (!c) return; $('#palScrim').hidden = true; c[3](); }
+$('#palIn').addEventListener('input', () => { palIdx = 0; drawPal(); });
+$('#palIn').addEventListener('keydown', e => {
+  if (e.key === 'ArrowDown'){ e.preventDefault(); palIdx = Math.min(palIdx+1, palItems.length-1); drawPal(); }
+  if (e.key === 'ArrowUp'){ e.preventDefault(); palIdx = Math.max(palIdx-1, 0); drawPal(); }
+  if (e.key === 'Enter'){ e.preventDefault(); runPal(palIdx); }
+});
+$('#palList').addEventListener('click', e => { const li = e.target.closest('.it'); if (li) runPal(+li.dataset.i); });
+$('#palScrim').addEventListener('click', e => { if (e.target.id === 'palScrim') closePal(); });
+
+render();
+</script>
+</body>
+</html>

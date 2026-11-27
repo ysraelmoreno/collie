@@ -263,10 +263,14 @@ struct ContentView: View {
         case tour, openPanelFor(String)
         /// M8.3: the Laços modal on that tab.
         case loops(LoopsTab)
+        /// ⌘K's Lotes… and Fábrica… (the sidebar ⋯ menu's, for the current paddock).
+        case lots, factory(UUID)
         var id: String {
             switch self {
             case .tour: "tour"
             case .loops: "loops"
+            case .lots: "lots"
+            case .factory(let p): "factory \(p)"
             case .openPanelFor(let p): "panel for \(p)"
             case .herds(let p, let s): "herds \(String(describing: p)) \(s ?? "")"
             case .saveHerd: "save herd"
@@ -283,6 +287,8 @@ struct ContentView: View {
     @State private var tour = FeatureTourSeen()
     /// The tour's button, kept until its sheet is gone (`runTourAction`).
     @State private var tourAction: FeatureTour.Action?
+    /// Preferências › Aparência's "Tour das funções": the tour opens once that sheet is gone (two sheets cannot stack here).
+    @State private var tourAfterPreferences = false
     @State private var bundledBuild: String?
     @State private var staleDismissed = false
     private var staleDaemon: Bool {
@@ -366,7 +372,7 @@ struct ContentView: View {
                      zoom: { [canvas, viewport] in canvas.zoom(by: $0, around: CGPoint(x: viewport.width / 2, y: viewport.height / 2)) })
     }
 
-    /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.
+    /// The tour's button, once the tour sheet has closed: the same entries as the sidebar, the palette and the menus.
     private func runTourAction() {
         guard let action = tourAction else { return }
         tourAction = nil
@@ -375,9 +381,8 @@ struct ContentView: View {
         case .newPaddock: paddocks.newPaddock()
         case .openPalette: paletteOpen = true
         case .openHerds: sheet = .herds(nil, nil)
-        case .preferences(let page):
-            UserDefaults.standard.set(page.rawValue, forKey: PreferencePage.requestKey)
-            openPreferences()
+        case .openLoops: sheet = .loops(.history)
+        case .preferences(let page): openPreferences(on: page)
         case .panel(let id): showPanel(id)
         }
     }
@@ -407,7 +412,6 @@ struct ContentView: View {
         let s = shell
         return [PaletteCommand(id: "terminal", title: tr("Novo terminal", "New terminal"), run: s.newTerminal),
                 PaletteCommand(id: "panel", title: tr("Abrir painel…", "Open panel…"), run: s.openPanel),
-                PaletteCommand(id: "herd.apply", title: tr("Aplicar rebanho…", "Apply herd…"), run: { s.openHerds(nil) }),
                 PaletteCommand(id: "herd.save", title: tr("Salvar canvas como rebanho…", "Save canvas as herd…"), run: { sheet = .saveHerd }),
                 PaletteCommand(id: "paddock.new", title: tr("Novo cercado…", "New paddock…"), run: paddocks.newPaddock),
                 PaletteCommand(id: "paddock.pasture", title: tr("Ir para o Pasto", "Go to the Pasture"), run: { paddocks.select(nil) })]
@@ -416,6 +420,29 @@ struct ContentView: View {
             + [PaletteCommand(id: "fit", title: tr("Ajustar à tela", "Fit to screen"), run: s.fit),
                PaletteCommand(id: "usage", title: tr("Uso dos agentes", "Agent usage"), run: { usageOpen = true }),
                PaletteCommand(id: "settings", title: tr("Preferências…", "Preferences…"), run: openPreferences)]
+            + PaletteEntry.commands(PaletteEntry.allCases.filter { $0 != .factory || factoryPaddock != nil }) { e in
+                switch e {
+                case .herds: { s.openHerds(nil) }
+                case .lots: { sheet = .lots }
+                case .factory: { if let p = factoryPaddock { sheet = .factory(p) } }
+                case .memory: { showPanel("memory") }
+                case .loops: { s.onOpenLoops(.history) }
+                case .work: s.openWork
+                case .tour: s.openTour
+                case .diagnostics: { openPreferences(on: .diagnostico) }
+                }
+            }
+    }
+
+    /// The current paddock when it can be a factory one (a git paddock: the Pasture and folders cannot).
+    private var factoryPaddock: UUID? {
+        client.paddocks.first { $0.id == client.currentPaddock && !$0.isFolder }?.id
+    }
+
+    /// Preferências on `page` (through the defaults mailbox `PreferencesView` reads).
+    private func openPreferences(on page: PreferencePage) {
+        UserDefaults.standard.set(page.rawValue, forKey: PreferencePage.requestKey)
+        openPreferences()
     }
 
     @ViewBuilder private var banners: some View {
@@ -438,11 +465,18 @@ struct ContentView: View {
                            onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd },
                            active: !preferencesOpen)
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
+                .overlay {
+                    if FirstRun.shows(connected: client.state == .connected, terminals: client.terminals, current: client.currentPaddock) {
+                        FirstRunView(ctx: shell)
+                    }
+                }
                 .overlay(alignment: .top) { CanvasChrome(ctx: shell) { banners } }
             }
         }
-        .sheet(isPresented: $preferencesOpen) {
-            PreferencesView(client: client, remembered: $preferencesPage) { preferencesOpen = false }
+        .sheet(isPresented: $preferencesOpen, onDismiss: { if tourAfterPreferences { tourAfterPreferences = false; sheet = .tour } }) {
+            PreferencesView(client: client, remembered: $preferencesPage, openTour: { tourAfterPreferences = true; preferencesOpen = false }) {
+                preferencesOpen = false
+            }
                 .frame(minWidth: 680, idealWidth: 860, maxWidth: .infinity, minHeight: 480, idealHeight: 620, maxHeight: .infinity)
         }
         .paddockDialogs(paddocks)
@@ -473,6 +507,15 @@ struct ContentView: View {
             case .openPanelFor(let id): OpenPanelSheet(client: client, canvas: canvas, initial: id)
             case .tour: FeatureTourView(store: tour) { tourAction = $0 }
             case .loops(let tab): LoopsSheet(ctx: shell, initial: tab)
+            case .lots: LotsSheet(client: client) { sheet = nil }
+            case .factory(let id):
+                if let p = client.paddocks.first(where: { $0.id == id }) {
+                    VStack(alignment: .trailing, spacing: 12) {
+                        FactoryControls(paddock: p, actions: paddocks)
+                        Button(tr("Fechar", "Close")) { sheet = nil }.keyboardShortcut(.cancelAction)
+                    }
+                    .padding(18).frame(width: 320)
+                } else { Color.clear.onAppear { sheet = nil } }   // the paddock is gone
             case .herds(let p, let s):
                 HerdsSheet(model: herds, client: client, canvas: canvas, anchor: p ?? canvas.toCanvas(CGPoint(x: 40, y: 40)), initial: s)
             case .saveHerd: SaveHerdSheet(model: herds, client: client, canvas: canvas)

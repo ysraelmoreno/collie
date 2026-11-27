@@ -53,7 +53,7 @@ enum PreferencePage: String, CaseIterable {
     /// Portuguese and English together: the search finds a page by either language's words.
     var keywords: String {
         switch self {
-        case .aparencia: "tema paleta escuro claro sistema idioma língua theme palette dark light system language"
+        case .aparencia: "tema paleta escuro claro sistema idioma língua tour funções theme palette dark light system language features"
         case .diagnostico: "diagnóstico conexão conectado desconectado ram rss processo painéis contadores status diagnostics connection connected disconnected process panels counters"
         case .terminal: "terminal fonte tamanho google fonts baixar família font size download family"
         case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior update upgrade version new install skip rollback previous"

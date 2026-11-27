@@ -2,35 +2,6 @@ import SwiftUI
 import CollieTheme
 import CollieCore
 
-/// The info icon: the rail's foot (above the usage summary) and Compacta's bar (left of the usage button). A dot in the
-/// accent color sits on its corner while a card is unseen.
-struct TourButton: View {
-    let ctx: ShellContext
-    /// The color of the surface the icon sits on: the dot's ring, so it stays readable over the icon.
-    let ring: Color
-    var size: CGSize = CGSize(width: 40, height: 28)
-    var tint: Color = .collieMuted
-
-    var body: some View {
-        let unseen = ctx.tour.hasUnseen
-        Button(action: ctx.openTour) {
-            Image(systemName: "info.circle").font(.system(size: 15)).foregroundStyle(tint)
-                .frame(width: size.width, height: size.height)
-                .overlay(alignment: .topTrailing) {
-                    if unseen {
-                        Circle().fill(Color.collieAccent).frame(width: 7, height: 7)
-                            .overlay(Circle().strokeBorder(ring, lineWidth: 1.5).frame(width: 10, height: 10))
-                            .padding(.top, 2).padding(.trailing, 5)
-                    }
-                }
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(tr("O que o Collie faz", "What Collie does")).accessibilityLabel(tr("O que o Collie faz", "What Collie does"))
-        .accessibilityValue(unseen ? tr("com novidades", "has news") : "")
-    }
-}
-
 /// The sheet: tabs per group, the card (illustration, text, how to call it, the button) and the carousel's footer.
 /// ← and → change card, Esc closes. Nothing animates.
 @MainActor struct FeatureTourView: View {

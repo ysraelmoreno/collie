@@ -64,3 +64,27 @@ struct CommandPalette: View {
         .onAppear { focused = true }
     }
 }
+
+/// L6: the palette's way to what left the screen (the context panel's sections, the rail's icons, the status bar). Each
+/// entry reaches what already exists; `ContentView` says what (the switch over every case is exhaustive).
+enum PaletteEntry: String, CaseIterable {
+    case herds, lots, factory, memory, loops, work, tour, diagnostics
+
+    var title: String {
+        switch self {
+        case .herds: tr("Rebanhos…", "Herds…")
+        case .lots: tr("Lotes…", "Lots…")
+        case .factory: tr("Fábrica…", "Factory…")
+        case .memory: tr("Memória", "Memory")
+        case .loops: tr("Laços…", "Loops…")
+        case .work: tr("Trabalho", "Work")
+        case .tour: tr("Tour das funções", "Feature tour")
+        case .diagnostics: tr("Diagnóstico", "Diagnostics")
+        }
+    }
+
+    /// One command per entry in `entries`, running `action(entry)`.
+    static func commands(_ entries: [PaletteEntry] = allCases, action: (PaletteEntry) -> () -> Void) -> [PaletteCommand] {
+        entries.map { PaletteCommand(id: "entry.\($0.rawValue)", title: $0.title, run: action($0)) }
+    }
+}

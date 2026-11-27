@@ -163,32 +163,8 @@ struct Sidebar: View {
         } label: { Image(systemName: "ellipsis") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .help(tr("Menu do cercado", "Paddock menu")).accessibilityLabel(tr("Menu do cercado", "Paddock menu"))
-            .popover(isPresented: $showFactory, arrowEdge: .trailing) { factory(p).padding(14).frame(width: 280) }
-            .sheet(isPresented: $showLots) {
-                VStack(alignment: .leading, spacing: 12) {
-                    ScrollView { LotsSection(client: ctx.client) }
-                    HStack { Spacer(); Button(tr("Fechar", "Close")) { showLots = false }.keyboardShortcut(.cancelAction) }
-                }
-                .padding(18).frame(width: 380, height: 420)
-            }
-    }
-
-    /// Fábrica: one sentence on what it does, the switch, the daemon's refusal word for word, the doctor's lines while on.
-    private func factory(_ p: Paddock) -> some View {
-        let actions = ctx.paddocks
-        let s = FactorySwitch.make(p, busy: actions.busy, refusal: actions.factoryRefusal[p.id], note: actions.factoryNote[p.id])
-        return VStack(alignment: .leading, spacing: 8) {
-            Toggle(tr("Fábrica", "Factory"), isOn: Binding(get: { s.isOn }, set: { actions.setFactory(p, $0) }))
-                .toggleStyle(.switch).disabled(!s.enabled).help(s.label)
-            Text(tr("Laços com auto-land integram o trabalho sozinhos: gate, revisão e CI limpos, depois merge local, nunca push.",
-                    "Loops with auto-land land their own work: clean gate, review and CI, then a local merge, never a push."))
-                .font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
-            if let r = s.refusal {
-                Text(r).font(.collieMono(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-            ForEach(s.note, id: \.self) { Text($0).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1) }
-        }
-        .task(id: p.factory ? p.id : nil) { if p.factory { await actions.loadFactoryNote(p) } }
+            .popover(isPresented: $showFactory, arrowEdge: .trailing) { FactoryControls(paddock: p, actions: ctx.paddocks).padding(14).frame(width: 280) }
+            .sheet(isPresented: $showLots) { LotsSheet(client: ctx.client) { showLots = false } }
     }
 
     /// An agent: caret (a Shepherd with workers), dot, name, state in words, pending count, "Pastor" tag.
@@ -343,5 +319,43 @@ private struct StateDot: View {
     }
     private var color: Color {
         switch status { case .idle: .collieMuted; case .working: .collieSecondary; case .attention: .collieAttention; case .stopped: .collieDanger }
+    }
+}
+
+/// The ⋯ menu's Lotes… (and ⌘K's): the lots, in a sheet.
+struct LotsSheet: View {
+    let client: DaemonClient
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView { LotsSection(client: client) }
+            HStack { Spacer(); Button(tr("Fechar", "Close"), action: close).keyboardShortcut(.cancelAction) }
+        }
+        .padding(18).frame(width: 380, height: 420)
+    }
+}
+
+/// Fábrica: one sentence on what it does, the switch, the daemon's refusal word for word, the doctor's lines while on.
+/// The ⋯ menu's Fábrica… popover and ⌘K's Fábrica… sheet.
+struct FactoryControls: View {
+    let paddock: Paddock
+    let actions: PaddockActions
+
+    var body: some View {
+        let p = paddock
+        let s = FactorySwitch.make(p, busy: actions.busy, refusal: actions.factoryRefusal[p.id], note: actions.factoryNote[p.id])
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(tr("Fábrica", "Factory"), isOn: Binding(get: { s.isOn }, set: { actions.setFactory(p, $0) }))
+                .toggleStyle(.switch).disabled(!s.enabled).help(s.label)
+            Text(tr("Laços com auto-land integram o trabalho sozinhos: gate, revisão e CI limpos, depois merge local, nunca push.",
+                    "Loops with auto-land land their own work: clean gate, review and CI, then a local merge, never a push."))
+                .font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
+            if let r = s.refusal {
+                Text(r).font(.collieMono(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            }
+            ForEach(s.note, id: \.self) { Text($0).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1) }
+        }
+        .task(id: p.factory ? p.id : nil) { if p.factory { await actions.loadFactoryNote(p) } }
     }
 }

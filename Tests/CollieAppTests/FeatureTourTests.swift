@@ -30,6 +30,18 @@ import CollieProtocol
         }
     }
 
+    /// L6: the rail and the context panel left the window; no "how" sends the user there.
+    @Test func noHowNamesWhatLeftTheScreen() {
+        for c in FeatureTour.cards {
+            let how = c.how.lowercased()
+            for gone in ["trilho", "rail", "painel de contexto", "context panel", "menu rebanhos", "herds menu"] {
+                #expect(!how.contains(gone), "\(c.id): \(c.how)")
+            }
+        }
+        #expect(FeatureTour.cards.first { $0.id == "paddocks" }?.how == "＋ ao lado de Cercados")
+        #expect(FeatureTour.cards.first { $0.id == "loops" }?.shortcut?.action == .openLoops)
+    }
+
     @Test func onlyThePastorCardHasNoButton() {
         #expect(FeatureTour.cards.filter { $0.shortcut == nil }.map(\.id) == ["shepherd"])
     }

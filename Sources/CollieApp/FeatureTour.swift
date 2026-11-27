@@ -26,7 +26,7 @@ enum FeatureTour {
 
     /// What a card's button does. Each case is an entry the app already has; `ContentView` runs it once the tour is closed.
     enum Action: Equatable, Sendable {
-        case newTerminal, newPaddock, openPalette, openHerds
+        case newTerminal, newPaddock, openPalette, openHerds, openLoops
         /// A plug-in panel by id: shown if one is open, else opened (Dispositivo and Design ask which one first).
         case panel(String)
         case preferences(PreferencePage)
@@ -57,16 +57,16 @@ enum FeatureTour {
              how: tr("clique direito no canvas", "right-click on the canvas"), art: .canvas, shortcut: Shortcut(label: tr("Novo terminal", "New terminal"), action: .newTerminal), panels: []),
         Card(id: "paddocks", group: .trabalhar, title: tr("Cercados", "Paddocks"),
              text: tr("Cada cercado é uma cópia isolada do repositório, com o próprio ramo. Dois agentes trabalham em paralelo sem pisar um no outro.", "Each paddock is an isolated copy of the repository with its own branch. Two agents work in parallel without stepping on each other."),
-             how: tr("+ no trilho", "+ on the rail"), art: .paddock, shortcut: Shortcut(label: tr("Novo cercado", "New paddock"), action: .newPaddock), panels: []),
+             how: tr("＋ ao lado de Cercados", "＋ next to Paddocks"), art: .paddock, shortcut: Shortcut(label: tr("Novo cercado", "New paddock"), action: .newPaddock), panels: []),
         Card(id: "shepherd", group: .trabalhar, title: tr("Pastor e delegação", "Shepherd and delegation"),
              text: tr("Um terminal Pastor chama outros agentes, entrega a tarefa e recebe a resposta. Você fala com um; ele coordena os demais.", "A Shepherd terminal summons other agents, hands over the task and gets the answer back. You talk to one; it coordinates the rest."),
              how: tr("collie summon <nome>", "collie summon <name>"), art: .shepherd, shortcut: nil, panels: []),   // no reference page in the app to open
         Card(id: "loops", group: .trabalhar, title: tr("Laços", "Loops"),
              text: tr("Uma lista de tarefas roda sem supervisão: um agente novo por tentativa, e só o check de cada tarefa decide se ela passou.", "A task list runs unattended: a fresh agent per attempt, and only each task's check decides whether it passed."),
-             how: "/collie:loop", art: .loop, shortcut: Shortcut(label: tr("Abrir Trabalho", "Open Work"), action: .panel("work")), panels: []),
+             how: tr("/collie:loop, ⌘K Laços…", "/collie:loop, ⌘K Loops…"), art: .loop, shortcut: Shortcut(label: tr("Ver laços", "See loops"), action: .openLoops), panels: []),
         Card(id: "work", group: .trabalhar, title: tr("Trabalho", "Work"),
              text: tr("O registro do que cada terminal está fazendo: tarefas, andamento do laço, evidências e um resumo ao final.", "The record of what each terminal is doing: tasks, loop progress, evidence and a summary at the end."),
-             how: tr("painel Trabalho", "Work panel"), art: .work, shortcut: Shortcut(label: tr("Abrir Trabalho", "Open Work"), action: .panel("work")), panels: ["WorkPanel"]),
+             how: tr("⌘K Trabalho", "⌘K Work"), art: .work, shortcut: Shortcut(label: tr("Abrir Trabalho", "Open Work"), action: .panel("work")), panels: ["WorkPanel"]),
         Card(id: "palette", group: .trabalhar, title: tr("Paleta de comandos", "Command palette"),
              text: tr("Chame um agente, abra um painel ou vá a um cercado sem tirar a mão do teclado.", "Summon an agent, open a panel or jump to a paddock without leaving the keyboard."),
              how: "⌘K", art: .palette, shortcut: Shortcut(label: tr("Abrir a paleta", "Open the palette"), action: .openPalette), panels: []),
@@ -96,7 +96,7 @@ enum FeatureTour {
              panels: ["DiagramPanel"]),
         Card(id: "memory", group: .controle, title: tr("Memória", "Memory"),
              text: tr("Os agentes guardam decisões e armadilhas do projeto e as recebem de volta nas próximas sessões. Você revisa, edita e descarta.", "Agents save the project's decisions and pitfalls and get them back in later sessions. You review, edit and discard."),
-             how: tr("painel Memória", "Memory panel"), art: .memory, shortcut: Shortcut(label: tr("Abrir Memória", "Open Memory"), action: .panel("memory")),
+             how: tr("⌘K Memória", "⌘K Memory"), art: .memory, shortcut: Shortcut(label: tr("Abrir Memória", "Open Memory"), action: .panel("memory")),
              panels: ["MemoryPanel"]),
         Card(id: "sandbox", group: .controle, title: tr("Sandbox e cartões", "Sandbox and cards"),
              text: tr("Todo terminal roda isolado. O que um agente pede fora do sandbox vira um cartão, e só você aprova.", "Every terminal runs isolated. What an agent asks for outside the sandbox becomes a card, and only you approve it."),
@@ -104,7 +104,7 @@ enum FeatureTour {
              shortcut: Shortcut(label: tr("Abrir Preferências", "Open Preferences"), action: .preferences(.desenho)), panels: []),
         Card(id: "herds", group: .controle, title: tr("Rebanhos e Lotes", "Herds and Lots"),
              text: tr("Rebanhos são times prontos de terminais e painéis, aplicados de uma vez. Lotes agrupam terminais de um mesmo esforço.", "Herds are ready-made teams of terminals and panels, applied at once. Lots group terminals working on the same effort."),
-             how: tr("menu Rebanhos", "Herds menu"), art: .herds, shortcut: Shortcut(label: tr("Ver rebanhos", "See herds"), action: .openHerds), panels: []),
+             how: tr("＋ Novo agente › A partir de rebanho…, ⋯ do cercado › Lotes…", "＋ New agent › From a herd…, paddock ⋯ › Lots…"), art: .herds, shortcut: Shortcut(label: tr("Ver rebanhos", "See herds"), action: .openHerds), panels: []),
         Card(id: "plugins", group: .personalizar, title: "Plug-ins",
              text: tr("Painéis e comandos de terceiros entram sem recompilar o Collie. Um plug-in também pode orientar ou barrar o agente a cada edição.", "Third-party panels and commands come in without recompiling Collie. A plug-in can also guide or block the agent on every edit."),
              how: tr("Preferências › Plug-ins", "Preferences › Plug-ins"), art: .plugins,
@@ -159,7 +159,7 @@ struct FeatureTourModel: Equatable {
     }
 }
 
-/// The ids of the cards the user has seen, in `UserDefaults` (`tour.seen`). Read by the info icon (the dot) and written by the tour.
+/// The ids of the cards the user has seen, in `UserDefaults` (`tour.seen`). Written by the tour; the tour opens on the first card not in it.
 @MainActor @Observable final class FeatureTourSeen {
     static let key = "tour.seen"
     @ObservationIgnored private let defaults: UserDefaults

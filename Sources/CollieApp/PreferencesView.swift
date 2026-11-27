@@ -87,6 +87,8 @@ struct PreferencesView: View {
     let client: DaemonClient
     /// The page last shown (`ContentView`): it survives the sheet being closed and this view unmounted.
     var remembered: Binding<PreferencePage>?
+    /// Aparência's "Tour das funções": closes the sheet, then the tour opens (`ContentView`).
+    var openTour: () -> Void = {}
     /// The sheet's "Fechar" (and Esc).
     var close: () -> Void = {}
     @State private var designFirst = DesignFirst.artifact
@@ -207,7 +209,7 @@ struct PreferencesView: View {
     @ViewBuilder
     private var pageContent: some View {
         switch page {
-        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; languageSection }
+        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; languageSection; tourSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
         case .diagnostico: DiagnosticsPreferences(client: client)
@@ -241,6 +243,13 @@ struct PreferencesView: View {
                     Button(tr("Depois", "Later")) { restartNotice = false }
                 }
             }
+        }
+    }
+
+    /// The tour's way in, since the rail's info icon left (L6); also ⌘K "Tour das funções".
+    private var tourSection: some View {
+        section(tr("O que o Collie faz", "What Collie does")) {
+            Button(tr("Tour das funções", "Feature tour"), action: openTour)
         }
     }
 

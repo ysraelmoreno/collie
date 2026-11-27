@@ -84,6 +84,10 @@ import CollieCore
         other.place(CGRect(origin: CGPoint(x: 40 + screen.width, y: 40 + screen.height), size: screen), canvasSize: s)
         for v in inFront ? [node, other] : [other, node] { parent.addSubview(v) }
         parent.addSubview(Minimap(canvas: canvas))
+        // L4: the title bar's actions show only on hover or selection; the pointer is over `node`, as when a user clicks ⤢
+        let enter = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
+                                           windowNumber: w.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)!
+        node.mouseEntered(with: enter)
         for v in [node, other] { v.setInteractive(true); v.layoutSubtreeIfNeeded() }
         w.makeKeyAndOrderFront(nil)
         return Rig(canvas: canvas, window: w, parent: parent, node: node, other: other)

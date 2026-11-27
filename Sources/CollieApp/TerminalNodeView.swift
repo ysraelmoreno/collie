@@ -656,7 +656,7 @@ struct TerminalHeader: Equatable {
             switch self {
             case .working: tr("trabalhando", "working")
             case .waiting: tr("esperando você", "waiting for you")
-            case .done: tr("concluído", "done")
+            case .done: tr("parado", "idle")   // idle: done or never started; the daemon does not tell them apart
             case .stopped: tr("parado", "stopped")
             }
         }

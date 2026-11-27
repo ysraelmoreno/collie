@@ -15,7 +15,7 @@ import CollieCore
         func word(_ b: StatusBadge?) -> String { TerminalHeader.make(record: t, badge: b, connections: [], lot: nil).state.text }
         #expect(word(.working) == "trabalhando")
         #expect(word(.attention) == "esperando você")
-        #expect(word(.idle) == "concluído")
+        #expect(word(.idle) == "parado")   // idle covers a terminal that never worked
         #expect(word(.stopped) == "parado")
     }
 

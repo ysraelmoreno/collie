@@ -462,7 +462,7 @@ struct ContentView: View {
                            onNewTerminal: { sheet = .newTerminal($0) }, onOpenPanel: { sheet = .openPanel($0) },
                            onEdit: { sheet = .edit($0) },
                            onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd },
-                           active: !preferencesOpen)
+                           onOpenLoops: { sheet = .loops($0) }, active: !preferencesOpen)
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
                 .overlay {
                     if FirstRun.shows(connected: client.state == .connected, terminals: client.terminals, current: client.currentPaddock) {

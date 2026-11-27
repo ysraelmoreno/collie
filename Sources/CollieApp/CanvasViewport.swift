@@ -73,6 +73,8 @@ struct CanvasView: NSViewRepresentable {
     private var middle: (travel: CGFloat, panning: Bool)?
     private var middleMonitor: Any?
     private var reattachObserver: NSObjectProtocol?
+    /// The floating bar's minimap switch (`CanvasBar.minimapKey`) lives in UserDefaults: re-show or hide on every change.
+    private var defaultsObserver: NSObjectProtocol?
 
     // layout.json: nothing is placed or saved until it has been read (once, after the first connect).
     private var layoutLoaded = false, loadingLayout = false
@@ -117,6 +119,9 @@ struct CanvasView: NSViewRepresentable {
                 if let id, let node = self?.nodes[id], node.streamOpen { node.setVisible(false); node.setVisible(true) }
             }
         }
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.syncMinimap() }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -135,6 +140,8 @@ struct CanvasView: NSViewRepresentable {
         middleMonitor = nil
         if let reattachObserver { NotificationCenter.default.removeObserver(reattachObserver) }
         reattachObserver = nil
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        defaultsObserver = nil
         for v in views.values { v.unmount(); v.removeFromSuperview() }   // drops their defaults observers
         views = [:]
         for n in nodes.values { n.close() }
@@ -312,8 +319,13 @@ struct CanvasView: NSViewRepresentable {
         return nil
     }
 
+    /// Off by default; never over a fullscreen terminal.
+    private func syncMinimap() {
+        minimap.isHidden = canvas.fullscreen != nil || !UserDefaults.standard.bool(forKey: CanvasBar.minimapKey)
+    }
+
     private func syncFullscreenChrome(_ fs: UUID?) {
-        minimap.isHidden = fs != nil
+        syncMinimap()   // fs is canvas.fullscreen
         if fs != nil { marquee.isHidden = true }
         leashes.isHidden = fs != nil
         fsBar.isHidden = fs == nil

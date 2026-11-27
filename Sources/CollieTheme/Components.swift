@@ -72,7 +72,8 @@ public struct CollieTag: View {
     let text: String, tone: Tone
     public init(_ text: String, tone: Tone) { self.text = text; self.tone = tone }
     public var body: some View {
-        Text(text).font(.collieMono(11, .medium)).foregroundStyle(color)
+        // A tag never wraps or squeezes: in a tight row the name next to it truncates instead
+        Text(text).font(.collieMono(11, .medium)).foregroundStyle(color).lineLimit(1).fixedSize()
             .padding(.horizontal, 7).padding(.vertical, 3)
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(color.opacity(0.5), lineWidth: 1))
     }

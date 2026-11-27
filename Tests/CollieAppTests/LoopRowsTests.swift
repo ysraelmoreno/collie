@@ -16,42 +16,7 @@ private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad
     return w
 }
 
-@MainActor @Suite(.appPT) struct ContextPanelLoopsTests {
-    private func titles(_ w: Work?, paddock: UUID? = pad) -> [String] {
-        ContextPanel.sectionTitles(agents: 2, panels: 1, loops: LoopSection.make(work: w, paddock: paddock))
-    }
-    private let before = ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES"]
-
-    @Test func sectionExistsOnlyWhileALoopRunsHere() {
-        #expect(titles(work()).count == 5)
-        #expect(titles(nil) == before)
-        #expect(titles(work(nil)) == before)                  // no loop
-        #expect(titles(work(.finished)) == before)
-        #expect(titles(work(.stopped)) == before)
-        #expect(titles(work(.running, closed: true)) == before)
-        #expect(titles(work(.running, paddock: UUID())) == before)
-        #expect(titles(work(), paddock: nil) == before)        // the Pasto
-    }
-
-    /// M9.1 (B1): with no loop but with history, LAÇOS stays (header and "Ver tudo", no card); with neither, nothing.
-    @Test func sectionInTheThreeSituations() {
-        let l = LoopSection.make(work: work(), paddock: pad), idle = LoopSection.make(work: work(.finished), paddock: pad)
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: l) == before + ["LAÇOS"])
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: idle, hasHistory: true) == before + ["LAÇOS"])
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: idle) == before)
-        #expect(ContextPanel.loopsHeader(running: true, hasHistory: true) == .card)
-        #expect(ContextPanel.loopsHeader(running: false, hasHistory: true) == .historyOnly)
-        #expect(ContextPanel.loopsHeader(running: false, hasHistory: false) == nil)
-    }
-
-    /// M8.2: the bare header below Lotes; the count is in the card.
-    @Test func sectionComesBelowLotesAsACard() {
-        #expect(titles(work()) == before + ["LAÇOS"])
-        let c = LoopCard.make(work: work(), paddock: pad)
-        #expect(c?.progressText == "1/4" && c?.statusText == "tentativa 2 · agente trabalhando")
-        #expect(LoopCard.make(work: work(.finished), paddock: pad) == nil)
-    }
-
+@MainActor @Suite(.appPT) struct LoopRowsTests {
     @Test func rowsKeepTaskOrderWithStateAndTries() {
         let s = LoopSection.make(work: work(), paddock: pad)
         #expect(s.rows.map(\.title) == ["Feita", "Rodando", "Adiada", "Aberta"])

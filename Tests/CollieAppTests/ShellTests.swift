@@ -19,18 +19,15 @@ private struct Probe: NSViewRepresentable {
     static func dismantleNSView(_ v: NSView, coordinator: Counter) { coordinator.dismantled += 1 }
 }
 
-@MainActor @Observable private final class Box { var structure = WindowStructure.compact; var main = MainViewState() }
+@MainActor @Observable private final class Box { var collapsed = false }
 
 private struct Host: View {
     let box: Box
     let ctx: ShellContext
     let counter: Counter
-    var prefs = Counter()
     var body: some View {
-        Shell(structure: box.structure, ctx: ctx, mainView: Binding(get: { box.main }, set: { box.main = $0 })) {
-            Probe(counter: counter).overlay(alignment: .top) { CanvasChrome(structure: box.structure, ctx: ctx) { EmptyView() } }
-        } preferences: {
-            Probe(counter: prefs)
+        Shell(ctx: ctx, collapsed: Binding(get: { box.collapsed }, set: { box.collapsed = $0 })) {
+            Probe(counter: counter).overlay(alignment: .top) { CanvasChrome(ctx: ctx) { EmptyView() } }
         }
     }
 }
@@ -44,42 +41,25 @@ private struct Host: View {
                         focus: { _ in }, edit: { _ in }, openPreferences: {})
 }
 
-/// Completa (Trilho: rail, context panel, status bar) mounts over an empty client and leaves room for the content.
-@MainActor @Test(.appPT) func fullShellMountsWithEmptyClient() {
+/// The single structure (sidebar + canvas) mounts over an empty client and leaves room for the content.
+@MainActor @Test(.appPT) func shellMountsWithEmptyClient() {
     let counter = Counter()
-    let host = NSHostingView(rootView: Shell(structure: .full, ctx: emptyContext()) { Probe(counter: counter) })
+    let host = NSHostingView(rootView: Host(box: Box(), ctx: emptyContext(), counter: counter))
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
     RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()
     #expect(counter.made == 1)
-    #expect(host.fittingSize.width >= PaddockRail.width + ContextPanel.width)
+    #expect(host.fittingSize.width >= Sidebar.collapsedWidth)
 }
 
-/// Switching Compacta ↔ Completa must not remake the canvas (nor the docked panels around it).
-@MainActor @Test(.appPT) func structureSwitchKeepsContent() {
+/// Collapsing and expanding the sidebar (⌘\) must not remake the canvas (nor the docked panels around it).
+@MainActor @Test(.appPT) func collapsingTheSidebarKeepsContent() {
     let ctx = emptyContext(), box = Box(), counter = Counter()
     let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter))
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
     func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded() }
     settle()
     #expect(counter.made == 1)
-    for s in [WindowStructure.full, .compact, .full] { box.structure = s; settle() }
-    #expect(counter.made == 1 && counter.dismantled == 0)
-}
-
-/// Canvas ↔ Preferências in Completa: Preferências mounts in the canvas's place and the canvas is never remade.
-@MainActor @Test(.appPT) func mainViewSwitchKeepsCanvas() {
-    let ctx = emptyContext(), box = Box(), counter = Counter(), prefs = Counter()
-    box.structure = .full
-    let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter, prefs: prefs))
-    host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
-    func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded() }
-    settle()
-    #expect(counter.made == 1 && prefs.made == 0)
-    for v in [MainView.preferences, .canvas, .preferences] { box.main.show(v); settle() }
-    #expect(prefs.made == 2 && prefs.dismantled == 1)   // Preferências comes and goes
-    box.main.back(); settle()
-    box.structure = .compact; box.main.show(.preferences); settle()   // Compacta: Preferências is the Ajustes window
-    #expect(prefs.made == 2)
+    for c in [true, false, true] { box.collapsed = c; settle() }
     #expect(counter.made == 1 && counter.dismantled == 0)
 }
 

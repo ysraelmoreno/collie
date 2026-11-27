@@ -27,28 +27,8 @@ private func work(_ state: WorkLoopState.State? = .running) -> Work {
 
 /// M9.1 (B1, B2, B7, B8).
 @MainActor @Suite(.appPT) struct HistoryReachTests {
-    private let before = ["AGENTES · 1", "PAINÉIS · 0", "REBANHOS", "LOTES"]
-
-    /// B1: running → card; only history → header and "Ver tudo"; neither → nothing.
-    @Test func headerInTheThreeSituations() {
-        let running = LoopSection.make(work: work(), paddock: pad)
-        let idle = LoopSection.make(work: work(.finished), paddock: pad)
-        #expect(ContextPanel.loopsHeader(running: running.visible, hasHistory: false) == .card)
-        #expect(ContextPanel.loopsHeader(running: running.visible, hasHistory: true) == .card)
-        #expect(ContextPanel.loopsHeader(running: idle.visible, hasHistory: true) == .historyOnly)
-        #expect(ContextPanel.loopsHeader(running: idle.visible, hasHistory: false) == nil)
-        #expect(ContextPanel.sectionTitles(agents: 1, panels: 0, loops: running) == before + ["LAÇOS"])
-        #expect(ContextPanel.sectionTitles(agents: 1, panels: 0, loops: idle, hasHistory: true) == before + ["LAÇOS"])
-        #expect(ContextPanel.sectionTitles(agents: 1, panels: 0, loops: idle) == before)
-    }
-
-    /// B1: with no loop, "Ver tudo" asks Histórico and the modal opens there.
+    /// B1: with no loop, the modal opens on Histórico.
     @Test func noLoopOpensOnHistory() {
-        let box = Box()
-        var ctx = context()
-        ctx.onOpenLoops = { box.tabs.append($0) }
-        ContextPanel.openLoops(ctx: ctx, tab: .history)
-        #expect(box.tabs == [.history])
         #expect(LoopsModal.initialTab(.history, running: nil) == .history)
         #expect(LoopsModal.initialTab(.running, running: nil) == .history)
     }

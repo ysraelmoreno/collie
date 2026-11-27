@@ -3,16 +3,16 @@
 # Cumulativo: roda as suítes da família; cada tarefa exige o seu arquivo de testes novo. Imprime os testes que falharam.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-suites=(WorkArchiveTests LoopSectionTests ContextPanelLoopsTests ContextPanelHistoryTests HistoryPageTests OpenPanelSheetTests
-        AgentTreeTests PaddockRailTests MainViewTests ShellTests WorkPanelTests WorkCommandTests CommandsTests WorkStoreTests)
+suites=(WorkArchiveTests LoopSectionTests LoopRowsTests HistorySectionTests HistoryPageTests OpenPanelSheetTests
+        AgentTreeTests ShellTests WorkPanelTests WorkCommandTests CommandsTests WorkStoreTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
 D=Tests/CollieDaemonKitTests; A=Tests/CollieAppTests
 case "${1:?T6.1..T6.6}" in
   T6.1) need $D/WorkArchiveTests.swift ;;
   T6.2) need $A/LoopSectionTests.swift ;;
-  T6.3) need $A/ContextPanelLoopsTests.swift ;;
-  T6.4) need $A/ContextPanelHistoryTests.swift ;;
+  T6.3) need $A/LoopRowsTests.swift ;;
+  T6.4) need $A/HistorySectionTests.swift ;;
   T6.5) need $A/HistoryPageTests.swift ;;
   T6.6) need $A/OpenPanelSheetTests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;

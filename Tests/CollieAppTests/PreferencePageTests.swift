@@ -5,8 +5,18 @@ import CollieProtocol
 
 /// Preferências option B: the sidebar's pages, groups and search.
 @Test(.appPT) func emptyQueryListsAllPagesInSidebarOrder() {
-    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .desenho, .lacos, .memoria, .plugins, .celular, .android])
-    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
+    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .diagnostico, .desenho, .lacos, .memoria, .plugins, .celular, .android])
+    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
+}
+
+/// L3: what the status bar showed lives in Diagnóstico (Interface), found by its words in either language.
+@Test(.appPT) func diagnosticoHoldsTheOldStatusLine() {
+    #expect(PreferencePage.diagnostico.title == "Diagnóstico" && PreferencePage.diagnostico.group == "Interface")
+    #expect(PreferencePage.matching("conexão") == [.diagnostico])
+    #expect(PreferencePage.matching("rss") == [.diagnostico])
+    #expect(PreferencePage.matching("status").contains(.diagnostico))
+    #expect(PreferencePage.requested("diagnostico") == .diagnostico)
+    #expect(!PreferencePage.matching("compacta").contains(.aparencia))   // Completa/Compacta is gone
 }
 
 /// Spec 2026-11-17 §3: Atualizações in the Interface group, found by its words.

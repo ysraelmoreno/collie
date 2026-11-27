@@ -80,7 +80,7 @@ struct NewPaddockForm: Equatable {
         factoryCall = { [client] name, on in try await client.setPaddockFactory(name, on) }
     }
 
-    /// A3: the Fábrica switch and the paddock menu's "Ligar/Desligar fábrica". The new state reaches the UI through the
+    /// A3: the Fábrica switch (sidebar ⋯ › Fábrica…, and ⌘K). The new state reaches the UI through the
     /// paddock event, as any other paddock change.
     @discardableResult
     func setFactory(_ f: Paddock, _ on: Bool) -> Task<Void, Never> {
@@ -194,7 +194,8 @@ struct FactorySwitch: Equatable {
     static func badge(_ p: Paddock) -> String? { p.factory ? tr("cercado fábrica", "factory paddock") : nil }
 }
 
-/// A paddock's menu items (Status, Land, Ligar/Desligar fábrica, Excluir…), for a `Menu` or a `contextMenu`.
+/// A paddock's menu items (Status, Land, Excluir…), for a `Menu` or a `contextMenu`. The Fábrica switch is the
+/// sidebar ⋯ menu's "Fábrica…" (with what it does).
 struct PaddockMenu: View {
     let paddock: Paddock
     let actions: PaddockActions
@@ -210,7 +211,6 @@ struct PaddockMenu: View {
                 ForEach(LandMode.menuOrder, id: \.self) { m in Button(m.label) { actions.land(paddock, m) } }
             }.disabled(actions.busy)
         }
-        Button(FactorySwitch.label(paddock)) { actions.setFactory(paddock, !paddock.factory) }.disabled(actions.busy)
         Divider()
         Button(tr("Excluir…", "Delete…")) { actions.askDelete(paddock) }.disabled(actions.busy)
     }

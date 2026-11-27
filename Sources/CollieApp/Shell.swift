@@ -23,7 +23,7 @@ import CollieTheme
     var focus: (UUID) -> Void = { _ in }
     /// The edit sheet of a terminal.
     var edit: (UUID) -> Void = { _ in }
-    /// The rail's gear. The Ajustes window for now; T5 points it at the embedded Preferências.
+    /// The Preferências sheet over the window (⌘,): the canvas stays mounted underneath.
     var openPreferences: () -> Void = {}
     /// The cards of "O que o Collie faz" the user has seen (the info icon's dot) and the modal that shows them.
     var tour = FeatureTourSeen()
@@ -38,41 +38,28 @@ import CollieTheme
     var onOpenLoops: (LoopsTab) -> Void = { _ in }
     /// M8.3: a closed work's `WorkArchive` (`work.history --id`), for the modal's detail.
     var fetchHistory: (String) async throws -> WorkArchive = { _ in throw CancellationError() }
+    /// Zooms the canvas by a factor around the visible area's center (the floating bar's − and +).
+    var zoom: (CGFloat) -> Void = { _ in }
 }
 
-/// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,
-/// see `CanvasChrome`); Completa (Trilho) adds the paddock rail, the context panel, the tab strip and the status bar in
-/// optional slots around `content`, which keeps one position in the hierarchy: switching structure never remakes the
-/// canvas or the panels. In Completa, `mainView == .preferences` shows `preferences` in place of `content`, which stays
-/// mounted underneath (invisible, no hits, hidden from accessibility): terminals, zoom and positions survive.
-struct Shell<Content: View, Preferences: View>: View {
-    let structure: WindowStructure
+/// The window: the single sidebar (`Sidebar`, ⌘\\ collapses it) beside `content` (docks + canvas). `content` keeps one
+/// position in the hierarchy, so collapsing the sidebar or opening Preferências (a sheet, `ContentView`) never remakes
+/// the canvas or the panels.
+struct Shell<Content: View>: View {
     let ctx: ShellContext
-    @Binding var mainView: MainViewState
+    @Binding var collapsed: Bool
     let content: Content
-    let preferences: Preferences
     /// One-time sandbox notice (UserDefaults via @AppStorage, like the other UI state); a new key for open mode: shown again once.
     @AppStorage("sandbox.openNoticeSeen") private var noticeSeen = false
 
-    init(structure: WindowStructure, ctx: ShellContext, mainView: Binding<MainViewState>,
-         @ViewBuilder content: () -> Content, @ViewBuilder preferences: () -> Preferences) {
-        self.structure = structure; self.ctx = ctx; _mainView = mainView
-        self.content = content(); self.preferences = preferences()
+    init(ctx: ShellContext, collapsed: Binding<Bool>, @ViewBuilder content: () -> Content) {
+        self.ctx = ctx; _collapsed = collapsed; self.content = content()
     }
 
     var body: some View {
-        let full = structure == .full
-        let prefs = full && mainView.isPreferences   // Compacta keeps the Ajustes window
         HStack(spacing: 0) {
-            if full { PaddockRail(ctx: ctx); ContextPanel(ctx: ctx) }
-            VStack(spacing: 0) {
-                if full { MainTabs(ctx: ctx, mainView: $mainView) }
-                ZStack {
-                    content.opacity(prefs ? 0 : 1).allowsHitTesting(!prefs).accessibilityHidden(prefs)
-                    if prefs { preferences.background(EscCatcher { mainView.back() }) }
-                }
-                if full { StatusBar(ctx: ctx) }
-            }
+            Sidebar(ctx: ctx, collapsed: $collapsed)
+            content
         }
         .background(Color.collieBackground)
         .alert(tr("Terminais com sandbox", "Sandboxed terminals"), isPresented: Binding(get: { !noticeSeen }, set: { if !$0 { noticeSeen = true } })) {
@@ -88,161 +75,76 @@ struct Shell<Content: View, Preferences: View>: View {
     }
 }
 
-/// Behind Completa's Preferências: Esc goes back to the canvas. It also takes the keyboard from whatever had it on the
-/// hidden canvas (a terminal would keep receiving the typing). A monitor, like `CanvasViewport`'s: clicking empty space
-/// leaves the window itself as first responder and no view would see the key. Esc stays with a text field or editor
-/// (`NSText`, the field editor included) and with a sheet (another window, or attached to this one).
-private struct EscCatcher: NSViewRepresentable {
-    let back: () -> Void
-    func makeNSView(context: Context) -> Catcher { Catcher() }
-    func updateNSView(_ v: Catcher, context: Context) { v.back = back }
-
-    final class Catcher: NSView {
-        var back: () -> Void = {}
-        private var monitor: Any?
-        override var acceptsFirstResponder: Bool { true }
-        override func keyDown(with e: NSEvent) {}   // typing with nothing focused: no beep (⌘ shortcuts never come here)
-
-        override func viewDidMoveToWindow() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-            guard let window else { return }
-            window.makeFirstResponder(self)
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-                MainActor.assumeIsolated { self?.escape(e) ?? false } ? nil : e
-            }
-        }
-
-        private func escape(_ e: NSEvent) -> Bool {
-            guard e.keyCode == 53, e.window === window, window?.attachedSheet == nil,
-                  !(window?.firstResponder is NSText) else { return false }
-            back()
-            return true
-        }
-    }
-}
-
-extension Shell where Preferences == EmptyView {
-    /// Without Preferências in the main area (Compacta only, and tests of the frame).
-    init(structure: WindowStructure, ctx: ShellContext, @ViewBuilder content: () -> Content) {
-        self.init(structure: structure, ctx: ctx, mainView: .constant(MainViewState()), content: content) { EmptyView() }
-    }
-}
-
-/// Floats over the canvas: Compacta's bar (top left) and zoom (top right), then the banners and, disconnected, the chip.
+/// Floats over the canvas: the thin bar in the top right corner (⌘K, zoom, Ajustar, minimap), then the banners and,
+/// disconnected, the chip.
 struct CanvasChrome<Banners: View>: View {
-    let structure: WindowStructure
     let ctx: ShellContext
     @ViewBuilder let banners: Banners
+    /// The hidden title bar leaves the traffic lights over the window's top left: the sidebar and this bar start below.
+    /// The collapsed sidebar (56 pt) is narrower than the three lights, so the third one sits over the canvas's corner,
+    /// where nothing is drawn (this bar is on the right).
     static var lightsInset: CGFloat { 28 }
 
     var body: some View {
         VStack(spacing: 8) {
-            if structure == .compact {
-                HStack(alignment: .top, spacing: 8) {
-                    CompactBar(ctx: ctx)
-                    Spacer(minLength: 0)
-                    ZoomControls(ctx: ctx).padding(.horizontal, 10).frame(height: 44).floating()
-                }
-                if case .disconnected(let r) = ctx.client.state {
-                    Text(tr("Desconectado: \(r)", "Disconnected: \(r)")).font(.collieMono(11, .medium)).foregroundStyle(Color.collieDanger)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().fill(Color.collieSurface))
-                        .overlay(Capsule().strokeBorder(Color.collieDanger.opacity(0.6), lineWidth: 1))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            HStack { Spacer(minLength: 0); CanvasBar(ctx: ctx) }
+            if case .disconnected(let r) = ctx.client.state {
+                Text(tr("Desconectado: \(r)", "Disconnected: \(r)")).font(.collieMono(11, .medium)).foregroundStyle(Color.collieDanger)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(Color.collieSurface))
+                    .overlay(Capsule().strokeBorder(Color.collieDanger.opacity(0.6), lineWidth: 1))
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             banners
-            if structure == .compact { HostNotice(client: ctx.client) }
+            HostNotice(client: ctx.client)
         }
-        .padding(.horizontal, structure == .compact ? 12 : 0)
-        .padding(.bottom, structure == .compact ? 12 : 0)
-        .padding(.top, structure == .compact ? Self.lightsInset : 0)   // the hidden title bar leaves the traffic lights over the canvas
+        .padding(.horizontal, 12).padding(.bottom, 12)
+        .padding(.top, Self.lightsInset)
+    }
+}
+
+/// The thin bar: the command field (⌘K), zoom − n% +, Ajustar and the minimap switch (off by default).
+struct CanvasBar: View {
+    let ctx: ShellContext
+    @AppStorage(CanvasBar.minimapKey) private var minimap = false
+    static let minimapKey = "canvas.minimap"
+
+    var body: some View {
+        HStack(spacing: 8) {
+            CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 240, maxWidth: 280)
+            // in fullscreen zoom and fit say nothing about what is on screen
+            if ctx.canvas.fullscreen == nil {
+                let pct = Int((ctx.canvas.zoom * 100).rounded())
+                HStack(spacing: 2) {
+                    icon("minus", tr("Afastar", "Zoom out")) { ctx.zoom(1 / 1.2) }
+                    Text("\(pct)%").font(.collieMono(12)).monospacedDigit().foregroundStyle(Color.collieTextSecondary)
+                        .frame(minWidth: 40).accessibilityLabel("Zoom").accessibilityValue("\(pct)%")
+                    icon("plus", tr("Aproximar", "Zoom in")) { ctx.zoom(1.2) }
+                }
+                Button(tr("Ajustar", "Fit"), action: ctx.fit).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                    .help(tr("Ajustar à tela", "Fit to screen"))
+                Toggle(isOn: $minimap) { Image(systemName: "map") }
+                    .toggleStyle(.button).buttonStyle(.plain).foregroundStyle(minimap ? Color.collieText : .collieMuted)
+                    .frame(width: 24, height: 24)
+                    .help(tr("Minimapa", "Minimap")).accessibilityLabel(tr("Minimapa", "Minimap"))
+            }
+        }
+        .padding(.leading, 6).padding(.trailing, 10).frame(height: 40).floating()
+    }
+
+    private func icon(_ name: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name).font(.system(size: 11, weight: .medium)).foregroundStyle(Color.collieTextSecondary)
+                .frame(width: 22, height: 24).contentShape(.rect)
+        }
+        .buttonStyle(.plain).help(label).accessibilityLabel(label)
     }
 }
 
 private extension View {
     func floating() -> some View {
-        let shape = RoundedRectangle(cornerRadius: 14)
+        let shape = RoundedRectangle(cornerRadius: 12)
         return background(shape.fill(Color.collieSurface.opacity(0.92))).overlay(shape.strokeBorder(Color.collieBorder, lineWidth: 1))
-    }
-}
-
-// MARK: - Compacta
-
-private struct CompactBar: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
-            PaddockChips(ctx: ctx)
-            CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
-            TourButton(ctx: ctx, ring: .collieSurface, size: CGSize(width: 28, height: 28), tint: .collieTextSecondary)
-            UsageButton(ctx: ctx)
-        }
-        .padding(.horizontal, 12).frame(height: 44).floating()
-    }
-}
-
-/// Pasto, up to 4 paddock chips (the current one always among them) and "+N" with the rest and "Novo cercado…".
-private struct PaddockChips: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        let client = ctx.client, paddocks = client.paddocks
-        let split = chipSplit(paddocks.map(\.id), current: client.currentPaddock, max: 4)
-        HStack(spacing: 4) {
-            PaddockChip(title: tr("Pasto", "Pasture"), status: nil, selected: client.currentPaddock == nil) { ctx.paddocks.select(nil) }
-            ForEach(split.shown, id: \.self) { id in
-                if let f = paddocks.first(where: { $0.id == id }) {
-                    PaddockChip(title: f.name, status: f.status, selected: client.currentPaddock == id) { ctx.paddocks.select(id) }
-                        .contextMenu { PaddockMenu(paddock: f, actions: ctx.paddocks) }
-                }
-            }
-            if let f = paddocks.first(where: { $0.id == client.currentPaddock }) {
-                Menu { PaddockMenu(paddock: f, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help(tr("Ações do cercado", "Paddock actions")).accessibilityLabel(tr("Ações do cercado", "Paddock actions"))
-            }
-            if ctx.paddocks.busy { ProgressView().controlSize(.small) }
-            Menu {
-                ForEach(paddocks.filter { split.overflow.contains($0.id) }) { f in
-                    Button("\(f.name) · \(f.status.label)") { ctx.paddocks.select(f.id) }
-                }
-                if !split.overflow.isEmpty { Divider() }
-                NewPaddockButton(actions: ctx.paddocks)
-            } label: {
-                Text(split.overflow.isEmpty ? "+" : "+\(split.overflow.count)").font(.collieMono(12, .medium))
-            }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help(split.overflow.isEmpty ? tr("Novo cercado…", "New paddock…") : tr("Mais cercados", "More paddocks"))
-            .accessibilityLabel(split.overflow.isEmpty ? tr("Novo cercado…", "New paddock…") : tr("Mais \(split.overflow.count) cercados", "\(split.overflow.count) more paddocks"))
-        }
-    }
-}
-
-private struct PaddockChip: View {
-    let title: String
-    let status: PaddockStatus?
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let status { PaddockStatusDot(status: status) }
-                Text(title).lineLimit(1)
-            }
-            .font(.collieUI(13, .medium)).foregroundStyle(selected ? Color.collieText : .collieMuted)
-            .padding(.horizontal, 10).frame(height: 28)
-            .background(selected ? Color.collieRaised : .clear, in: .rect(cornerRadius: 9))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(status.map { "\(title) · \($0.label)" } ?? title)
-        .accessibilityValue(status?.label ?? "")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -259,46 +161,13 @@ private struct CommandField: View {
                 Text("⌘K").font(.collieMono(11))
             }
             .font(.collieUI(13)).foregroundStyle(Color.collieMuted)
-            .padding(.horizontal, 10).frame(height: 30)
-            .background(Color.collieSunken, in: .rect(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.collieBorder, lineWidth: 1))
+            .padding(.horizontal, 10).frame(height: 28)
+            .background(Color.collieSunken, in: .rect(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.collieBorder, lineWidth: 1))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .help(tr("Comando (⌘K)", "Command (⌘K)")).accessibilityLabel(tr("Comando", "Command"))
-    }
-}
-
-/// "41% · 12%" (each provider's highest window), "uso" without numbers; opens the usage popover.
-private struct UsageButton: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        let summary = UsageFeed.summary(ctx.usage.reports)
-        Button { ctx.usageOpen.wrappedValue.toggle() } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "gauge")
-                Text(summary ?? tr("uso", "usage")).font(.collieMono(12)).monospacedDigit()
-            }
-            .foregroundStyle(Color.collieTextSecondary).padding(.horizontal, 8).frame(height: 28).contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(tr("Uso dos agentes", "Agent usage")).accessibilityLabel(tr("Uso dos agentes", "Agent usage")).accessibilityValue(summary ?? tr("sem dados", "no data"))
-        .popover(isPresented: ctx.usageOpen) { UsagePopover(client: ctx.client, feed: ctx.usage) }
-    }
-}
-
-struct ZoomControls: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        // in fullscreen zoom and fit say nothing about what is on screen
-        if ctx.canvas.fullscreen == nil { HStack(spacing: 8) {
-            let pct = Int((ctx.canvas.zoom * 100).rounded())
-            Text("\(pct)%").font(.collieMono(12)).monospacedDigit()
-                .foregroundStyle(Color.collieTextSecondary).accessibilityLabel("Zoom").accessibilityValue("\(pct)%")
-            Button(tr("Ajustar à tela", "Fit to screen"), action: ctx.fit).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-        } }
     }
 }
 
@@ -315,35 +184,11 @@ struct HostNotice: View {
     }
 }
 
+// MARK: - Lotes
+
 // MARK: - Completa
 
-/// HERDS: the list (a click opens the sheet with that one) and "Aplicar…".
-struct HerdsSection: View {
-    let ctx: ShellContext
-    @ObservedObject var model: HerdsModel
-    init(ctx: ShellContext) { self.ctx = ctx; model = ctx.herds }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(tr("REBANHOS", "HERDS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
-            ForEach(model.items.prefix(6)) { it in
-                Button { ctx.openHerds(it.id) } label: {
-                    HStack(spacing: 6) {
-                        Text(it.name).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1)
-                        Spacer(minLength: 0)
-                        if it.builtIn { CollieTag(tr("de fábrica", "built-in"), tone: .secondary) }
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 4).contentShape(.rect)
-                }
-                .buttonStyle(.plain).help(it.summary)
-            }
-            Button(tr("Aplicar…", "Apply…")) { ctx.openHerds(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-        }
-        .task(id: ctx.client.state == .connected) { if ctx.client.state == .connected { await model.refresh() } }
-    }
-}
-
-/// LOTES: terminals grouped by effort (name, goal, members). Only a lot without terminals can be deleted (its memories stay).
+/// Lotes (the paddock ⋯ menu's sheet): terminals grouped by effort (name, goal, members). Only a lot without terminals can be deleted (its memories stay).
 struct LotsSection: View {
     let client: DaemonClient
     @State private var deleting: Lot?
@@ -355,7 +200,7 @@ struct LotsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(tr("LOTES", "LOTS")).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
+            Text(tr("Lotes", "Lots")).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).accessibilityAddTraits(.isHeader)
             ForEach(client.lots) { l in
                 let names = LotSummary.memberNames(l, terminals: client.terminals)
                 VStack(alignment: .leading, spacing: 1) {
@@ -397,7 +242,7 @@ struct LotsSection: View {
     }
 }
 
-/// A lot opened from the context panel. Quadro: its board, newest first — agents' text, shown as plain text (never a link or
+/// A lot opened from the Lotes sheet. Quadro: its board, newest first — agents' text, shown as plain text (never a link or
 /// markdown), read again on open and on Atualizar.
 private struct LotView: View {
     let client: DaemonClient
@@ -447,7 +292,7 @@ private struct LotView: View {
     }
 }
 
-/// The context panel's copy for a lot (tested without the app).
+/// The Lotes sheet's copy for a lot (tested without the app).
 enum LotSummary {
     /// Member names in lot order; ids that are no longer terminals are skipped.
     static func memberNames(_ l: Lot, terminals: [TerminalRecord]) -> [String] {
@@ -467,67 +312,5 @@ enum LotSummary {
     static func help(_ l: Lot, names: [String]) -> String {
         [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? tr("sem terminais", "no terminals") : tr("\(names.count) terminal\(names.count == 1 ? "" : "is")", "\(names.count) terminal\(names.count == 1 ? "" : "s")")]
             .compactMap { $0 }.joined(separator: " · ")
-    }
-}
-
-/// The tab strip over Completa's main area: Canvas and Preferências, then the command field (⌘K) and the zoom.
-private struct MainTabs: View {
-    let ctx: ShellContext
-    @Binding var mainView: MainViewState
-
-    var body: some View {
-        HStack(spacing: 0) {
-            tab("Canvas", .canvas)
-            tab(tr("Preferências", "Preferences"), .preferences, shortcut: "⌘,")
-            Spacer(minLength: 8)
-            CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
-            // zoom says nothing about Preferências
-            if !mainView.isPreferences { ZoomControls(ctx: ctx).padding(.leading, 10) }
-        }
-        .padding(.trailing, 10).frame(height: 38)
-        .background(Color.collieSidebar)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.collieBorder).frame(height: 1) }
-    }
-
-    /// The selected tab: lighter fill, full-color text and the accent underline (never color alone), plus the selected trait.
-    private func tab(_ title: String, _ view: MainView, shortcut: String? = nil) -> some View {
-        let on = mainView.current == view
-        return Button { mainView.show(view) } label: {
-            HStack(spacing: 8) {
-                Text(title).font(.collieUI(13, on ? .medium : .regular))
-                if let shortcut { Text(shortcut).font(.collieMono(11)).opacity(0.7).accessibilityHidden(true) }
-            }
-            .foregroundStyle(on ? Color.collieText : .collieMuted)
-            .padding(.horizontal, 16).frame(maxHeight: .infinity)
-            .background(on ? Color.collieBackground : .clear)
-            .overlay(alignment: .bottom) { if on { Rectangle().fill(Color.collieAccent).frame(height: 2) } }
-            .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? .isSelected : [])
-    }
-}
-
-private struct StatusBar: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        HStack(spacing: 14) {
-            switch ctx.client.state {
-            case .connected:
-                HStack(spacing: 6) { Circle().fill(Color.collieAccent).frame(width: 7, height: 7); Text(tr("conectado", "connected")) }
-            case .disconnected(let r):
-                HStack(spacing: 6) { Circle().fill(Color.collieDanger).frame(width: 7, height: 7); Text(tr("desconectado: \(r)", "disconnected: \(r)")).lineLimit(1) }
-            }
-            PanelMeter(client: ctx.client)
-            if ctx.canvas.fullscreen != nil { Text(tr("tela cheia", "fullscreen")).foregroundStyle(Color.collieTextSecondary) }
-            HostNotice(client: ctx.client)
-            Spacer(minLength: 0)
-        }
-        .font(.collieMono(11)).foregroundStyle(Color.collieMuted)
-        .padding(.horizontal, 12).frame(height: 26)
-        .background(Color.collieSidebar)
-        .overlay(alignment: .top) { Rectangle().fill(Color.collieBorder).frame(height: 1) }
     }
 }

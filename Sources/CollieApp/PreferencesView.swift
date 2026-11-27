@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 import ColliePlugins
 
-/// Nine pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
+/// Ten pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
 extension DesignFirst {
     var label: String { switch self { case .artifact: tr("Página (Prévia)", "Page (Preview)"); case .figcraft: "FigCraft"; case .ask: tr("Perguntar", "Ask") } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
@@ -85,8 +85,10 @@ struct FontRow: Equatable, Identifiable {
 
 struct PreferencesView: View {
     let client: DaemonClient
-    /// Completa's tab (`MainViewState.page`): the page survives this view being unmounted. Nil in the Ajustes window.
+    /// The page last shown (`ContentView`): it survives the sheet being closed and this view unmounted.
     var remembered: Binding<PreferencePage>?
+    /// The sheet's "Fechar" (and Esc).
+    var close: () -> Void = {}
     @State private var designFirst = DesignFirst.artifact
     @State private var sandboxMode = SandboxMode.open
     @State private var googleFonts = true
@@ -107,17 +109,12 @@ struct PreferencesView: View {
     @State private var gallery = ThemeGalleryModel.shared
     /// Read in `body`: a theme swap evaluates this root again and the dynamic colors below resolve anew.
     @Environment(\.collieThemeRevision) private var themeRevision
-    @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.language) private var language = LanguageSetting.system.rawValue
     @State private var restartNotice = false
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
     @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
     @AppStorage(Notifier.confirmKey) private var confirmNotification = Notifier.confirmDefaultOn
-
-    private var structures: [(WindowStructure, String, String)] { [
-        (.compact, tr("Compacta", "Compact"), tr("canvas + cabeçalho flutuante", "canvas + floating header")),
-        (.full, tr("Completa", "Full"), tr("barra lateral, cercados e status", "sidebar, paddocks and status"))] }
 
     var body: some View {
         let _ = themeRevision
@@ -126,11 +123,14 @@ struct PreferencesView: View {
             Rectangle().fill(Color.collieBorder).frame(width: 1)
             VStack(spacing: 0) {
                 PanelHeader(page.title, subtitle: tr("Preferências", "Preferences"))
+                    .overlay(alignment: .trailing) {
+                        Button(tr("Fechar", "Close"), action: close).keyboardShortcut(.cancelAction).controlSize(.small).padding(.trailing, 14)
+                    }
                 ScrollView { pageContent.padding(20).frame(maxWidth: .infinity, alignment: .leading) }
             }
             .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)   // free size: the Ajustes scene sets its window's, the main area fills
+        .frame(maxWidth: .infinity, maxHeight: .infinity)   // free size: the sheet sets it (`ContentView`)
         .background(Color.collieBackground)
         .onAppear {
             AppearanceSettings.normalize(.standard)
@@ -207,9 +207,10 @@ struct PreferencesView: View {
     @ViewBuilder
     private var pageContent: some View {
         switch page {
-        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection; languageSection }
+        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; languageSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
+        case .diagnostico: DiagnosticsPreferences(client: client)
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
         case .lacos: VStack(alignment: .leading, spacing: 22) { loopTrustSection; loopModelSection }
         case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CuratorPreferences(client: client); CursorMemoryPreferences(client: client) }
@@ -221,20 +222,6 @@ struct PreferencesView: View {
 
     private var themeSection: some View {
         section(tr("Tema", "Theme")) { ThemeGallery() }
-    }
-
-    private var structureSection: some View {
-        section(tr("Estrutura", "Layout")) {
-            HStack(spacing: 12) {
-                ForEach(structures, id: \.0) { s in
-                    ChoiceCard(s.1, subtitle: s.2, selected: structure == s.0.rawValue, action: { structure = s.0.rawValue }) {
-                        miniature(currentPalette, sidebar: s.0 == .full)
-                    }
-                }
-            }
-            Text(tr("Muda só a moldura. Terminais, guias e painéis ficam onde estão.", "Only changes the frame. Terminals, tabs and panels stay where they are."))
-                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-        }
     }
 
     private var languageSection: some View {
@@ -475,29 +462,73 @@ struct PreferencesView: View {
         }
     }
 
-    private var currentPalette: Palette? { gallery.selectedPalette }
-
     private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
             content()
         }
     }
+}
 
-    /// Rectangles in the theme's colors; `nil` palette (Sistema) = the current appearance's colors.
-    private func miniature(_ p: Palette?, sidebar: Bool) -> some View {
-        let bg = p.map { Color(nsColor: $0.background.nsColor) } ?? .collieBackground
-        let surface = p.map { Color(nsColor: $0.surface.nsColor) } ?? .collieSurface
-        let side = p.map { Color(nsColor: $0.sidebar.nsColor) } ?? .collieSidebar
-        let accent = p.map { Color(nsColor: $0.accent.nsColor) } ?? .collieAccent
-        return HStack(spacing: 4) {
-            if sidebar { Rectangle().fill(side).frame(width: 22) }
-            VStack(spacing: 4) {
-                Capsule().fill(accent).frame(width: 30, height: 4).frame(maxWidth: .infinity, alignment: .leading)
-                RoundedRectangle(cornerRadius: 4).fill(surface)
-            }.padding(6)
+/// Preferências › Diagnóstico: what the old status bar showed, one line of explanation each.
+struct DiagnosticsPreferences: View {
+    let client: DaemonClient
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            row(tr("Conexão", "Connection"), tr("O app conversa com o serviço do Collie (collied), que mantém os terminais vivos.",
+                                                 "The app talks to Collie's service (collied), which keeps the terminals alive.")) {
+                switch client.state {
+                case .connected:
+                    HStack(spacing: 6) { Circle().fill(Color.collieAccent).frame(width: 7, height: 7); Text(tr("conectado", "connected")) }
+                case .disconnected(let r):
+                    HStack(spacing: 6) { Circle().fill(Color.collieDanger).frame(width: 7, height: 7); Text(tr("desconectado: \(r)", "disconnected: \(r)")) }
+                }
+            }
+            row(tr("Memória e painéis", "Memory and panels"),
+                tr("Memória residente (RSS) do app e quantos painéis de cada plug-in estão abertos, relida a cada 5 s.",
+                   "The app's resident memory (RSS) and how many panels of each plug-in are open, read again every 5 s.")) {
+                PanelMeter(client: client)
+            }
+            if client.hostStatus == .replaced {
+                row(tr("Painéis", "Panels"), tr("Outra janela do Collie está hospedando os painéis.", "Another Collie window is hosting the panels.")) {
+                    Button(tr("Retomar", "Take over")) { client.resumeHost() }
+                }
+            }
         }
-        .frame(height: 64).background(bg)
-        .accessibilityHidden(true)
+    }
+
+    private func row<C: View>(_ title: String, _ why: String, @ViewBuilder _ value: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            Text(why).font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
+            value().font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary).textSelection(.enabled)
+        }
     }
 }
+
+/// Spec §6.3 (reduced): the app's resident memory and the open panels per plug-in. Per-webview RAM has no public
+/// API (WebKit renders in separate WebContent processes), so it is not shown.
+struct PanelMeter: View {
+    let client: DaemonClient
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 5)) { _ in
+            let counts = Dictionary(grouping: client.panels, by: \.pluginId).map { "\($0.key) \($0.value.count)" }.sorted()
+            Text(([Self.rss()] + counts).joined(separator: " · ")).monospacedDigit()
+                .help(tr("RSS do app e painéis abertos por plug-in. A RAM de cada webview não tem API pública (processo WebContent do WebKit).", "App RSS and open panels per plug-in. Each webview's RAM has no public API (WebKit's WebContent process)."))
+        }
+    }
+
+    private static func rss() -> String {
+        var info = mach_task_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+            }
+        }
+        return kr == KERN_SUCCESS ? "\(info.resident_size / 1_048_576) MB" : "? MB"
+    }
+}
+

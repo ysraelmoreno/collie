@@ -55,21 +55,4 @@ private func work(phase: WorkLoopState.Phase? = .check, tasks: [WorkTask]? = nil
         #expect(LoopCard.make(work: work(state: .finished), paddock: pad) == nil)
         #expect(LoopCard.make(work: work(), paddock: UUID()) == nil)
     }
-
-    @Test func sectionTitlesNeverHaveHistory() {
-        for loops in [LoopSection.make(work: work(), paddock: pad), .hidden] {
-            #expect(!ContextPanel.sectionTitles(agents: 1, panels: 0, loops: loops).contains { $0.hasPrefix("HISTÓRICO") })
-        }
-    }
-
-    @Test func verTudoCallsTheHookOnTheRunningTab() {
-        var got: [LoopsTab] = []
-        let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-card-\(UUID())")))
-        var ctx = ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
-                               usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
-                               herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in })
-        ctx.onOpenLoops = { got.append($0) }
-        ContextPanel.openLoops(ctx: ctx)
-        #expect(got == [.running])
-    }
 }

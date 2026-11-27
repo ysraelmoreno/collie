@@ -4,13 +4,14 @@ import CollieCore
 /// Preferências option B: the sidebar's pages, in group order, with the search keywords of
 /// `docs/pages/preferencias-b/index.html` (`NAV`/`PG`).
 enum PreferencePage: String, CaseIterable {
-    case aparencia, terminal, atualizacoes, desenho, lacos, memoria, plugins, celular, android
+    case aparencia, terminal, atualizacoes, diagnostico, desenho, lacos, memoria, plugins, celular, android
 
     private var titles: (pt: String, en: String) {
         switch self {
         case .aparencia: ("Aparência", "Appearance")
         case .terminal: ("Terminal e fontes", "Terminal and fonts")
         case .atualizacoes: ("Atualizações", "Updates")
+        case .diagnostico: ("Diagnóstico", "Diagnostics")
         case .desenho: ("Desenho e sandbox", "Design and sandbox")
         case .lacos: ("Laços", "Loops")
         case .memoria: ("Memória", "Memory")
@@ -28,7 +29,7 @@ enum PreferencePage: String, CaseIterable {
 
     var group: String {
         switch self {
-        case .aparencia, .terminal, .atualizacoes: "Interface"
+        case .aparencia, .terminal, .atualizacoes, .diagnostico: "Interface"
         case .desenho, .lacos, .memoria, .plugins: "Agentes"
         case .celular, .android: "Dispositivos"
         }
@@ -39,6 +40,7 @@ enum PreferencePage: String, CaseIterable {
         case .aparencia: "◐"
         case .terminal: "›_"
         case .atualizacoes: "↻"
+        case .diagnostico: "∿"
         case .desenho: "✎"
         case .lacos: "⟳"
         case .memoria: "◈"
@@ -51,7 +53,8 @@ enum PreferencePage: String, CaseIterable {
     /// Portuguese and English together: the search finds a page by either language's words.
     var keywords: String {
         switch self {
-        case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra idioma língua theme palette dark light system structure frame full compact sidebar language"
+        case .aparencia: "tema paleta escuro claro sistema idioma língua theme palette dark light system language"
+        case .diagnostico: "diagnóstico conexão conectado desconectado ram rss processo painéis contadores status diagnostics connection connected disconnected process panels counters"
         case .terminal: "terminal fonte tamanho google fonts baixar família font size download family"
         case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior update upgrade version new install skip rollback previous"
         case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar where to draw preview ask open strict shepherd engine download install remove update reinstall"

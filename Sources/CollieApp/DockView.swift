@@ -27,7 +27,6 @@ struct DockView: View {
     let store: PanelViewStore
     @State private var selected: UUID?
     @State private var saveSize: Task<Void, Never>?
-    @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
 
     private var panels: [Panel] { client.panels.filter { $0.placement == placement } }
     private var sizeKey: String { "dock.\(placement.rawValue).size" }
@@ -62,11 +61,7 @@ struct DockView: View {
         .onReceive(NotificationCenter.default.publisher(for: .collieFocusPanel)) { n in
             if let id = n.object as? UUID, panels.contains(where: { $0.id == id }) { selected = id }
         }
-        // Compacta: the dock is a card inset 12, radius 18. Values, not branches: the panel view keeps its identity.
         .background(Color.collieSidebar)
-        .clipShape(.rect(cornerRadius: compact ? 18 : 0))
-        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 0).strokeBorder(Color.collieBorder.opacity(compact ? 1 : 0), lineWidth: 1))
-        .padding(compact ? 12 : 0)
         .frame(minWidth: bottom ? 0 : 200, idealWidth: bottom ? nil : stored(260),
                minHeight: bottom ? 120 : 0, idealHeight: bottom ? stored(220) : nil)
         .onGeometryChange(for: CGFloat.self, of: { [bottom = placement == .dockBottom] in bottom ? $0.size.height : $0.size.width }) { size in
@@ -79,8 +74,6 @@ struct DockView: View {
             }
         }
     }
-
-    private var compact: Bool { WindowStructure(rawValue: structure) != .full }
 
     private func stored(_ fallback: CGFloat) -> CGFloat {
         let v = UserDefaults.standard.double(forKey: sizeKey)

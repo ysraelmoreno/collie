@@ -44,15 +44,16 @@ enum Config {
     @State private var error: String?
     @State private var paletteOpen = false
     @State private var herdsOpen = false
-    /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas. Here, not in
-    /// `ContentView`: ⌘, with the main window closed sets it and the window reopens already on the tab.
-    @State private var mainView = MainViewState()
+    /// The Preferências sheet. Here, not in `ContentView`: ⌘, with the main window closed sets it and the window
+    /// reopens with the sheet up.
+    @State private var preferencesOpen = false
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeSelection.dark.rawValue
     /// Bumped on every theme swap and set on the roots as an environment value: SwiftUI views that read it are
     /// evaluated again and resolve their dynamic colors anew. The roots' `id` stays (a new one would recreate the terminals).
     @State private var themeRevision = 0
 
     init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard); Self.renameDefaults(in: .standard)
+             Self.migrateStructure(.standard)
              L10n.set(Lang.resolve(.parse(UserDefaults.standard.string(forKey: AppearanceKeys.language))))   // before any view
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
              PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
@@ -88,6 +89,17 @@ enum Config {
     /// Preference keys from before the herding vocabulary → their names now.
     static let renamedKeys = ["floor.current": PaddockActions.currentKey, "floor.repo": PaddockActions.repoKey,
                               "partitura.cwd": HerdsSheet.cwdKey, "new.maestro": "new.shepherd"]
+    /// The sidebar's collapsed state (⌘\), the single structure's only memory of Compacta.
+    static let sidebarCollapsedKey = "sidebar.collapsed"
+    /// The old Completa/Compacta choice (removed in L3).
+    static let legacyStructureKey = "appearance.structure"
+    /// Compacta saved → the sidebar starts collapsed (it plays Compacta's part); the old key is read once and removed.
+    static func migrateStructure(_ d: UserDefaults) {
+        guard let old = d.string(forKey: legacyStructureKey) else { return }
+        if old == "compact" { d.set(true, forKey: sidebarCollapsedKey) }
+        d.removeObject(forKey: legacyStructureKey)
+    }
+
     /// Each old key's value under its new name, unless that one is set (the old key stays). Runs on every start.
     static func renameDefaults(in d: UserDefaults) {
         for (old, new) in renamedKeys where d.object(forKey: new) == nil {
@@ -97,7 +109,8 @@ enum Config {
 
     var body: some Scene {
         Window("Collie", id: "main") {
-            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen, mainView: $mainView)
+            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen,
+                        preferencesOpen: $preferencesOpen)
                 .sheet(isPresented: .constant(!consented)) { consentSheet }
                 .task(id: consented) { if consented { startService() } }
                 .onAppear { ThemeGalleryModel.shared.reapply() }   // NSApp did not exist at init
@@ -108,7 +121,7 @@ enum Config {
         .windowStyle(.hiddenTitleBar)   // no title bar band; the traffic lights stay, over the content (the sidebar/bar are inset)
         .commands {
             // in place of the standard Ajustes… item, which always opens the Ajustes window
-            CommandGroup(replacing: .appSettings) { PreferencesMenuItem(mainView: $mainView) }
+            CommandGroup(replacing: .appSettings) { PreferencesMenuItem(open: $preferencesOpen) }
             CommandGroup(after: .newItem) {
                 Divider()
                 Button(tr("Exportar dados do Collie…", "Export Collie data…")) { DataBackupMenu.export(client) }
@@ -125,12 +138,6 @@ enum Config {
             CommandGroup(after: .appTermination) {
                 Button(tr("Parar serviço", "Stop service")) { stopService() }
             }
-        }
-        // the window's size lives here, not in the view: the same view also fills Completa's main area (`Shell`)
-        Settings {
-            PreferencesView(client: client).frame(minWidth: 640, idealWidth: 820, minHeight: 480, idealHeight: 600)
-                .environment(\.collieThemeRevision, themeRevision)
-                .onReceive(NotificationCenter.default.publisher(for: .collieThemeChanged)) { _ in themeRevision += 1 }
         }
     }
 
@@ -203,14 +210,18 @@ enum Config {
     }
 }
 
-/// The app menu's "Preferências…" (⌘,): the same decision as every other entry (`ContentView.openPreferences`).
+/// The app menu's "Preferências…" (⌘,): the sheet over the main window, which comes back (or forward) if closed.
+/// Over another sheet or dialog it is dropped, like ⌘K: it would pop up once that one closes.
 private struct PreferencesMenuItem: View {
-    @Binding var mainView: MainViewState
-    @Environment(\.openSettings) private var openSettings
+    @Binding var open: Bool
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Button(tr("Preferências…", "Preferences…")) { ContentView.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
-            .keyboardShortcut(",")
+        Button(tr("Preferências…", "Preferences…")) {
+            guard !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) else { return }
+            open = true
+            openWindow(id: "main")
+        }
+        .keyboardShortcut(",")
     }
 }
 
@@ -234,11 +245,11 @@ struct ContentView: View {
     @State private var historyOpener: HistoryOpener?
     @Binding var paletteOpen: Bool
     @Binding var herdsOpen: Bool
-    @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue
+    @AppStorage(CollieApp.sidebarCollapsedKey) private var sidebarCollapsed = false
     @Environment(\.collieThemeRevision) private var themeRevision
-    @Environment(\.openSettings) private var openSettings
-    @Environment(\.openWindow) private var openWindow
-    @Binding var mainView: MainViewState
+    @Binding var preferencesOpen: Bool
+    /// The page last shown in the sheet: it is unmounted on close, so reopening would otherwise restart on the first page.
+    @State private var preferencesPage = PreferencePage.aparencia
     @State private var paddocks: PaddockActions
     @State private var usage = UsageFeed()
     @State private var paletteRun: PaletteCommand?   // run once the palette sheet is gone
@@ -280,9 +291,9 @@ struct ContentView: View {
     private let notifier = Notifier.shared
 
     init(client: DaemonClient, canvas: CanvasState, error: Binding<String?>, paletteOpen: Binding<Bool>, herdsOpen: Binding<Bool>,
-         mainView: Binding<MainViewState>) {
+         preferencesOpen: Binding<Bool>) {
         self.client = client; self.canvas = canvas; _error = error; _paletteOpen = paletteOpen; _herdsOpen = herdsOpen
-        _mainView = mainView
+        _preferencesOpen = preferencesOpen
         _herds = StateObject(wrappedValue: HerdsModel(call: { cmd, args throws(ProtocolError) in try await client.adminCall(cmd, args) },
                                                                 nodeName: { client.nodeName($0) }))
         _paddocks = State(initialValue: PaddockActions(client: client))
@@ -311,15 +322,13 @@ struct ContentView: View {
         }.banner(Color.collieAttention, fill: Color.collieAttentionTint)
     }
 
-    /// Trilho hides the Pasto while it is empty (it is not a paddock): leave it for the first paddock. Only once connected,
-    /// when the snapshot (terminals, panels) is already mirrored; Compacta keeps its Pasto chip.
+    /// The sidebar hides the Pasto while it is empty (it is not a paddock): leave it for the first paddock. Only once
+    /// connected, when the snapshot (terminals, panels) is already mirrored.
     private func settlePasto() {
-        guard structure == .full, client.state == .connected else { return }
-        let has = PaddockRail.pastoHasContent(terminals: client.terminals, panels: client.panels)
-        if let id = PaddockRail.fallbackPaddock(paddocks: client.paddocks, current: client.currentPaddock, pastoHasContent: has) { paddocks.select(id) }
+        guard client.state == .connected else { return }
+        let has = SidebarModel.pastoHasContent(terminals: client.terminals, panels: client.panels)
+        if let id = SidebarModel.fallbackPaddock(paddocks: client.paddocks, current: client.currentPaddock, pastoHasContent: has) { paddocks.select(id) }
     }
-
-    private var structure: WindowStructure { WindowStructure(rawValue: structureRaw) ?? .compact }
 
     /// The opt-in daily notification: every 10 minutes, at most one a day (`MemoryDigestNotice`); never throws.
     private func dailyDigestLoop() async {
@@ -353,7 +362,8 @@ struct ContentView: View {
                          if historyOpener == nil { historyOpener = .live(client: client, focus: { notifier.onFocus?($0) }) }
                          await historyOpener?.show(id) },
                      historyNotice: { historyOpener?.message }, onOpenLoops: { sheet = .loops($0) },
-                     fetchHistory: { [client] in try await HistoryOpener.archive($0, client: client) })
+                     fetchHistory: { [client] in try await HistoryOpener.archive($0, client: client) },
+                     zoom: { [canvas, viewport] in canvas.zoom(by: $0, around: CGPoint(x: viewport.width / 2, y: viewport.height / 2)) })
     }
 
     /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.
@@ -388,16 +398,9 @@ struct ContentView: View {
         }
     }
 
-    /// Every way into Preferências (⌘, the palette, the rail's gear, `collieOpenPreferences`) comes through here.
-    func openPreferences() { Self.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
-
-    /// The one decision: Completa shows the tab in the main window, Compacta opens the Ajustes window. Static for the
-    /// app menu, which also works with the main window closed: `openWindow` brings it back (or forward), on the tab.
-    static func openPreferences(mainView: Binding<MainViewState>, openSettings: OpenSettingsAction, openWindow: OpenWindowAction) {
-        guard AppearanceSettings(defaults: .standard).structure == .full else { openSettings(); return }
-        mainView.wrappedValue.show(.preferences)
-        openWindow(id: "main")
-    }
+    /// Every way into Preferências (the palette, the sidebar's foot, the tour, `collieOpenPreferences`) comes through
+    /// here; ⌘, sets the same flag (`PreferencesMenuItem`). The sheet sits over the canvas, which stays mounted.
+    func openPreferences() { preferencesOpen = true }
 
     /// Each command runs the same closure as its button.
     private var paletteCommands: [PaletteCommand] {
@@ -426,22 +429,22 @@ struct ContentView: View {
 
     var body: some View {
         let _ = themeRevision   // a theme swap evaluates this root again (its id stays, so nothing is recreated)
-        // Built once: the shell only adds chrome around it, so switching structure keeps the canvas and panels.
-        Shell(structure: structure, ctx: shell, mainView: $mainView) {
+        // Built once: the shell only adds the sidebar beside it, so collapsing it or opening Preferências keeps the canvas.
+        Shell(ctx: shell, collapsed: $sidebarCollapsed) {
             DockShell(client: client, store: store) {
                 CanvasView(client: client, canvas: canvas, root: Config.root, store: store,
                            onNewTerminal: { sheet = .newTerminal($0) }, onOpenPanel: { sheet = .openPanel($0) },
                            onEdit: { sheet = .edit($0) },
                            onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd },
-                           active: !(structure == .full && mainView.isPreferences))
+                           active: !preferencesOpen)
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
-                .overlay(alignment: .top) { CanvasChrome(structure: structure, ctx: shell) { banners } }
+                .overlay(alignment: .top) { CanvasChrome(ctx: shell) { banners } }
             }
-        } preferences: {
-            PreferencesView(client: client, remembered: $mainView.page)
         }
-        // Compacta has no tab strip (Preferências there is the Ajustes window): coming back to Completa starts on the canvas
-        .onChange(of: structureRaw) { if structure != .full { mainView.back() } }
+        .sheet(isPresented: $preferencesOpen) {
+            PreferencesView(client: client, remembered: $preferencesPage) { preferencesOpen = false }
+                .frame(minWidth: 680, idealWidth: 860, maxWidth: .infinity, minHeight: 480, idealHeight: 620, maxHeight: .infinity)
+        }
         .paddockDialogs(paddocks)
         .sheet(isPresented: $paletteOpen, onDismiss: { paletteRun?.run(); paletteRun = nil }) {
             CommandPalette(commands: paletteCommands) { paletteRun = $0; paletteOpen = false }
@@ -482,7 +485,7 @@ struct ContentView: View {
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
         // the Design panel's Abrir Preferências (a plug-in has no openSettings): open Preferências on the page it names.
-        // The page goes through the defaults mailbox in both structures: `PreferencesView` reads it wherever it is shown.
+        // The page goes through the defaults mailbox: `PreferencesView` reads it on appear and while shown.
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("collieOpenPreferences"))) { n in
             if let p = PreferencePage.requested(n.object) { UserDefaults.standard.set(p.rawValue, forKey: PreferencePage.requestKey) }
             openPreferences()
@@ -557,31 +560,6 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 480, minHeight: 320)
-    }
-}
-
-/// Spec §6.3 (reduced): the app's resident memory and the open panels per plug-in. Per-webview RAM has no public
-/// API (WebKit renders in separate WebContent processes), so it is not shown.
-struct PanelMeter: View {
-    let client: DaemonClient
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 5)) { _ in
-            let counts = Dictionary(grouping: client.panels, by: \.pluginId).map { "\($0.key) \($0.value.count)" }.sorted()
-            Text(([Self.rss()] + counts).joined(separator: " · ")).monospacedDigit()
-                .help(tr("RSS do app e painéis abertos por plug-in. A RAM de cada webview não tem API pública (processo WebContent do WebKit).", "App RSS and open panels per plug-in. Each webview's RAM has no public API (WebKit's WebContent process)."))
-        }
-    }
-
-    private static func rss() -> String {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
-        let kr = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
-            }
-        }
-        return kr == KERN_SUCCESS ? "\(info.resident_size / 1_048_576) MB" : "? MB"
     }
 }
 

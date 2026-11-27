@@ -22,7 +22,7 @@ private func loopWork() -> Work {
     return w
 }
 
-@MainActor @Suite(.appPT) struct ContextPanelHistoryTests {
+@MainActor @Suite(.appPT) struct HistorySectionTests {
     @Test func sectionOnlyWithAtLeastOneItem() {
         #expect(!HistorySection.make([]).visible)
         #expect(HistorySection.make(entries(1)).visible)
@@ -69,12 +69,5 @@ private func loopWork() -> Work {
         #expect(HistorySection.make(feed.history).rows.count == 5)
         feed.follow(paddock: nil, name: nil)
         #expect(!HistorySection.make(feed.history).visible)
-    }
-
-    /// M8.2: HISTÓRICO left the Trilho (the Laços modal shows it); the model above stays for the modal.
-    @Test func historyIsNoLongerATrilhoSection() {
-        let loops = LoopSection.make(work: loopWork(), paddock: pad)
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: loops) == ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES", "LAÇOS"])
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: .hidden) == ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES"])
     }
 }

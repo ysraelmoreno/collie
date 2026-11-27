@@ -82,9 +82,9 @@ grep -qx 'filtro sem suíte: NoSuchTests' "$T/err" || fail "names it: $(cat "$T/
 [ ! -e "$FAKE/args" ] || fail "nothing runs with a bad filter"
 run M11.1; [ "$rc" = 0 ] || fail "an area case does not depend on unrelated names of the full list"
 # pasted names (the real false negative: two suites glued in one word)
-fresh; sed -i '' 's/ LoopSectionTests ContextPanelLoopsTests / LoopSectionTestsContextPanelLoopsTests /' "$R/scripts/laco-check.sh"
-grep -q LoopSectionTestsContextPanelLoopsTests "$R/scripts/laco-check.sh" || fail "test setup: glue"
-run --full; [ "$rc" != 0 ] && grep -qx 'filtro sem suíte: LoopSectionTestsContextPanelLoopsTests' "$T/err" || fail "pasted names: $(cat "$T/err")"
+fresh; sed -i '' 's/ LoopSectionTests LoopRowsTests / LoopSectionTestsLoopRowsTests /' "$R/scripts/laco-check.sh"
+grep -q LoopSectionTestsLoopRowsTests "$R/scripts/laco-check.sh" || fail "test setup: glue"
+run --full; [ "$rc" != 0 ] && grep -qx 'filtro sem suíte: LoopSectionTestsLoopRowsTests' "$T/err" || fail "pasted names: $(cat "$T/err")"
 fresh; sed -i '' 's/area=(AskClockTests AskTests /area=(AskClockTests AskTestsRemoteAskTests /' "$R/scripts/laco-check.sh"
 run M11.1; [ "$rc" != 0 ] && grep -qx 'filtro sem suíte: AskTestsRemoteAskTests' "$T/err" || fail "pasted in area: $(cat "$T/err")"
 # a prefix of a real suite is no suite (AskTest would match AskTests unanchored)

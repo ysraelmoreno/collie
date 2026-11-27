@@ -94,7 +94,7 @@ enum SidebarModel {
         return letters.isEmpty ? "?" : letters.uppercased()
     }
 
-    // ponytail: moved from `PaddockRail` (deleted in L3); its copies go with it.
+    // ponytail: moved from the old paddock rail (gone in L3); its copies go with it.
 
     /// Whether the Pasto (terminals and canvas panels outside any paddock) has anything in it. Docked panels belong to every paddock.
     static func pastoHasContent(terminals: [TerminalRecord], panels: [Panel]) -> Bool {
@@ -105,5 +105,10 @@ enum SidebarModel {
     /// is no paddock to show instead.
     static func showsPasto(hasContent: Bool, hasPaddocks: Bool, current: UUID?) -> Bool {
         hasContent || !hasPaddocks || current == nil
+    }
+
+    /// The paddock to move to when the Pasto is selected, empty, and a real paddock exists; nil: stay.
+    static func fallbackPaddock(paddocks: [Paddock], current: UUID?, pastoHasContent: Bool) -> UUID? {
+        current == nil && !pastoHasContent ? paddocks.first?.id : nil
     }
 }

@@ -50,8 +50,6 @@ public enum ThemeSelection: Equatable, Sendable {
     }
 }
 
-public enum WindowStructure: String, CaseIterable, Sendable { case compact, full }
-
 public struct TerminalFontChoice: Sendable, Equatable {
     public var family: String
     public var size: CGFloat
@@ -65,7 +63,7 @@ public struct TerminalFontChoice: Sendable, Equatable {
 }
 
 public enum AppearanceKeys {
-    public static let theme = "appearance.theme", structure = "appearance.structure",
+    public static let theme = "appearance.theme",
                       terminalFamily = "appearance.terminalFamily", terminalSize = "appearance.terminalSize"
     /// `system|pt|en`: the app's own copy of Preferences › Interface › "Idioma", read in `CollieApp.init` before any view.
     public static let language = "collie.language"
@@ -73,17 +71,15 @@ public enum AppearanceKeys {
 
 public struct AppearanceSettings: Equatable {
     public var theme: ThemeSelection
-    public var structure: WindowStructure
     public var terminalFont: TerminalFontChoice
 
-    public init(theme: ThemeSelection, structure: WindowStructure, terminalFont: TerminalFontChoice) {
-        self.theme = theme; self.structure = structure; self.terminalFont = terminalFont
+    public init(theme: ThemeSelection, terminalFont: TerminalFontChoice) {
+        self.theme = theme; self.terminalFont = terminalFont
     }
 
-    /// Tolerant read: unknown values fall back to Escuro, Compacta, DM Mono 13.
+    /// Tolerant read: unknown values fall back to Escuro, DM Mono 13.
     public init(defaults: UserDefaults) {
         theme = defaults.string(forKey: AppearanceKeys.theme).flatMap(ThemeSelection.init(rawValue:)) ?? .dark
-        structure = defaults.string(forKey: AppearanceKeys.structure).flatMap(WindowStructure.init) ?? .compact
         let family = defaults.string(forKey: AppearanceKeys.terminalFamily).flatMap { TerminalFontChoice.families.contains($0) ? $0 : nil } ?? "DM Mono"
         let raw = defaults.double(forKey: AppearanceKeys.terminalSize)
         let size = raw == 0 ? TerminalFontChoice.default.size : min(max(CGFloat(raw).rounded(), TerminalFontChoice.sizes.lowerBound), TerminalFontChoice.sizes.upperBound)
@@ -94,21 +90,11 @@ public struct AppearanceSettings: Equatable {
     public static func normalize(_ defaults: UserDefaults) {
         let s = AppearanceSettings(defaults: defaults)
         // only changed keys: an unchanged write still notifies the observers
-        for (k, v) in [(AppearanceKeys.theme, s.theme.rawValue), (AppearanceKeys.structure, s.structure.rawValue),
+        for (k, v) in [(AppearanceKeys.theme, s.theme.rawValue),
                        (AppearanceKeys.terminalFamily, s.terminalFont.family)] where defaults.string(forKey: k) != v {
             defaults.set(v, forKey: k)
         }
         let size = Double(s.terminalFont.size)
         if defaults.double(forKey: AppearanceKeys.terminalSize) != size { defaults.set(size, forKey: AppearanceKeys.terminalSize) }
     }
-}
-
-/// Splits chips into the shown ones (order kept, `current` always among them) and the overflow menu.
-public func chipSplit<T: Equatable>(_ items: [T], current: T?, max: Int) -> (shown: [T], overflow: [T]) {
-    var room = max - (current.map(items.contains) == true ? 1 : 0)
-    var shown: [T] = [], overflow: [T] = []
-    for i in items {
-        if i == current { shown.append(i) } else if room > 0 { shown.append(i); room -= 1 } else { overflow.append(i) }
-    }
-    return (shown, overflow)
 }

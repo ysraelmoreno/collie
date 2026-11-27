@@ -10,7 +10,7 @@ case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|
   p1) t --filter WorkLoopReviewTests --filter ReviewVerdictTests --filter WorkLoopTests --filter AttemptMachineTests ;;
   p2) t --filter AttemptMachineTests --filter WorkLoopTests --filter LoopJournalTests --filter AskTests --filter WorkLoopReviewTests ;;
   c1) t --filter WorkLoopReviewTests --filter AttemptMachineTests --filter WorkLoopTests --filter PaddockFactoryTests --filter LoopJournalTests ;;
-  a3) t --filter PaddockFactoryTests --filter ContextPanelFactoryTests --filter PaddockActionsTests --filter NewPaddockFormTests ;;
+  a3) t --filter PaddockFactoryTests --filter FactorySwitchTests --filter PaddockActionsTests --filter NewPaddockFormTests ;;
   a4) t --filter AutoLandTests --filter WorkLoopTests --filter AttemptMachineTests --filter PaddockFactoryTests ;;
   a5) t --filter AutoLandTests --filter FactoryProfileTests --filter WorkLoopTests ;;
   a6) t --filter AutoLandSummaryTests --filter AutoLandTests --filter WorkLoopTests ;;

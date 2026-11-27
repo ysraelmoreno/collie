@@ -48,7 +48,7 @@ private func terminals(_ d: Daemon, _ p: Paths) async throws -> [TerminalRecord]
     return try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(r.result)).terminals
 }
 
-@Suite(.serialized) struct SandboxRootsTests {
+@Suite(.serialized, .daemonPt) struct SandboxRootsTests {
     @Test func defaultIsSandboxed() throws {
         let id = UUID()
         let old = #"{"id":"\#(id)","name":"a","preset":"shell","cwd":"/tmp","isShepherd":false}"#
@@ -322,9 +322,9 @@ private func terminals(_ d: Daemon, _ p: Paths) async throws -> [TerminalRecord]
         try await withDaemon { d, p in
             let f = try await spawnTerm(d, p, "F", cwd: "/tmp", shepherd: true, sandbox: "free")
             let r = try await call(p, f, "summon", ["name": .string("W"), "preset": .string("shell")])
-            #expect(r.error?.code == .notConnected && r.error?.message.contains("can't summon") == true, "\(r)")
+            #expect(r.error?.code == .notConnected && r.error?.message.contains("não pode convocar") == true, "\(r)")
             let h = try await call(p, f, "herd.apply", ["id": .string("investigar-bug"), "name": .string("x")])
-            #expect(h.error?.code == .notConnected && h.error?.message.contains("can't summon") == true, "\(h)")
+            #expect(h.error?.code == .notConnected && h.error?.message.contains("não pode convocar") == true, "\(h)")
             let m = try await spawnTerm(d, p, "M", cwd: "/tmp", shepherd: true)
             #expect(try await call(p, m, "work.rerail", ["terminal": .string("F")]).error?.code == .notFound)
             #expect(try await terminals(d, p).map(\.name).sorted() == ["F", "M"])

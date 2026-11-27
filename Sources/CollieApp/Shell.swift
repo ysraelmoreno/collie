@@ -75,8 +75,8 @@ struct Shell<Content: View>: View {
     }
 }
 
-/// Floats over the canvas: the thin bar in the top right corner (⌘K, zoom, Ajustar, minimap), then the banners and,
-/// disconnected, the chip.
+/// Floats over the canvas: the thin bar in the top right corner (⌘K, zoom, Ajustar, minimap), then the banners.
+/// A disconnection shows at the sidebar's foot (`SidebarFooter`).
 struct CanvasChrome<Banners: View>: View {
     let ctx: ShellContext
     @ViewBuilder let banners: Banners
@@ -88,13 +88,6 @@ struct CanvasChrome<Banners: View>: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack { Spacer(minLength: 0); CanvasBar(ctx: ctx) }
-            if case .disconnected(let r) = ctx.client.state {
-                Text(tr("Desconectado: \(r)", "Disconnected: \(r)")).font(.collieMono(11, .medium)).foregroundStyle(Color.collieDanger)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Capsule().fill(Color.collieSurface))
-                    .overlay(Capsule().strokeBorder(Color.collieDanger.opacity(0.6), lineWidth: 1))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
             banners
             HostNotice(client: ctx.client)
         }

@@ -19,6 +19,8 @@ struct CanvasView: NSViewRepresentable {
     var onEdit: (UUID) -> Void = { _ in }
     var onApplyHerd: (CGPoint) -> Void = { _ in }
     var onSaveHerd: () -> Void = {}
+    /// L5: the floating loop's "Histórico" (the Laços modal, `ctx.onOpenLoops`).
+    var onOpenLoops: (LoopsTab) -> Void = { _ in }
     /// false while Preferências covers the canvas (Esc is theirs then).
     var active = true
     func makeNSView(context: Context) -> CanvasViewport {
@@ -28,7 +30,7 @@ struct CanvasView: NSViewRepresentable {
     }
     func updateNSView(_ v: CanvasViewport, context: Context) {
         v.onNewTerminal = onNewTerminal; v.onOpenPanel = onOpenPanel; v.onEdit = onEdit
-        v.onApplyHerd = onApplyHerd; v.onSaveHerd = onSaveHerd; v.active = active
+        v.onApplyHerd = onApplyHerd; v.onSaveHerd = onSaveHerd; v.onOpenLoops = onOpenLoops; v.active = active
     }
     static func dismantleNSView(_ v: CanvasViewport, coordinator: ()) { v.teardown() }
 }
@@ -50,7 +52,10 @@ struct CanvasView: NSViewRepresentable {
     var onEdit: (UUID) -> Void = { _ in }
     var onApplyHerd: (CGPoint) -> Void = { _ in }
     var onSaveHerd: () -> Void = {}
+    var onOpenLoops: (LoopsTab) -> Void = { _ in }
     var active = true
+    /// L5: one float per running loop, pinned beside its owner node (above the nodes, below the fullscreen bar).
+    private var loopFloats: [UUID: LoopFloatHost] = [:]
     private let minimap: Minimap
     private let leashes: LeashLayer
     private var spaceDown = false
@@ -242,12 +247,43 @@ struct CanvasView: NSViewRepresentable {
             v.frame = id == fs ? full : CGRect(origin: canvas.toScreen(f.origin), size: CGSize(width: f.width * zoom, height: f.height * zoom))
             v.setInteractive(interactive)
         }
+        syncLoopFloats(fs == nil ? LoopFloat.make(work: client.workFeed.work, terminals: visibleTerminals(client.terminals, paddock: client.currentPaddock)) : [])
         syncFullscreenChrome(fs)
         if (canvas.offset, zoom) != lastGrid { lastGrid = (canvas.offset, zoom); needsDisplay = true }
         minimap.viewport = size
         minimap.needsDisplay = true
         leashes.update()
         scheduleSave()
+    }
+
+    // MARK: laço flutuante (L5)
+
+    /// Places each float beside its owner's screen frame (it follows the node's moves and zoom); none in fullscreen.
+    private func syncLoopFloats(_ items: [LoopFloat.Item]) {
+        let keep = Set(items.map(\.id))
+        for (id, h) in loopFloats where !keep.contains(id) { h.removeFromSuperview(); loopFloats[id] = nil }
+        for item in items {
+            let node = item.anchor.flatMap { canvas.frames[$0] }.map {
+                CGRect(origin: canvas.toScreen($0.origin), size: CGSize(width: $0.width * canvas.zoom, height: $0.height * canvas.zoom))
+            }
+            let side = LoopFloat.side(node: node, viewport: bounds.size)
+            let view = LoopFloatView(item: item, side: side, client: client, onHistory: { [weak self] in self?.onOpenLoops(.history) })
+            let h = loopFloats[item.id] ?? {
+                let h = LoopFloatHost(rootView: view)
+                h.sizingOptions = [.intrinsicContentSize]
+                addSubview(h, positioned: .above, relativeTo: minimap)
+                loopFloats[item.id] = h
+                return h
+            }()
+            if h.rootView.item != item || h.rootView.side != side { h.rootView = view }
+            let place = { [weak self, weak h] in
+                guard let self, let h else { return }
+                let f = LoopFloat.frame(node: node, side: side, size: h.intrinsicContentSize, viewport: self.bounds.size)
+                if h.frame != f { h.frame = f }
+            }
+            h.onResize = place
+            place()
+        }
     }
 
     // MARK: tela cheia

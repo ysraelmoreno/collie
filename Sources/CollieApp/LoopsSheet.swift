@@ -18,6 +18,18 @@ enum LoopsModal {
         return ctx.historyNotice()
     }
 
+    /// L5 "Parar": `work stop` on the loop's terminal (after the attempt's verdict, as the CLI). Throws the daemon's refusal.
+    // ponytail: by name (`--terminal`, the admin's only reach); two terminals with one name get the daemon's "ambiguous"
+    @MainActor static func stop(terminal: String, client: DaemonClient) async throws {
+        _ = try await client.adminCall("work.stop", ["terminal": .string(terminal)])
+    }
+    /// L5 "Adiar tarefa": `work task defer` of the running task, with a fixed reason.
+    @MainActor static func deferTask(_ task: String, terminal: String, client: DaemonClient) async throws {
+        _ = try await client.adminCall("work.task.defer", ["terminal": .string(terminal), "task": .string(task),
+                                                           "reason": .string(deferReason)])
+    }
+    static var deferReason: String { tr("adiada pelo dono no app", "deferred by the owner in the app") }
+
     /// The Histórico tab's state: the detail shown, the id being fetched and the fixed error text (M9.1).
     struct Load: Equatable {
         var detail: Detail?

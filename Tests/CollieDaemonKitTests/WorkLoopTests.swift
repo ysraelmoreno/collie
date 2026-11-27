@@ -95,6 +95,9 @@ actor LoopFakeHost: LoopHost {
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
     func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
+    /// ma2 4e: each `memoryVerdict`, as "<agent name> <firstTryPassed>", in order.
+    var verdicts: [String] = []
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async { verdicts.append("\(names[agent] ?? "?") \(firstTryPassed)") }
     /// A4 (AutoLandTests): the paddock's factory mark, every land asked (only `merge` is accepted: anything else is an
     /// issue and refused), the error a land throws (nil: it lands), and each line the owner got (`notifyOwner`).
     var isFactory = false, lands: [LandMode] = [], landError: ProtocolError?, ownerNotices: [String] = []
@@ -404,7 +407,7 @@ struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil, precheck: String? = nil, escalate: [String]? = nil,
          checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0,
-         stopGrace: Duration = WorkLoop.defaultStopGrace) async throws {
+         stopGrace: Duration = WorkLoop.defaultStopGrace, stopClock: any Clock<Duration> = ContinuousClock()) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
@@ -418,7 +421,7 @@ struct LoopRig {
         try FileManager.default.createDirectory(at: host.root, withIntermediateDirectories: true)   // a daemon's root exists
         // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
-                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero, stopGrace: stopGrace)
+                        notices: LoopNotices(window: noticeWindow), promptRetryWait: .zero, stopGrace: stopGrace, stopClock: stopClock)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }

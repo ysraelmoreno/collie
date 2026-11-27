@@ -11,6 +11,7 @@ import CollieProtocol
 /// build ("Collie Local", no team) never updates itself: the page says so and checks nothing.
 struct UpdatePreferences: View {
     let client: DaemonClient
+    @ObservedObject private var sparkle = SparkleUpdater.shared
     @State private var status: UpdateStatus?
     @State private var refusal: AppUpdateSwap.Refusal?
     @State private var refusalRead = false
@@ -59,21 +60,24 @@ struct UpdatePreferences: View {
     }
 
     @ViewBuilder private var content: some View {
-        Text(UpdateModel.stateLine(installed: UpdateInstaller.installedVersion, status: status))
-            .font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary)
-        if let n = UpdateModel.sourceNote(status) { note(n) }
-        Toggle(tr("Procurar atualizações automaticamente", "Check for updates automatically"), isOn: Binding(get: { auto }, set: { auto = $0; save("auto", $0) }))
-            .disabled(!connected)
-        Toggle(tr("Baixar em segundo plano", "Download in the background"), isOn: Binding(get: { background }, set: { background = $0; save("download", $0) }))
-            .disabled(!connected)
-        HStack {
-            Button(tr("Procurar agora", "Check now")) { check() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
-            Spacer()
-            if let label = UpdateModel.rollbackLabel(previous: UpdateInstaller.previousVersion) {
-                Button(label) { confirmRollback = true }.buttonStyle(CollieButtonStyle(.quiet))
+        Text("Collie \(UpdateInstaller.installedVersion)").font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary)
+        if !sparkle.isEnabled {
+            note(tr("Esta é uma versão local (sem a assinatura do time): ela não se atualiza sozinha.", "This is a local build (without the team's signature): it does not update itself."))
+        } else {
+            Toggle(tr("Procurar atualizações automaticamente", "Check for updates automatically"), isOn: Binding(get: { sparkle.automaticChecks }, set: { sparkle.automaticChecks = $0 }))
+            HStack {
+                Button(tr("Procurar agora", "Check now")) { sparkle.checkNow() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!sparkle.canCheck)
+                Spacer()
             }
+            note(tr("O Collie baixa a nova versão, confere a assinatura e instala; se o macOS pedir a senha de administrador, ela aparece aqui. "
+                    + "Com um agente trabalhando, a reabertura espera você decidir.",
+                    "Collie downloads the new version, checks its signature and installs it; if macOS asks for the administrator password, it shows here. "
+                    + "With an agent working, the relaunch waits for you to decide."))
         }
-        if let s = status, let c = UpdateModel.card(s) { card(s, c) }
+        if let n = UpdateModel.sourceNote(status) { note(n) }
+        if let label = UpdateModel.rollbackLabel(previous: UpdateInstaller.previousVersion) {
+            HStack { Spacer(); Button(label) { confirmRollback = true }.buttonStyle(CollieButtonStyle(.quiet)) }
+        }
     }
 
     @ViewBuilder private func card(_ s: UpdateStatus, _ c: UpdateCard) -> some View {

@@ -29,7 +29,11 @@ public enum MemoryHookClient {
                         command: event == .sessionStart ? "memory.hookContext" : "memory.hookRelevant", args: args),
                 to: URL(fileURLWithPath: sock), timeoutSeconds: 5)
             guard r.ok else { onError(r.error?.message ?? "memory hook failed"); return nil }
-            guard case .object(let o)? = r.result, case .string(let text)? = o["output"], !text.isEmpty else { return nil }
+            var text = ""
+            if case .object(let o)? = r.result, case .string(let t)? = o["output"] { text = t }
+            // a Cursor Shepherd also gets the delegation brief here: the plugin rule alone was not followed
+            if cursor, event == .sessionStart, env["COLLIE_SHEPHERD"] == "1" { text += (text.isEmpty ? "" : "\n\n") + AgentLaunch.delegateBrief }
+            guard !text.isEmpty else { return nil }
             let json: [String: Any] = cursor ? ["additional_context": text]
                 : ["hookSpecificOutput": ["hookEventName": event.rawValue, "additionalContext": text]]
             guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.withoutEscapingSlashes]) else { return nil }

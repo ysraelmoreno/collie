@@ -28,7 +28,8 @@ struct CuratorStatus: Codable, Sendable {
     /// The daily job cap; nil: none (the default). 0: off.
     var cap: Int?
     var queued: Int
-    /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file).
+    /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file) in the last `Curator.failedKeep`: older ones are deleted,
+    /// so the app's "curador falhando" alert goes away once the curator works again.
     var failed: Int
     var inputTokens: Int
     var outputTokens: Int
@@ -79,6 +80,21 @@ actor Curator {
     static let inputMax = 12_000
     static let timeout: Duration = .seconds(60)
     static let maxAttempts = 3
+    /// How long a parked job stays in `failed/` (kept to be looked at, never retried); then `pruneFailed` deletes it.
+    static let failedKeep: TimeInterval = 7 * 86_400
+
+    /// Deletes the `failed/*.json` last modified more than `failedKeep` before `now`.
+    static func pruneFailed(_ dir: URL, now: Date) {
+        let fm = FileManager.default
+        for n in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []) where n.hasSuffix(".json") {
+            let u = dir.appendingPathComponent(n)
+            guard let m = (try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date,
+                  now.timeIntervalSince(m) > failedKeep else { continue }
+            try? fm.removeItem(at: u)
+        }
+    }
+    /// ma4 2a: the consolidation pass calls this each cycle, so a parked job leaves `failed/` without a restart.
+    func pruneFailed(now t: Date) { Self.pruneFailed(dir.appendingPathComponent("failed"), now: t) }
     static let queueMax = 200
     static let dedupeWindow: TimeInterval = 60
 
@@ -107,7 +123,8 @@ actor Curator {
     }
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
-    private let dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
+    nonisolated let dir: URL
+    private let runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
     /// Each call is a `curatorRun` event (nil: not logged).
     private let events: MemoryEventLog?
     /// Its CLI is on the user's PATH or in a known dir (`BinaryLocator`); never runs it.
@@ -166,6 +183,7 @@ actor Curator {
             FileHandle.standardError.write(Data("collied: curator: unreadable job \(n) moved to failed/\n".utf8))
             _ = rename(u.path, dir.appendingPathComponent("failed/\(n)").path)
         }
+        Self.pruneFailed(dir.appendingPathComponent("failed"), now: now())
     }
 
     static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .millisecondsSince1970; e.outputFormatting = .sortedKeys; return e }()
@@ -313,7 +331,7 @@ actor Curator {
     }
 
     /// "Testar com uma chamada": one synthetic call per answer format through `call` (each counts in today's cap and is
-    /// logged); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
+    /// logged with `test: true`, outside the stats' runs and failures: ma4 2d); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
     func testCalls() async throws(ProtocolError) -> [(format: String, result: String)] {
         if case .unavailable(let why, _) = await availability() { throw ProtocolError(code: .unavailable, message: why) }
         let instructions = tr("Isto é um teste do Collie, sem dados reais. Responda só com a lista vazia.",
@@ -322,7 +340,7 @@ actor Curator {
         for (key, schema) in [("ops", CuratorOps.schema), ("items", ConversationCapture.schema), ("chunks", DocTerms.schema)] {
             let job = CuratorJob(id: UUID(), kind: .correction, store: "", payload: .null, dedupe: "", createdAt: now(), attempts: 0)
             do throws(ProtocolError) {
-                let o = try await call(CuratorCall(instructions: instructions, input: tr("teste", "test"), schema: schema), job: job)
+                let o = try await call(CuratorCall(instructions: instructions, input: tr("teste", "test"), schema: schema), job: job, test: true)
                 if case .object(let x) = o.json, case .array? = x[key] { out.append((key, "ok")) } else { out.append((key, "junk")) }
             } catch {
                 out.append((key, String(error.message.prefix(200))))
@@ -468,6 +486,7 @@ actor Curator {
         guard let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
         if jobs[i].attempts >= Self.maxAttempts {
             write(jobs[i], to: dir.appendingPathComponent("failed/\(file(job).lastPathComponent)"))
+            Self.pruneFailed(dir.appendingPathComponent("failed"), now: now())
             remove(job)
             recent[job.dedupe] = now()
         }
@@ -479,10 +498,20 @@ actor Curator {
         names[job.id] = nil; backoff[job.id] = nil
     }
 
+    /// A failure that says nothing about the job: the sandbox blocked the CLI, there is no network or name resolution, or its
+    /// workspace folder is gone. Retried later without spending an attempt (63 jobs once went to `failed/` in a day on a DNS error).
+    static func isEnvironmentFailure(_ message: String) -> Bool {
+        ["curador bloqueado pelo sandbox", "getaddrinfo", "enotfound", "eai_again", "econnrefused", "enetunreach", "enetdown",
+         "could not resolve host", "network is unreachable", "workspace directory does not exist"]
+            .contains { message.range(of: $0, options: .caseInsensitive) != nil }
+    }
+
     /// One runner call: the input cut to `inputMax` unicode scalars (≤ 48 KB of argv), counted against today's cap,
     /// usage persisted. R7: only the cap waits; any failure of the run itself (nonzero exit, `is_error`, junk, timeout)
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
-    private func call(_ c: CuratorCall, job: CuratorJob) async throws(ProtocolError) -> CuratorOutput {
+    /// Two exceptions wait without spending one: the runner exhausted (quota) and an environment failure (the provider
+    /// unavailable, or `isEnvironmentFailure`); the latter counts as a bad call, so a provider that never works gets paused.
+    private func call(_ c: CuratorCall, job: CuratorJob, test: Bool = false) async throws(ProtocolError) -> CuratorOutput {
         if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
         // the provider is fixed for this call: a switch meanwhile takes the next one
         let p = provider, m = model(p)
@@ -501,7 +530,7 @@ actor Curator {
             var e = MemoryEvent(type: .curatorRun, job: job.kind.rawValue, ok: ok, reason: reason, inputTokens: o?.inputTokens,
                                 outputTokens: o?.outputTokens, costUSD: o?.costUSD,
                                 durationMs: Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000))
-            e.provider = p.rawValue; e.model = m
+            e.provider = p.rawValue; e.model = m; e.test = test ? true : nil
             e.place(store: job.store)
             events?.emit(e)
         }
@@ -514,6 +543,9 @@ actor Curator {
             if error.message.hasPrefix(CuratorTag.unreadable) { note(p, bad: true) }   // the runner couldn't read it either
             // E6: a credit/quota refusal left the runner exhausted: the job waits, no attempt spent (`drain` gives it back)
             if case .exhausted = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
+            // not this job's fault: the CLI cannot run here (no login, blocked, no network); it waits and is not marked failed
+            if case .unavailable = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
+            if Self.isEnvironmentFailure(error.message) { note(p, bad: true); throw ProtocolError(code: .unavailable, message: error.message) }
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }
         logged(true, nil, out)

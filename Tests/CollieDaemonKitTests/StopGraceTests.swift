@@ -12,8 +12,9 @@ import CollieProtocol
     static let agent = "w-task-a-t1"
 
     /// One task; its agent commits, then never ends its turn (a `zsh` that took the prompt as a command).
-    private static func hanging(grace: Duration, autoLand: Bool = false) async throws -> LoopRig {
-        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true")], tries: 2, stopGrace: grace)
+    /// R2: the grace timer sleeps on `clock`, which only moves when the test advances it.
+    private static func hanging(grace: Duration, clock: ManualClock, autoLand: Bool = false) async throws -> LoopRig {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true")], tries: 2, stopGrace: grace, stopClock: clock)
         await r.host.set(agent, LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0) },
                                            screen: ["zsh: no matches found: [collie]"]))
         if autoLand {
@@ -23,14 +24,12 @@ import CollieProtocol
         return r
     }
 
-    /// Runs the loop, waits for the agent's turn, then `stop`s it; the run's end and how long the stop took.
-    private static func runAndStop(_ r: LoopRig, now: Bool) async throws -> (WorkLoopState.State, Duration) {
+    /// Runs the loop, waits for the agent's turn, then `stop`s it; the running loop (`now`: already ended by the stop).
+    private static func runAndStop(_ r: LoopRig, now: Bool) async throws -> Task<WorkLoopState.State, Never> {
         let run = Task { await r.run() }
         #expect(await waitFor(20) { await r.host.prompts[agent] != nil }, "the agent never got its prompt")
-        let t0 = ContinuousClock.now
         await r.loop.stop(work: r.work, now: now)
-        let end = await run.value
-        return (end, ContinuousClock.now - t0)
+        return run
     }
 
     /// The attempt was dropped: agent gone, its commit discarded, the task open, the loop stopped as asked.
@@ -50,29 +49,35 @@ import CollieProtocol
     }
 
     @Test func nowEndsTheAttemptAtOnce() async throws {
-        let r = try await Self.hanging(grace: .seconds(3600)); defer { r.cleanup() }
+        let clock = ManualClock()
+        let r = try await Self.hanging(grace: .seconds(3600), clock: clock); defer { r.cleanup() }
         let before = try await Self.head(r.repo)
-        let (end, took) = try await Self.runAndStop(r, now: true)
+        let end = await (try await Self.runAndStop(r, now: true)).value
         #expect(end == .stopped)
-        #expect(took < .seconds(10), "\(took)")
+        #expect(clock.now.offset == .zero && clock.sleepers == 0)   // ended with no grace on the clock
         try await Self.expectDropped(r, before: before)
         #expect(try await r.get().notes.allSatisfy { !$0.text.contains("stop forçado depois de") })
         #expect(await r.host.checks == 0)   // nothing was judged
     }
 
     @Test func aPlainStopIsForcedPastItsGrace() async throws {
-        let r = try await Self.hanging(grace: .milliseconds(300)); defer { r.cleanup() }
+        let clock = ManualClock()
+        let r = try await Self.hanging(grace: .seconds(300), clock: clock); defer { r.cleanup() }
         let before = try await Self.head(r.repo)
-        let (end, took) = try await Self.runAndStop(r, now: false)
-        #expect(end == .stopped)
-        #expect(took >= .milliseconds(300) && took < .seconds(10), "\(took)")
+        let run = try await Self.runAndStop(r, now: false)
+        await clock.waitForSleepers(1)   // the grace timer is set
+        clock.advance(by: .seconds(300) - .milliseconds(1))
+        #expect(await r.loop.forcing.isEmpty)   // not forced before its grace
+        #expect(try await r.get().notes.allSatisfy { !$0.text.contains("stop forçado") })
+        clock.advance(by: .milliseconds(1))
+        #expect(await run.value == .stopped)
         try await Self.expectDropped(r, before: before)
         #expect(try await r.get().notes.contains { $0.text.contains("stop forçado depois de") })
     }
 
     @Test func anAgentThatEndsInTimeIsNotCut() async throws {
         let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true"), WorkTask(id: "b", title: "Task b", check: "true")],
-                                  tries: 1, stopGrace: .seconds(30))
+                                  tries: 1, stopGrace: .seconds(30), stopClock: ManualClock())
         defer { r.cleanup() }
         await r.host.set(Self.agent, LoopScript(act: { try await commit("a.swift", "let a = 1\n", in: $0) }))
         let loop = r.loop, id = r.work
@@ -86,9 +91,9 @@ import CollieProtocol
     }
 
     @Test func nothingLandsAfterAForcedStop() async throws {
-        let r = try await Self.hanging(grace: .seconds(3600), autoLand: true); defer { r.cleanup() }
+        let r = try await Self.hanging(grace: .seconds(3600), clock: ManualClock(), autoLand: true); defer { r.cleanup() }
         let before = try await Self.head(r.repo)
-        let (end, _) = try await Self.runAndStop(r, now: true)
+        let end = await (try await Self.runAndStop(r, now: true)).value
         #expect(end == .stopped)
         try await Self.expectDropped(r, before: before)
         #expect(await r.host.lands.isEmpty)

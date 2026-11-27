@@ -221,6 +221,12 @@ extension CommandRouter {
         let mark = ConversationCapture.marks(captureMarksFile)[url.path] ?? 0, secrets = await auth.secrets()
         guard let chunk = TranscriptChunk.read(url, from: mark, secrets: secrets, maxScalars: inputMax) else { return }
         guard !chunk.text.isEmpty else { try ConversationCapture.setMark(captureMarksFile, path: url.path, to: chunk.end); return }
+        // the folder the terminal started in is gone (moved or deleted since): `memory.repo` would fall back to the global store and
+        // this conversation's learnings would land there. Skipped, and the mark moves on so it is not read again (never a failure)
+        if p.lot == nil, !FileManager.default.fileExists(atPath: p.cwd) {
+            memoryLog("conversation capture: folder of \(p.name) is gone (\(p.cwd)), skipped")
+            try ConversationCapture.setMark(captureMarksFile, path: url.path, to: chunk.end); return
+        }
         let store = if let lot = p.lot { await memory.lotStore(lot) } else { await memory.repo(for: p.cwd) }
         let cands = await nearest(chunk.text, store: store)
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()

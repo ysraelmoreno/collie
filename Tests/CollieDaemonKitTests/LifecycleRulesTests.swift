@@ -11,7 +11,10 @@ import CollieCore
         return f.string(from: ago(Double(d)))
     }
     func uses(_ pairs: [(Int, String)]) -> Set<UseKey> { Set(pairs.map { UseKey(day: day($0.0), session: $0.1) }) }
-    func entry(_ u: Set<UseKey>, since: Double = 30) -> LifecycleEntry { LifecycleEntry(usefulUses: u, tierSince: ago(since)) }
+    /// ma3: one use carries evidence (earning needs it); `LifecycleEarnedEvidenceTests` covers the implicit-only case.
+    func entry(_ u: Set<UseKey>, since: Double = 30) -> LifecycleEntry {
+        LifecycleEntry(usefulUses: u, tierSince: ago(since), evidencedUses: u.min { $0.day < $1.day }.map { [$0] })
+    }
     func tmpDir() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("collie-lc-\(UUID().uuidString)") }
 
     @Test func earnedNeedsTwoDaysAndTwoSessions() {
@@ -134,12 +137,12 @@ import CollieCore
         #expect(try MemoryCleanup.restore(r.id, store: s).status == .active)
     }
 
-    /// Item 2 phase 1 is a shadow: the same uses, with or without evidence beside them, give the same tiers, promotion
-    /// candidates and archive decisions (stored through `LifecycleStore`, the way the daemon writes them).
-    @Test func evidenceChangesNoTierNorArchive() async {
+    /// ma3 ended the shadow: the same uses earn only with evidence beside them (stored through `LifecycleStore`, the way
+    /// the daemon writes them); implicit uses alone never earn nor become a promotion candidate.
+    @Test func evidenceIsWhatEarns() async {
         let recs = (0..<6).map { MemoryRecord(kind: $0 % 2 == 0 ? .pitfall : .decision, subject: "s\($0)", title: "t\($0)", body: "b") }
         let plain = LifecycleStore(file: tmpDir().appendingPathComponent("a.json")), shadow = LifecycleStore(file: tmpDir().appendingPathComponent("b.json"))
-        // record i is used on days 60, 60-7, 60-14 … by sessions alternating, i uses in all (0: none at all)
+        // record i is used on days 60, 60-4, 60-8 … by sessions alternating, i*2 uses in all (0: none at all)
         for (i, r) in recs.enumerated() {
             for st in [plain, shadow] { await st.update(r.id, now: ago(70)) { _ in } }
             for n in 0..<(i * 2) {
@@ -161,12 +164,11 @@ import CollieCore
         #expect(b.values.contains { ($0.evidencedUses?.count ?? 0) > 0 } && b.values.allSatisfy { ($0.evidencedUses ?? []).isSubset(of: $0.usefulUses) })
         for at in [ago(30), ago(0), now.addingTimeInterval(90 * 86_400)] {
             for r in recs {
-                #expect(LifecycleRules.tier(for: a[r.id]!, now: at) == LifecycleRules.tier(for: b[r.id]!, now: at))
-                #expect(LifecycleRules.promotionCandidate(a[r.id]!, now: at) == LifecycleRules.promotionCandidate(b[r.id]!, now: at))
+                #expect(LifecycleRules.tier(for: a[r.id]!, now: at) == .provisional)
+                #expect(!LifecycleRules.promotionCandidate(a[r.id]!, now: at))
             }
-            #expect(LifecycleRules.unusedPlan(records: recs, entries: a, now: at).map(\.id) == LifecycleRules.unusedPlan(records: recs, entries: b, now: at).map(\.id))
         }
-        #expect(Set(recs.map { LifecycleRules.tier(for: a[$0.id]!, now: now) }).count > 1)   // the sequence does move tiers
+        #expect(Set(recs.map { LifecycleRules.tier(for: b[$0.id]!, now: now) }).count > 1)   // with evidence the sequence does move tiers
         #expect(!LifecycleRules.unusedPlan(records: recs, entries: a, now: now.addingTimeInterval(90 * 86_400)).isEmpty)
     }
 

@@ -22,20 +22,28 @@ struct PluginInstallPrompt: Identifiable {
     let folder: URL?
     /// "Do catálogo, publicado por <publisherName> · revisado"; nil for a folder.
     let catalogLine: String?
+    /// A plug-in from someone other than Collie: who wrote it and that Collie reviewed this version; nil for Collie's own.
+    let authorNotice: String?
+    /// "Roda um programa assinado por <author> (time <id>)": a third party's helper; nil without one.
+    let helperLine: String?
     let size: Int?
     var id: String { folder?.path ?? "catalog:\(pluginId)" }
 
     init(folder: URL, manifest m: PluginManifest, replacing: PluginRow?) {
         pluginId = m.id; name = m.name; version = m.version; author = m.author; license = m.license
         commands = m.commands.map { "collie \(m.id) \($0.name) — \($0.summary)" }
-        permissions = m.permissionLines; self.replacing = replacing; self.folder = folder; catalogLine = nil; size = nil
+        permissions = m.permissionLines; self.replacing = replacing; self.folder = folder; catalogLine = nil; authorNotice = nil; helperLine = nil; size = nil
     }
 
     init(catalog item: PluginCatalogView.Item, latest: PluginCatalogView.Latest, replacing: PluginRow?) {
         pluginId = item.id; name = item.name; version = latest.version; author = item.publisherName; license = nil
         commands = []   // ponytail: the catalog doesn't list commands; the Instalados row shows them once installed
         permissions = latest.permissionLines; self.replacing = replacing; folder = nil; size = latest.size
-        catalogLine = tr("Do catálogo, publicado por \(item.publisherName) · revisado", "From the catalog, published by \(item.publisherName) · reviewed")
+        let own = item.publisher == "collie"
+        catalogLine = own ? tr("Do catálogo, publicado por \(item.publisherName) · revisado", "From the catalog, published by \(item.publisherName) · reviewed")
+            : tr("Do catálogo, publicado por \(item.publisherName) · revisado pelo Collie", "From the catalog, published by \(item.publisherName) · reviewed by Collie")
+        authorNotice = own ? nil : tr("O autor é \(item.publisherName), não o Collie. O Collie revisou esta versão.", "The author is \(item.publisherName), not Collie. Collie reviewed this version.")
+        helperLine = !own ? latest.helperTeamId.map { tr("Roda um programa assinado por \(item.publisherName) (time \($0))", "Runs a program signed by \(item.publisherName) (team \($0))") } : nil
     }
 
     static func make(folder: URL, installed: [PluginRow]) throws(ProtocolError) -> PluginInstallPrompt {
@@ -207,7 +215,7 @@ struct PluginsPreferences: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(item.name).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
                     tag(Self.kindLabel(item.kind), Color.collieMuted)
-                    Text(tr("\(item.publisherName) · revisado", "\(item.publisherName) · reviewed")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    Text(PluginCatalogModel.byline(item)).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                 }
                 Text(item.summary).font(.collieUI(13)).foregroundStyle(Color.collieText).fixedSize(horizontal: false, vertical: true)
                 if case .recalled(let reason) = row.action {
@@ -283,6 +291,8 @@ struct PluginsPreferences: View {
                 Text(line).font(.collieUI(13)).foregroundStyle(Color.collieText)
                     .padding(.leading, 10).overlay(alignment: .leading) { Rectangle().fill(Color.collieAccent).frame(width: 3) }
             }
+            if let line = p.authorNotice { Text(line).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieAttention) }
+            if let line = p.helperLine { Text(line).font(.collieMono(12)).foregroundStyle(Color.collieAttention) }
             if let line = p.replaceLine { Text(line).font(.collieUI(13)).foregroundStyle(Color.collieAttention) }
             ForEach(p.details, id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
             if !p.commands.isEmpty {

@@ -1,0 +1,137 @@
+# On merge to main (only the owner merges): for each plug-in version the push adds, assemble the package (the folder or
+# repo@tag), validate it again, add it to the catalog with the app's own scripts/ci/plugin-catalog.sh (checkout of
+# ysraelmoreno/collie at its last release), with publisher = the author's id and helperTeamId = the author's team;
+# rehost the package as release plugin-<id>-v<versão> in ysraelmoreno/collie (--prerelease --latest=false); sign and
+# upload the catalog as the app repo's plugins-release.yml does. The download URL never points at the author's repo.
+# Secrets: PLUGIN_CATALOG_KEY (the catalog's Ed25519 key, as in the app repo), COLLIE_RELEASE_TOKEN (release write on
+# ysraelmoreno/collie).
+name: publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# one catalog writer at a time here; the app repo's plugins-release.yml is another writer (see "Upload" below)
+concurrency:
+  group: plugins-catalog
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  publish:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.COLLIE_RELEASE_TOKEN }}
+      APP: ysraelmoreno/collie
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Versions
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          V="$(scripts/touched.sh "$BEFORE" "$GITHUB_SHA")"
+          printf '%s\n' "$V" > "$RUNNER_TEMP/versions"
+          [ -n "$V" ] && echo "ANY=1" >> "$GITHUB_ENV" || echo "nada a publicar"
+
+      - name: Collie
+        if: env.ANY == '1'
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::segredo COLLIE_RELEASE_TOKEN ausente"; exit 1; }
+          TAG="$(gh release view --repo "$APP" --json tagName -q .tagName)"
+          git clone -q --depth 1 --branch "$TAG" "https://github.com/$APP" "$RUNNER_TEMP/collie"
+          (cd "$RUNNER_TEMP/collie" && swift build -c release --product collie)
+          echo "COLLIE=$(cd "$RUNNER_TEMP/collie" && swift build -c release --show-bin-path)/collie" >> "$GITHUB_ENV"
+
+      - name: Current catalog
+        if: env.ANY == '1'
+        run: |
+          D="$RUNNER_TEMP/catalog"; mkdir -p "$D"
+          if gh release view plugins-catalog --repo "$APP" >/dev/null 2>&1; then
+            gh release download plugins-catalog --repo "$APP" -p plugins.json -p plugins.json.sig -D "$D"
+            echo "CURRENT=$D/plugins.json" >> "$GITHUB_ENV"
+          else
+            echo "CURRENT=-" >> "$GITHUB_ENV"
+          fi
+
+      - name: Packages and next catalog
+        if: env.ANY == '1'
+        run: |
+          export COLLIE
+          CAT="$CURRENT" N=0
+          mkdir -p "$RUNNER_TEMP/assets"
+          while read -r ID VER; do
+            [ -n "$ID" ] || continue
+            N=$((N + 1)) W="$RUNNER_TEMP/w$N"
+            if gh release view "plugin-$ID-v$VER" --repo "$APP" >/dev/null 2>&1; then echo "::error::plugin-$ID-v$VER já existe em $APP"; exit 1; fi
+            PUB="$(jq -er .publisher "plugins/$ID/plugin.json")"
+            NAME="$(jq -er .name "publishers/$PUB.json")"
+            scripts/assemble.sh "$ID" "$VER" "$W/pkg"
+            "$COLLIE" plugin validate "$W/pkg/$ID"   # again: the merge is what gets published
+            A="$RUNNER_TEMP/assets/$ID-$VER.tar.gz"
+            COPYFILE_DISABLE=1 tar -czf "$A" -C "$W/pkg" "$ID"
+            # helperTeamId: plugin-catalog.sh reads it from the author's signed bin/* (codesign -dv)
+            SUMMARY="$(jq -er .summary "plugins/$ID/plugin.json")" \
+              "$RUNNER_TEMP/collie/scripts/ci/plugin-catalog.sh" "$CAT" "$ID" "$VER" "$A" "$W/pkg/$ID" "$W/next.json"
+            # the item and its publisher are the author's (the script writes publisher "collie")
+            jq --arg id "$ID" --arg pub "$PUB" --arg name "$NAME" '
+              (.plugins[] | select(.id == $id) | .publisher) = $pub
+              | if any(.publishers[]; .id == $pub) then . else .publishers += [{id: $pub, name: $name, reviewedBy: "collie"}] end' \
+              "$W/next.json" > "$W/out.json"
+            CAT="$W/out.json"
+            printf '%s %s %s\n' "$ID" "$VER" "$A" >> "$RUNNER_TEMP/publish"
+          done < "$RUNNER_TEMP/versions"
+          cp "$CAT" "$RUNNER_TEMP/plugins.json"
+          echo "NEXT=$RUNNER_TEMP/plugins.json" >> "$GITHUB_ENV"
+
+      # the key only in env (never argv); its public half must be one the released app accepts, and the catalog built
+      # upon must carry a valid signature by it
+      - name: Sign and verify catalog
+        if: env.ANY == '1'
+        env:
+          PLUGIN_CATALOG_KEY: ${{ secrets.PLUGIN_CATALOG_KEY }}
+        run: |
+          [ -n "$PLUGIN_CATALOG_KEY" ] || { echo "::error::segredo PLUGIN_CATALOG_KEY ausente"; exit 1; }
+          PUB="$("$COLLIE" plugin catalog-sign "$NEXT" --key-env PLUGIN_CATALOG_KEY)"
+          grep -qF "\"$PUB\"" "$RUNNER_TEMP/collie/Sources/CollieCore/PluginCatalog.swift" \
+            || { echo "::error::a chave pública de PLUGIN_CATALOG_KEY ($PUB) não está em PluginCatalog.publicKeys: o app recusaria"; exit 1; }
+          if [ "$CURRENT" != - ]; then "$COLLIE" plugin catalog-verify "$CURRENT" --public "$PUB"; fi
+          "$COLLIE" plugin catalog-verify "$NEXT" --public "$PUB"
+
+      # ponytail: the two catalog writers (this and the app repo's plugins-release.yml) don't share a lock; a catalog
+      # that moved since we read it stops here, before anything is published, instead of being overwritten. Re-run.
+      - name: Rehost packages
+        if: env.ANY == '1'
+        run: |
+          if [ "$CURRENT" != - ]; then
+            gh release download plugins-catalog --repo "$APP" -p plugins.json -O "$RUNNER_TEMP/now.json" --clobber
+            [ "$(jq .sequence "$RUNNER_TEMP/now.json")" = "$(jq .sequence "$CURRENT")" ] \
+              || { echo "::error::o catálogo mudou durante a publicação: rode este workflow de novo"; exit 1; }
+          fi
+          while read -r ID VER A; do
+            printf '%s\n' \
+              "Plug-in $ID $VER de $(jq -r .publisher "plugins/$ID/plugin.json"), revisado pelo Collie (ysraelmoreno/collie-plugins@$GITHUB_SHA)." \
+              "Não é para instalar à mão: o Collie baixa este pacote pelo catálogo assinado e confere sha256 e hash da árvore." \
+              "" "sha256: $(shasum -a 256 "$A" | cut -d' ' -f1)" > "$RUNNER_TEMP/notes.md"
+            gh release create "plugin-$ID-v$VER" "$A" --repo "$APP" --target main --prerelease --latest=false \
+              --title "Plug-in $ID $VER" --notes-file "$RUNNER_TEMP/notes.md"
+          done < "$RUNNER_TEMP/publish"
+
+      - name: Upload catalog
+        if: env.ANY == '1'
+        run: |
+          if [ "$CURRENT" = - ] && ! gh release view plugins-catalog --repo "$APP" >/dev/null 2>&1; then
+            gh release create plugins-catalog --repo "$APP" --target main --prerelease --latest=false --title "Catálogo de plug-ins" \
+              --notes "Catálogo assinado dos plug-ins do Collie (plugins.json + plugins.json.sig), lido pelo app."
+          fi
+          gh release upload plugins-catalog --repo "$APP" "$NEXT" "$NEXT.sig" --clobber

@@ -499,7 +499,7 @@ import CollieProtocol
         }
     }
 
-    /// B3.6: a provisional memory whose check is gone is back and earns its tier once used (2 uses, 2 days, 2 sessions).
+    /// B3.6: a provisional memory whose check is gone is back and earns its tier once used (2 uses, 2 days, 2 sessions, 1 with evidence).
     @Test func enforcedByGoneProvisionalEarnsAfterUse() async throws {
         try await run { d, store, _ in
             let r = try await enforced(store, by: "sumiu.sh"), lc = d.router.memory.lifecycle, now = Date()
@@ -508,6 +508,7 @@ import CollieProtocol
             let before = await lc.entry(r.id) ?? LifecycleEntry(tierSince: now)
             #expect(LifecycleRules.tier(for: before, now: now) == .provisional)
             await lc.addUse([r.id], key: UseKey(day: "2026-11-19", session: "s1"), now: now)
+            await lc.addEvidence([r.id], key: UseKey(day: "2026-11-19", session: "s1"), now: now)   // ma3: earning needs evidence
             await lc.addUse([r.id], key: UseKey(day: "2026-11-20", session: "s2"), now: now)
             let e = try #require(await lc.entry(r.id))
             #expect(e.flags.isEmpty && LifecycleRules.tier(for: e, now: now) == .earned)

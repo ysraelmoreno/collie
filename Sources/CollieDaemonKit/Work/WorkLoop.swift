@@ -53,6 +53,9 @@ protocol LoopHost: Sendable {
     func now() -> Date
     /// One line for the Shepherd the moment a task of the loop ends (done, or deferred after its last try).
     func taskEnded(_ line: String) async
+    /// ma2 4e: the verdict on the attempt `agent` ran (already dismissed): the memories its session left pending count a
+    /// use only when the task passed on its 1st try (`MemoryService.settleParked`).
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async
     /// An approved task's declared evidence: what `glob` matches in the worktree `dir`, copied under `patchDir`
     /// (`EvidenceFiles`). It reads only inside the worktree: never more than the check could.
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied
@@ -125,6 +128,7 @@ extension LoopHost {
     /// A host with no processes (the tests' fakes).
     func dismissReaping(_ terminal: UUID) async { await dismiss(terminal) }
     func taskEnded(_ line: String) async {}
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
     }
@@ -232,6 +236,8 @@ actor WorkLoop {
     /// C5a: a plain stop's wait for the attempt's verdict before it turns into `--now` (the tests' short one).
     static let defaultStopGrace: Duration = .seconds(300)
     let stopGrace: Duration
+    /// R2: the clock the grace timer sleeps on (the tests' `ManualClock`).
+    let stopClock: any Clock<Duration>
     /// C5a: the plain stop each grace timer belongs to: a timer of an older stop (an earlier run) forces nothing.
     private var stopTokens: [UUID: UUID] = [:]
     /// M3.5: set on the engine of one lane (`WorkLoopLanes`): the lane's id (its folder's name). `host` is then the
@@ -261,8 +267,9 @@ actor WorkLoop {
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = WorkLoop.defaultCheckTimeout,
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
          lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices(), promptRetryWait: Duration = .seconds(20),
-         stopGrace: Duration = WorkLoop.defaultStopGrace, preCheckTimeout: Duration = WorkLoop.defaultPreCheckTimeout) {
-        self.stopGrace = stopGrace; self.preCheckTimeout = preCheckTimeout
+         stopGrace: Duration = WorkLoop.defaultStopGrace, preCheckTimeout: Duration = WorkLoop.defaultPreCheckTimeout,
+         stopClock: any Clock<Duration> = ContinuousClock()) {
+        self.stopGrace = stopGrace; self.preCheckTimeout = preCheckTimeout; self.stopClock = stopClock
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
         self.events = events; self.lane = lane; self.slot = slot; self.notices = notices; self.promptRetryWait = promptRetryWait
     }
@@ -280,10 +287,10 @@ actor WorkLoop {
         if first, (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
         if now { forcing.insert(id); return }
         guard first else { return }
-        let token = UUID(), grace = stopGrace
+        let token = UUID(), grace = stopGrace, clock = stopClock
         stopTokens[id] = token
         Task { [weak self] in
-            await Self.nap(grace)
+            await Self.nap(grace, on: clock)
             await self?.graceOver(id, token)
         }
     }
@@ -409,6 +416,8 @@ actor WorkLoop {
         }
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
+        // R1: the runners' folders as the work found them, taken once (a refused rewrite there is ignored, the reset keeps it)
+        let bins = loop.bins ?? Self.binStamps(dir)
         // the attempt's first write carries its first event too (the machine's `attemptStarted` is not written again)
         let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n, lane: lane)
         // M2.2a: a fallen daemon's attempt left its commit: this attempt judges it from where that one started, with
@@ -419,6 +428,7 @@ actor WorkLoop {
         let base = loop.autoLand == nil ? nil : (try? await host.baseHead()) ?? nil
         try? await store.update(w.id) { x in
             if let base { x.loop?.autoLand?.baseHead = base }
+            if x.loop?.bins == nil { x.loop?.bins = bins }
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 x.tasks[i].reviewClean = nil; x.tasks[i].reviewedHead = nil   // A4: only this attempt's own review can make it clean
@@ -439,7 +449,7 @@ actor WorkLoop {
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
-                      branch: branch, keep: keep, on: branch, at: started)
+                      branch: branch, keep: keep, bins: bins, on: branch, at: started)
         // F2 U1: the loop's base (`run`), never one taken here: an attempt's agent may have planted it in the last one.
         // Only a loop that never took one (an engine run outside `run`) takes it here, as before
         if loop.review == true {
@@ -499,6 +509,8 @@ actor WorkLoop {
         let n: Int, name: String, started: Date, before: String, branch: String
         /// Untracked files that were there before the attempt: never the attempt's, the discard must not delete them.
         let keep: [String]
+        /// R1: the loop's `bins`, what the runners' folders held before (`tampered`).
+        let bins: [String]
         var agent: UUID?
         /// M3.8: the agent's terminal, until it is written on the attempt's job (`record`, with the next write).
         var mark: UUID?
@@ -757,7 +769,7 @@ actor WorkLoop {
             let after = await settle(state.judged, on: r.on, loose: r.loose, reset: reset, dir)
             return .settled(moved: after.moved, reset: after.reset)
         case .guardGate:
-            guard let gate = r.loop.gate, let why = await tampered(gate, spec: task.spec, before: before, judged: state.judged, dir) else { return .gateClear }
+            guard let gate = r.loop.gate, let why = await tampered(gate, spec: task.spec, before: before, judged: state.judged, bins: r.bins, dir) else { return .gateClear }
             return .gateSkipped(why)
         case .runGate:
             // on the tree of `judged`, in the check's conditions (timeout, budget); its output is the note's
@@ -775,7 +787,7 @@ actor WorkLoop {
             }
         case .guardAccept:
             // F3: the agent may not rewrite what judges its result, as for the gate
-            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, dir, by: tr("o aceite", "the acceptance"), refuseNew: true) else { return .acceptClear }
+            guard let accept = task.accept, let why = await tampered(accept, spec: task.spec, before: before, judged: state.judged, bins: r.bins, dir, by: tr("o aceite", "the acceptance"), refuseNew: true) else { return .acceptClear }
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].acceptPassed = false; x.tasks[i].acceptResult = tr("não rodou: ", "did not run: ") + why }
             }
@@ -950,6 +962,7 @@ actor WorkLoop {
                 if let n = c.note { await note(id, tr("[loop] evidência de \"\(task.title)\": \(n)", "[loop] evidence of \"\(task.title)\": \(n)")) }
             }
             let found = evidence
+            if let agent = r.agent { await host.memoryVerdict(agent, firstTryPassed: n == 1) }   // ma2 4e: the check passed
             // M3.5: in a lane the task is `done` only once integrated: what passed waits for `WorkLoopLanes`
             if lane != nil {
                 passed = Passed(task: task, name: name, n: n, tries: r.loop.tries, at: at, evidence: found, before: before, judged: judged, head: head, dir: dir)
@@ -960,6 +973,7 @@ actor WorkLoop {
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
             let at = r.at, refused = state.facts.review
+            if let agent = r.agent { await host.memoryVerdict(agent, firstTryPassed: false) }   // ma2 4e
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             // M3.8: and which agent it was (its terminal's name)
@@ -997,6 +1011,7 @@ actor WorkLoop {
         }
         endJob(&x, job, head, at: at)
         forget(&x, task)
+        x.loop?.bins = nil   // R1: what a passed task left is the next attempt's base
     }
 
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
@@ -1113,7 +1128,7 @@ actor WorkLoop {
     }
 
     /// The loop's one wait on the clock: its polls (a commit, another terminal, the agent's screen) have no event.
-    static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }   // F3: the field land's wait too
+    static func nap(_ d: Duration, on clock: any Clock<Duration> = ContinuousClock()) async { try? await clock.sleep(for: d) }   // F3: the field land's wait too
 
     /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
     /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.
@@ -1211,7 +1226,9 @@ actor WorkLoop {
     /// F3: the task's acceptance is guarded the same way (`by`: what runs the file, for the reason). C4a: `refuseNew`
     /// (the acceptance): a file its text names that the attempt created (not in `before`) fails it too, whatever the
     /// spec says: the agent would write the script that judges it.
-    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL, by: String? = nil, refuseNew: Bool = false) async -> String? {
+    /// R1: a runner of `binDirs` (ignored by git, so no diff sees it) changed or new since `bins` that the command runs
+    /// fails it the same way, unless the spec at `before` cites installing (`installs`).
+    private func tampered(_ gate: String, spec: String?, before: String, judged: String, bins: [String], _ dir: URL, by: String? = nil, refuseNew: Bool = false) async -> String? {
         let by = by ?? tr("o portão", "the gate")
         let named = await specText(spec, at: before, dir)
         // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
@@ -1226,7 +1243,49 @@ actor WorkLoop {
             }
             if existed && !named.contains(path) { return tr("a tentativa alterou «\(path)», que \(by) executa", "the attempt changed «\(path)», which \(by) runs") }
         }
+        if !Self.installs.contains(where: named.contains) {
+            let was = Set(bins)
+            for line in Self.binStamps(dir) where !was.contains(line) {
+                let path = String(line.prefix { $0 != "\t" })
+                if Self.runs(gate, path) { return "a tentativa alterou «\(path)», que \(by) executa" }
+            }
+        }
         return nil
+    }
+
+    /// R1: the folders of installed runners, ignored by git in a usual repo.
+    static let binDirs = ["node_modules/.bin", ".venv/bin", "venv/bin"]
+    /// R1: a spec that cites one of these lets the task (re)install what `binDirs` hold.
+    static let installs = ["npm install", "npm ci", "pip install", "yarn install", "pnpm install"]
+
+    /// R1: one line per entry of `binDirs` under `dir`, "path\tsize\tmodified\tlink" of what it resolves to (a link's
+    /// target followed: `.bin/jest` is a link into the package); never the content.
+    static func binStamps(_ dir: URL) -> [String] {
+        let fm = FileManager.default
+        var lines: [String] = []
+        for folder in binDirs {
+            guard let names = try? fm.contentsOfDirectory(atPath: dir.appendingPathComponent(folder).path) else { continue }
+            for name in names.sorted() {
+                let path = folder + "/" + name, url = dir.appendingPathComponent(path)
+                let link = (try? fm.destinationOfSymbolicLink(atPath: url.path)) ?? ""
+                let a = try? fm.attributesOfItem(atPath: url.resolvingSymlinksInPath().path)
+                let size = (a?[.size] as? NSNumber)?.int64Value ?? -1
+                let date = (a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                lines.append("\(path)\t\(size)\t\(date)\t\(link)")
+            }
+        }
+        return lines
+    }
+
+    /// R1: `command` runs the runner at `path` (one of `binDirs`): its name is a word of the command (`npx jest`,
+    /// `node_modules/.bin/jest`, `python -m pytest` for `.venv/bin/python`), or a package manager runs scripts with
+    /// `node_modules/.bin` on the PATH (`npm test`).
+    // ponytail: words of the command text, no shell parsing; a runner reached through a script's body is not seen
+    static func runs(_ command: String, _ path: String) -> Bool {
+        let words = Set(command.split { !($0.isLetter || $0.isNumber || "._-".contains($0)) }.map(String.init))
+        let name = String(path.split(separator: "/").last ?? "")
+        if words.contains(name) { return true }
+        return path.hasPrefix("node_modules/") && !words.isDisjoint(with: ["npm", "npx", "yarn", "pnpm", "bun", "bunx"])
     }
 
     /// The spec's text at `before`; empty: no spec, outside the repo or not committed there.

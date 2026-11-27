@@ -41,6 +41,18 @@ private func commitAll(_ repo: URL) async throws {
 }
 
 @Suite(.serialized, .memoryPT) struct MemoryCommandTests {
+    /// A fresh install has no global store folder yet: the app's "global" scope sends exactly that path.
+    @Test func adminListsTheGlobalStoreBeforeItExists() async throws {
+        try await withDaemon { d, p in
+            let g = p.root.appendingPathComponent("memory").path
+            #expect(!FileManager.default.fileExists(atPath: g))
+            let r = try await admin(d, p, "memory.list", ["repo": .string(g)])
+            #expect(r.error == nil)
+            let bad = try await admin(d, p, "memory.list", ["repo": .string(g + "-nope")])
+            #expect(bad.error != nil)
+        }
+    }
+
     @Test func terminalSavesAndSearches() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

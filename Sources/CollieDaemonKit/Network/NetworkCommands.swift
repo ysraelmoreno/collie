@@ -86,7 +86,8 @@ extension CommandRouter {
 
     /// `--body-file`, read by the daemon at creation (the addon never reads a path). A terminal reads only inside its
     /// project and never what the sandbox never opens (Collie's data, secrets); the app anywhere. Both: at most 5 MiB.
-    private func ruleBodyFile(_ path: String, _ r: Request, caller: TerminalRecord?) async throws -> Data {
+    func ruleBodyFile(_ path: String, _ r: Request, caller: TerminalRecord?, flag: String = "--body-file",
+                      limit: Int = MapRule.maxBody) async throws -> Data {
         let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? NSHomeDirectory(), isDirectory: true)
         let real = SignedAppCheck.realPath(URL(fileURLWithPath: path, relativeTo: base).absoluteURL)
         var check: (@Sendable (String) -> Bool)?
@@ -94,43 +95,47 @@ extension CommandRouter {
             let root = try await projectRoot(of: me), home = sandboxHomeDir, collie = config.paths.root
             check = { p in ProjectRoot.contains(p, root: root) && SandboxGrantStore.readRefusal(p, home: home, collie: collie) == nil }
             guard check!(real) else {
-                throw ProtocolError(code: .unauthorized, message: "--body-file must be inside your project (\(root.path)): copy it there first")
+                throw ProtocolError(code: .unauthorized, message: "\(flag) must be inside your project (\(root.path)): copy it there first")
             }
         }
         let allowed = check
         // off the actor: a slow disk must not hold every other command
-        return try await Task.detached { () throws(ProtocolError) -> Data in try Self.readBodyFile(real, allowed: allowed) }.value
+        return try await Task.detached { () throws(ProtocolError) -> Data in try Self.readBodyFile(real, allowed: allowed, flag: flag, limit: limit) }.value
     }
 
     /// Reads a regular file of at most 5 MiB through one fd: no symlink followed (O_NOFOLLOW), never blocks on a FIFO
     /// (O_NONBLOCK + S_ISREG), and for a terminal (`allowed`) the opened file itself must still be inside its project
     /// (F_GETPATH: a swap after the path check is caught) and have one link (a hard link to a file outside is refused).
-    static func readBodyFile(_ path: String, allowed: (@Sendable (String) -> Bool)?) throws(ProtocolError) -> Data {
+    static func readBodyFile(_ path: String, allowed: (@Sendable (String) -> Bool)?, flag: String = "--body-file",
+                             limit: Int = MapRule.maxBody) throws(ProtocolError) -> Data {
+        func tooLarge(_ n: Int) -> ProtocolError {
+            ProtocolError(code: .invalidArgs, message: limit == MapRule.maxBody ? MapRuleError.bodyTooLarge(n).message : "\(flag) is \(n) bytes, at most \(limit)")
+        }
         let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else {
             let e = errno
-            throw e == ELOOP ? ProtocolError(code: .unauthorized, message: "--body-file may not be a symlink")
+            throw e == ELOOP ? ProtocolError(code: .unauthorized, message: "\(flag) may not be a symlink")
                 : ProtocolError(code: .notFound, message: "Cannot read \(path): \(String(cString: strerror(e)))")
         }
         defer { close(fd) }
         var st = stat()
         guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else {
-            throw ProtocolError(code: .invalidArgs, message: "--body-file must be a regular file")
+            throw ProtocolError(code: .invalidArgs, message: "\(flag) must be a regular file")
         }
         if let allowed {
             var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
             guard st.st_nlink == 1, fcntl(fd, F_GETPATH, &buf) == 0, allowed(String(cString: buf)) else {
-                throw ProtocolError(code: .unauthorized, message: "--body-file must be a file of your project (no hard links)")
+                throw ProtocolError(code: .unauthorized, message: "\(flag) must be a file of your project (no hard links)")
             }
         }
-        guard st.st_size <= MapRule.maxBody else { throw ProtocolError(code: .invalidArgs, message: MapRuleError.bodyTooLarge(Int(st.st_size)).message) }
+        guard st.st_size <= limit else { throw tooLarge(Int(st.st_size)) }
         var data = Data(), chunk = [UInt8](repeating: 0, count: 64 << 10)
         while true {
             let n = read(fd, &chunk, chunk.count)
             guard n >= 0 else { throw ProtocolError(code: .notFound, message: "Cannot read \(path): \(String(cString: strerror(errno)))") }
             if n == 0 { return data }
             data.append(chunk, count: n)
-            guard data.count <= MapRule.maxBody else { throw ProtocolError(code: .invalidArgs, message: MapRuleError.bodyTooLarge(data.count).message) }
+            guard data.count <= limit else { throw tooLarge(data.count) }
         }
     }
 

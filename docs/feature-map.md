@@ -108,6 +108,18 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   emulador ganha sozinho, aparelho físico só com opt-in por `install`, porque o serviço lê toda a tela; falha cai no
   `uiautomator`). Arquivos: `Helpers/android-device/`, `Sources/CollieDevice/HelperProtocol.swift`,
   `Sources/CollieDaemonKit/Devices/DeviceHelper.swift`. Testes: `--filter DeviceHelperTests`.
+  Log de ações (d4): `collie device flow on|off|status [--paddock <nome>]`, opt-in por cercado (`on` só o usuário);
+  grava `<cercado>/.collie/flows/actions.jsonl` (senha `•••`, texto até 80, rodízio 5 MiB × 3, 30 dias, 0600/0700).
+  Arquivo: `Sources/CollieDaemonKit/Devices/FlowActionLog.swift`. Testes: `--filter FlowActionLogTests`.
+  Registro das ações (d5): com o log ligado, `device tap|text|swipe|key|launch` de agente (`origin: agent:<nome>`) e o toque
+  do painel (`origin: panel`) viram linhas; `sigBefore` do último `device screen`, `sigAfter` da tela devolvida (`--then screen`).
+  Escrita fora do comando (falha só no log do daemon). Em `DeviceService.run(flow:)`. Testes: `--filter FlowActionRecordingTests`.
+  Executor de planos (d6): `device run --plan <arquivo>` (`--panel`/`--serial`) roda `{steps:[{action,target,text?,expectSig?}]}`
+  (até 200; arquivo pelas regras do `--body-file`, ≤ 256 KiB) pelos mesmos `device tap|text|swipe|key|launch`; depois de um passo com
+  `expectSig` lê a tela e para na primeira `sig` diferente (`{ok:false,stoppedAt,expected,got,screen}`). Em `FlowRunner`. Testes: `--filter FlowRunnerTests`.
+  Passo destrutivo (d7): passo com `destructive: true` só roda com `--confirm-destructive`, flag só do usuário (token de admin, fora de
+  terminal; vindo de agente o daemon recusa com `unauthorized` antes de ler o plano). Sem ele o plano para antes do passo:
+  `{ok:false,refused:"destructive",at,done}`, os anteriores ficam executados. Cartão de confirmação no app: ainda não. Testes: `--filter FlowDestructiveTests`.
   OCR (H6, Android; A3, iOS por `simctl io screenshot` com caixas convertidas de pixels para pontos; Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
   (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
   sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso
@@ -220,6 +232,12 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 
 - **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>`; cada cartão tem tipo (`impl`, `bug`, `refactor`, `spike`, `test`, `docs`, `chore`; padrão `impl`) e prioridade (`high`, `medium`, `low`; padrão `medium`), que `create-card`/`update-card` aceitam e `list-cards` filtra (quadros de `schema` 1 migram para 2 com cópia `board.json.v1.bak`) (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
 - **Como verificar:** `scripts/check-onda11.sh q11-4`, `scripts/check-onda12.sh q12-2`.
+
+### Fluxos (app de exemplo: grafo do app no device)
+
+- **Para que serve:** lê o log de ações `<cercado>/.collie/flows/actions.jsonl` (escrito por `collie device` com o log ligado) e monta o grafo do app (`Examples/apps/fluxos/store.py`, Python 3.9 sem dependências): nó = `sig` da tela, aresta = ação (`action`, `target`) de `sigBefore` para `sigAfter` com contagem, `app`, `appVersion` e `obsolete` (aresta de versão antiga contradita por uma nova fica obsoleta, não apagada); metas nomeadas apontam para nós. Grava `<cercado>/.collie/flows/graph.json` (0600, atômico); linha malformada conta em `skipped`.
+- **Painel (d10):** `ui/index.html` servido em `/` (sem host externo; dados só como texto) lista metas, nós e arestas e o estado do registro (`GET /api/status`, mesmos campos de `device flow status`, lidos do arquivo `enabled`); `GET /api/graph` devolve o `graph.json`. Contrato, opt-in e roteiro manual do dono em `Examples/apps/fluxos/README.md`.
+- **Como verificar:** `scripts/check-device-flows.sh d8`, `d9`, `d10`.
 
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 

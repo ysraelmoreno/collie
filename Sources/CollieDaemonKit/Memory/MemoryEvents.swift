@@ -45,6 +45,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var costUSD: Double? = nil, durationMs: Int? = nil
     /// `curatorRun`: which curator answered (`CuratorProvider`); its model is `model`.
     var provider: String? = nil
+    /// `curatorRun`: a "Testar com uma chamada" call (ma4 2d), out of the stats' runs and failures (its cost still counts).
+    var test: Bool? = nil
     /// `sessionUsage`: the model and how many assistant messages the totals cover.
     var model: String? = nil, messages: Int? = nil
     /// `correction`: active|proposed and the subject key repeats are matched on. `workClosed`: merged.

@@ -27,6 +27,7 @@ private func candidate(_ e: inout LifecycleEntry) {
     var uses: Set<UseKey> = []
     for i in 0..<8 { uses.insert(UseKey(day: day.string(from: Date().addingTimeInterval(-ago[i % 4] * 86_400)), session: "u\(i)")) }
     e.usefulUses = uses
+    e.evidencedUses = [uses.first!]   // ma3: earning needs evidence
 }
 
 @Suite(.serialized, .memoryPT) struct VerifyJobTests {

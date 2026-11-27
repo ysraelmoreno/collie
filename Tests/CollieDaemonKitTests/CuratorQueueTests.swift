@@ -238,6 +238,77 @@ private let oneCall: Curator.Handler = { j, call in
         await c.stop()
     }
 
+    /// An environment failure (here the real DNS error of the sandboxed Cursor call) spends no attempt: the job waits, never
+    /// reaches failed/; a plain failure of the run still spends one.
+    @Test func environmentFailureSpendsNoAttempt() async throws {
+        let fake = FakeCurator(), clock = ManualClock(), dir = tempDir()
+        fake.failOn = "dns"
+        fake.failMessage = "cursor saiu com 1: Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh"
+        let c = Curator(dir: dir, runner: fake, clock: clock)
+        _ = await c.enqueue(job(prompt: "dns"))
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls >= 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await c.queued(kind: .correction).first?.attempts == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path).isEmpty)
+        await c.stop()
+
+        let plain = FakeCurator()
+        plain.failOn = "x"
+        plain.failMessage = "claude saiu com 1"
+        let c2 = Curator(dir: tempDir(), runner: plain, clock: ManualClock())
+        _ = await c2.enqueue(job(prompt: "x"))
+        await c2.start(handler: oneCall)
+        #expect(await waitFor(10) { await c2.queued(kind: .correction).first?.attempts == 1 })
+        await c2.stop()
+    }
+
+    @Test func environmentFailureMessages() {
+        for m in ["cursor saiu com 1: Error: Workspace directory does not exist: /var/folders/x", "curador bloqueado pelo sandbox: /private/var/x",
+                  "Error: [unavailable] getaddrinfo ENOTFOUND api2.cursor.sh", "connect ECONNREFUSED 127.0.0.1:443"] {
+            #expect(Curator.isEnvironmentFailure(m), "\(m)")
+        }
+        for m in ["claude saiu com 1", "curator: junk answer (items)", "resposta ilegível do claude", "claude não respondeu"] {
+            #expect(!Curator.isEnvironmentFailure(m), "\(m)")
+        }
+    }
+
+    /// `failed/` keeps a parked job `failedKeep`, then it is deleted: the app's "curador falhando" alert goes away once the
+    /// curator works again (63 environment failures in one day had left it on for good).
+    @Test func failedJobsExpire() async throws {
+        let dir = tempDir(), failed = dir.appendingPathComponent("failed")
+        try FileManager.default.createDirectory(at: failed, withIntermediateDirectories: true)
+        let old = failed.appendingPathComponent("1-old.json"), recent = failed.appendingPathComponent("2-recent.json")
+        for u in [old, recent] { try Data("{}".utf8).write(to: u) }
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-Curator.failedKeep - 60)], ofItemAtPath: old.path)
+        let c = Curator(dir: dir, runner: FakeCurator(), clock: ManualClock())
+        #expect(await c.status().failed == 1)
+        #expect(!FileManager.default.fileExists(atPath: old.path) && FileManager.default.fileExists(atPath: recent.path))
+    }
+
+    /// The prune also runs when a job is parked: an old file goes, the new one (just written) stays.
+    @Test func parkingAJobPrunesOldOnes() async throws {
+        let fake = FakeCurator(), clock = ManualClock(), dir = tempDir(), failed = dir.appendingPathComponent("failed")
+        let c = Curator(dir: dir, runner: fake, clock: clock)
+        let old = failed.appendingPathComponent("1-old.json")
+        try Data("{}".utf8).write(to: old)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-Curator.failedKeep - 60)], ofItemAtPath: old.path)
+        let tries = Trace()
+        _ = await c.enqueue(job())
+        await c.start { _, _ in await tries.add("try"); throw ProtocolError(code: .internal, message: "boom") }
+        for n in 1...3 {
+            #expect(await waitFor(10) { await tries.events.count == n })
+            if n < 3 {
+                #expect(await waitFor(10) { await c.queued(kind: .correction).first?.attempts == n })
+                await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+            }
+        }
+        #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: failed.path).count == 1)   // the parked job
+        await c.stop()
+    }
+
     /// E6: a run that leaves the runner `.exhausted` (credit, quota) spends no attempt: the job waits, never reaches failed/.
     @Test func exhaustedSpendsNoAttempt() async throws {
         let fake = FakeCurator(), clock = ManualClock(), dir = tempDir()

@@ -100,6 +100,38 @@ private struct LiteFx {
 
 @Suite(.serialized) struct DeviceCommandTests {
 
+    /// d4: `device flow on|off|status`; only the user turns it on; a terminal sees its own paddock.
+    @Test func flowLogOptInPerPaddock() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("flow-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withDevice { d, p in
+            let made = try await admin(d, p, "paddock.create", ["name": "k", "folder": dir.path])
+            guard made.ok, case .string(let pid)? = field(made, "id"), let uuid = UUID(uuidString: pid) else { Issue.record("\(made)"); return }
+            // b2: the opt-in lives in the daemon's root (CommandRouter.flowFlag), not in the worktree
+            let flag = p.root.appendingPathComponent("flows/\(uuid.uuidString)/enabled").path
+            let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
+                args: ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")]), to: p.socket, timeoutSeconds: 60)
+            guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+            let a = Term(id: id, token: try await tokenOf(d, id))
+
+            let st = try await call(p, a, "device.flow")
+            #expect(st.ok && field(st, "enabled") == .bool(false) && field(st, "paddock") == .string("k"), "\(st)")
+            let on = try await call(p, a, "device.flow", ["action": "on"])
+            #expect(!on.ok && on.error?.code == .unauthorized)
+            #expect(!FileManager.default.fileExists(atPath: flag))
+            #expect(!(try await call(p, a, "device.flow", ["action": "status", "paddock": "k"])).ok)
+
+            let u = try await admin(d, p, "device.flow", ["action": "on", "paddock": "k"])
+            #expect(u.ok && field(u, "enabled") == .bool(true), "\(u)")
+            #expect(FileManager.default.fileExists(atPath: flag))
+            #expect(field(try await call(p, a, "device.flow"), "enabled") == .bool(true))
+            #expect(field(try await call(p, a, "device.flow", ["action": "off"]), "enabled") == .bool(false))
+            #expect(!FileManager.default.fileExists(atPath: flag))
+            #expect(!(try await admin(d, p, "device.flow", ["action": "nuke", "paddock": "k"])).ok)
+        }
+    }
+
     @Test func liteCreateIsAdminOnly() async throws {
         let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
         try await fx.daemon { d, p in
@@ -352,7 +384,7 @@ private struct LiteFx {
             let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "device.screen", ["timing": "true"])
             guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
-            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil, "\(t)")
+            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil && t["sig"] == field(r, "sig"), "\(t)")
             #expect(field(try await call(p, m, "device.screen"), "timingMs") == nil)
         }
     }
@@ -365,6 +397,9 @@ private struct LiteFx {
             let r = try await call(p, m, "device.screen")
             guard case .string(let text)? = field(r, "text") else { Issue.record("\(r)"); return }
             #expect(text.hasPrefix("Tela: Offers   [voltar]\nAbas: [Points*] [Combos]") && !text.contains("Mudou"), "\(text)")
+            // d1: the screen's signature, on the text and as a field
+            guard case .string(let sig)? = field(r, "sig") else { Issue.record("\(r)"); return }
+            #expect(sig.count == 12 && text.contains("\nsig=\(sig)"), "\(text)")
             #expect(field(r, "changed") == .array([]) && field(r, "tree") == nil)
             guard case .array(let fab)? = field(r, "floating"), case .object(let f)? = fab.first, case .string(let ref)? = f["ref"] else { Issue.record("\(r)"); return }
             #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs

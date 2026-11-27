@@ -8,9 +8,14 @@
 	<key>CFBundleName</key><string>Collie</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>0.1.0</string>
-	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleVersion</key><string>1000</string>
 	<key>ATSApplicationFontsPath</key><string>Fonts</string>
 	<key>LSMinimumSystemVersion</key><string>15.0</string>
 	<key>NSHighResolutionCapable</key><true/>
+	<key>SUFeedURL</key><string>https://github.com/ysraelmoreno/collie/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key><string>MTeyV4mjkdM4P3K2FJXryAAenZ4Dip/J2ONqJGVymgc=</string>
+	<key>SUEnableAutomaticChecks</key><true/>
+	<key>SUAllowsAutomaticUpdates</key><false/>
+	<key>SUEnableSystemProfiling</key><false/>
 </dict>
 </plist>

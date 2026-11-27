@@ -1138,6 +1138,7 @@ struct RouterLoopHost: LoopHost {
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
     func dismissReaping(_ terminal: UUID) async { await router.loopDismissReaping(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
+    func memoryVerdict(_ agent: UUID, firstTryPassed: Bool) async { await router.memory.settleParked(agent, firstTryPassed: firstTryPassed) }
     func factoryPaddock() async -> Bool { await router.loopFactory(paddock) }
     func land(mode: LandMode, message: String, base: String?) async throws(ProtocolError) -> (before: String, after: String, late: String?, unrecorded: String?) {
         try await router.loopLand(paddock, mode: mode, message: message, base: base)

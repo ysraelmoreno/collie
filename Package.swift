@@ -12,6 +12,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.0"),
+        // the app's updater (spec 2026-11-25): linked by CollieApp only (scripts/ci/architecture-rules.txt)
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1"),
     ],
     targets: [
         .target(name: "CollieProtocol"),
@@ -32,7 +34,9 @@ let package = Package(
         .executableTarget(name: "collie", dependencies: ["CollieClient", "CollieCore", "CollieProtocol", "CollieDaemonKit"]),
         .executableTarget(name: "collie-ctty"),
         .executableTarget(name: "collie-vizinho", dependencies: ["VizinhoKit"]),
-        .executableTarget(name: "CollieApp", dependencies: ["CollieClient", "CollieCanvas", "CollieCore", "ColliePlugins", "CollieProtocol", "CollieTheme", .product(name: "SwiftTerm", package: "SwiftTerm")]),
+        .executableTarget(name: "CollieApp", dependencies: ["CollieClient", "CollieCanvas", "CollieCore", "ColliePlugins", "CollieProtocol", "CollieTheme", .product(name: "SwiftTerm", package: "SwiftTerm"), .product(name: "Sparkle", package: "Sparkle")],
+                          // the framework sits in Contents/Frameworks (scripts/bundle-app.sh), the binary in Contents/MacOS
+                          linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .testTarget(name: "CollieThemeTests", dependencies: ["CollieTheme"]),
         .testTarget(name: "VizinhoKitTests", dependencies: ["VizinhoKit"]),
         .testTarget(name: "CollieAppTests", dependencies: ["CollieApp", .product(name: "SwiftTerm", package: "SwiftTerm")]),

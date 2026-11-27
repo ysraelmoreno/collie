@@ -23,7 +23,9 @@ extension CommandRouter {
         if let me = caller {
             project = await memory.repo(for: me.cwd)
         } else if let p = str(r, "repo") {
-            guard try await memory.global.run({ _ in FileManager.default.fileExists(atPath: p) }) else { throw invalid("repo '\(p)' does not exist") }
+            // the global store folder only exists after the first write: a fresh install must not refuse it
+            let exists = p == memory.global.path ? true : try await memory.global.run({ _ in FileManager.default.fileExists(atPath: p) })
+            guard exists else { throw invalid("repo '\(p)' does not exist") }
             project = await memory.repo(for: p)
         } else {
             project = await memory.repo(for: r.cwd ?? memory.global.path)
@@ -279,7 +281,7 @@ extension CommandRouter {
                 await asks.promptSubmitted(me.id)
                 let (user, likely) = asks.provenance.submit(me.id, prompt: prompt)
                 let correction = CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id])
-                await memory.resolvePending(for: me.id, correction: correction)   // the last prompt's hits, before this one's search
+                await memory.resolvePending(for: me.id, correction: correction, user: user)   // the last prompt's hits, before this one's search
                 if correction || CorrectionDetector.isProcedure(prompt) {
                     Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user, likely: likely && correction) }
                 }

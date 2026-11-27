@@ -244,6 +244,26 @@ import CollieProtocol
             #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["postToolUse", "preToolUse", "sessionStart"])
         }
     }
+    /// A Cursor Shepherd gets an always-applied rule: opening a terminal is delegation (summon, then ask --no-wait), not a second
+    /// worker. A plain Cursor terminal gets none, and a plugin dir that had one loses it.
+    @Test func cursorShepherdPluginCarriesTheDelegateRule() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        var r = rec(.cursor); r.isShepherd = true
+        _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        let file = AgentLaunch.cursorPluginDir(r.id, in: dir).appendingPathComponent("rules/\(AgentLaunch.delegateRuleFile)")
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(text.hasPrefix("---\n") && text.contains("alwaysApply: true"))
+        #expect(text.contains("collie summon <name>") && text.contains("collie ask <name>") && text.contains("--no-wait"))
+        #expect(text.contains("Do not do that work yourself") && text.contains("Do not use your own subagents"))
+        #expect(text.contains("Do not sleep or poll") && text.contains("collie wait <name>"))   // a busy Cursor reads a reply only when its turn ends
+        #expect(try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int == 0o600)
+        r.isShepherd = false   // relaunched as a plain terminal: the rule goes
+        _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        let plain = rec(.cursor)
+        _ = try AgentLaunch.launchSpec(for: plain, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(!FileManager.default.fileExists(atPath: AgentLaunch.cursorPluginDir(plain.id, in: dir).appendingPathComponent("rules").path))
+    }
     /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
     /// removed or renamed without a version in between. Changing this list must mean editing this test, on purpose.
     @Test func hookSubcommandsFrozen() {

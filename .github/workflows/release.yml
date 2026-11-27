@@ -103,6 +103,23 @@ jobs:
           scripts/ci/update-manifest.sh "$TAG" "$DMG" build/Collie.app build/update.json
           cat build/update.json
 
+      # appcast.xml for Sparkle (docs/release.md): the dmg's EdDSA signature, made here with the secret and Sparkle's own
+      # sign_update (version and sha256 pinned). Without the secret the release fails: an unsigned appcast is never published.
+      - name: Appcast
+        env:
+          SPARKLE_VERSION: "2.10.1"
+          SPARKLE_SHA256: 1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          [ -n "$SPARKLE_ED_PRIVATE_KEY" ] || { echo "::error::secret SPARKLE_ED_PRIVATE_KEY is not set (docs/release.md)"; exit 1; }
+          D="$RUNNER_TEMP/sparkle"
+          mkdir -p "$D"
+          curl -fsSL --retry 5 -o "$D/s.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          echo "$SPARKLE_SHA256  $D/s.tar.xz" | shasum -a 256 -c -
+          tar -xf "$D/s.tar.xz" -C "$D" bin/sign_update
+          SPARKLE_SIGN_UPDATE="$D/bin/sign_update" scripts/ci/appcast.sh "$TAG" "build/Collie-${TAG#v}.dmg" build/Collie.app build/appcast.xml
+          cat build/appcast.xml
+
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -116,8 +133,8 @@ jobs:
           cp "build/$DMG" build/Collie.dmg
           cmp "build/$DMG" build/Collie.dmg
           (cd build && shasum -a 256 Collie.dmg > Collie.dmg.sha256)
-          # update.json last: a client that sees the new manifest before the dmg only retries (spec §1)
-          ASSETS=("build/$DMG" "build/$DMG.sha256" build/Collie.dmg build/Collie.dmg.sha256 build/update.json)
+          # update.json then appcast.xml last: a client that sees a manifest before the dmg only retries (spec §1)
+          ASSETS=("build/$DMG" "build/$DMG.sha256" build/Collie.dmg build/Collie.dmg.sha256 build/update.json build/appcast.xml)
           # a run that died inside `gh release create` leaves a draft that `gh release view` finds and would only
           # upload into, never publish: delete drafts of this tag; only a published release takes --clobber
           rels="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | [.id, .draft, .prerelease, .tag_name] | @tsv')"
@@ -168,6 +185,13 @@ jobs:
           (cd "$D" && printf '%s  %s\n' "$(jq -r .sha256 update.json)" "$DMG" | shasum -a 256 -c -) \
             || { echo "::error::update.json sha256 != published $DMG"; exit 1; }
           echo "ok: $BASE/update.json confere com $DMG publicado"
+          curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-all-errors -o "$D/appcast.xml" "$BASE/appcast.xml"
+          cmp build/appcast.xml "$D/appcast.xml" || { echo "::error::published appcast.xml != build/appcast.xml"; exit 1; }
+          [ "$(xmllint --xpath 'string(//enclosure/@length)' "$D/appcast.xml")" = "$(stat -f %z "$D/$DMG")" ] \
+            || { echo "::error::appcast length != published $DMG"; exit 1; }
+          [ "$(xmllint --xpath 'string(//enclosure/@url)' "$D/appcast.xml")" = "$BASE/$DMG" ] \
+            || { echo "::error::appcast url != $BASE/$DMG"; exit 1; }
+          echo "ok: $BASE/appcast.xml confere com $DMG publicado"
 
       - name: Remove keychain and keys
         if: always()

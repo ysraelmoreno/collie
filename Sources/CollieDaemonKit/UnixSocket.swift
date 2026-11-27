@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Darwin
 import Dispatch
 import CollieCore
@@ -141,8 +142,8 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(fd, &chunk, chunk.count)
-            if let h = handler {   // M3d.1: a request still served: only its client's hangup matters, bytes are dropped
-                if n == 0 || n < 0 && Darwin.errno != EAGAIN && Darwin.errno != EINTR { h.cancel(); halt() }
+            if let h = onHangup {   // M3d.1: a request still served: only its client's hangup matters, bytes are dropped
+                if n == 0 || n < 0 && Darwin.errno != EAGAIN && Darwin.errno != EINTR { onHangup = nil; h(); halt() }
                 return
             }
             if n < 0 { if Darwin.errno == EAGAIN || Darwin.errno == EINTR { return }; return finish() }
@@ -164,8 +165,11 @@ public final class UnixSocketServer: @unchecked Sendable {
         /// M3d.1: the requests cancelled when their client hangs up (the socket stays read while they run): only waits,
         /// whose cancel undoes nothing. A hook or command whose client gave up still finishes its writes.
         static let cancelsOnHangup: Set<String> = ["work.wait"]
-        /// The handler of a `cancelsOnHangup` request while it runs (server.queue).
-        private var handler: Task<Void, Never>?
+        /// c2: the requests told, not cancelled, when their client hangs up: `ClientHangup.current` is set and the handler
+        /// stops at its next safe point (`device.run` between steps, so a step in flight finishes whole).
+        static let flagsOnHangup: Set<String> = ["device.run"]
+        /// What a hangup does to the request still served (server.queue): cancel its Task or set its flag.
+        private var onHangup: (() -> Void)?
 
         func process(_ line: Data) {
             guard let req = try? JSONDecoder().decode(Request.self, from: line) else {
@@ -179,13 +183,21 @@ public final class UnixSocketServer: @unchecked Sendable {
                 return
             }
             let h = server.handler
+            if Self.flagsOnHangup.contains(req.command) {
+                timer?.cancel(); timer = nil   // as `halt`, but the read source stays armed to see the hangup
+                let gone = ClientHangup()
+                onHangup = { gone.set() }
+                Task.detached { [self] in reply(await ClientHangup.$current.withValue(gone) { await h(req, peer) }) }
+                return
+            }
             guard Self.cancelsOnHangup.contains(req.command) else {
                 halt()
                 Task.detached { [self] in reply(await h(req, peer)) }
                 return
             }
             timer?.cancel(); timer = nil   // as `halt`, but the read source stays armed to see the hangup
-            handler = Task.detached { [self] in reply(await h(req, peer)) }
+            let t = Task.detached { [self] in reply(await h(req, peer)) }
+            onHangup = { t.cancel() }
         }
         var suspended = false
         func halt() { src?.suspend(); suspended = true; timer?.cancel(); timer = nil }   // stop reading, drop deadline
@@ -332,7 +344,7 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             done = true
             timer?.cancel(); timer = nil
-            handler = nil
+            onHangup = nil
             let cb: (@Sendable () -> Void)? = lock.withLock {
                 closed = true; out = Data(); outOff = 0
                 defer { onClose = nil }; return onClose
@@ -343,6 +355,26 @@ public final class UnixSocketServer: @unchecked Sendable {
             if suspended { src?.resume() }
             src = nil
             cb?()
+        }
+    }
+}
+
+/// c2: set when the client of a `flagsOnHangup` request hangs up (`UnixSocket`); its handler reads `current` and stops
+/// at a point of its own choosing instead of being cancelled mid-write.
+final class ClientHangup: Sendable {
+    @TaskLocal static var current: ClientHangup?
+    private struct State: Sendable { var gone = false; var waiters: [CheckedContinuation<Void, Never>] = [] }
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    var isSet: Bool { state.withLock { $0.gone } }
+    func set() {
+        let w = state.withLock { s in s.gone = true; defer { s.waiters = [] }; return s.waiters }
+        w.forEach { $0.resume() }
+    }
+    /// we2: returns once `set` (at once when already set), with no polling.
+    func wait() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let now = state.withLock { s in s.gone ? true : { s.waiters.append(c); return false }() }
+            if now { c.resume() }
         }
     }
 }

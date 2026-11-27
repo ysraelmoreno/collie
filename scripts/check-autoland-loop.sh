@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Checks of the auto-land tasks (docs/superpowers/specs/autoland/*.md): scripts/check-autoland-loop.sh a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6
+# Checks of the auto-land tasks (docs/superpowers/specs/autoland/*.md): scripts/check-autoland-loop.sh a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6|r1|r2|r3|t1
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
-case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6}" in
+case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|c5d|c6|r1|r2|r3|t1}" in
   a1) t --filter FactoryRunProfileTests --filter ProjectWorkConfigTests --filter FactoryProfileTests --filter WorkCommandTests --filter WorkLoopTests ;;
   a2) t --filter PaddockFactoryTests --filter PaddockModelTests --filter FactoryDoctorTests --filter CommandsTests ;;
   b1) t --filter FactoryRunProfileTests --filter PaddockFactoryTests --filter WorkCommandTests --filter CommandsTests --filter WorkLoopTests --filter FactoryDoctorTests ;;
@@ -27,5 +27,15 @@ case "${1:?a1|a2|b1|p1|p2|c1|a3|a4|a5|a6|c2|f3|f5|f1|c3a|c3b|p3|c4a|c5a|c5b|c5c|
   c6) t --filter PreCheckTests --filter LandDiscardTests --filter AutoLandTests --filter WorkLoopTests --filter WorkLoopCommandTests --filter PaddockCommandTests ;;
   c5d) t --filter PreCheckTests --filter LandDiscardTests --filter StopGraceTests ;;
   c5c) t --filter PreCheckTests --filter LandDiscardTests --filter AutoLandTests --filter WorkLoopTests --filter WorkLoopCommandTests --filter WorkCommandTests ;;
+  # r1..r3 first require what the task delivers (a filter that matches no test passes by itself: the pre-check must see red)
+  r1) grep -rq "struct GateIgnoredBinTests" Tests/CollieDaemonKitTests || { echo "falta a suíte GateIgnoredBinTests (spec r1)" >&2; exit 1; }
+      t --filter GateIgnoredBinTests --filter WorkLoopTests --filter AttemptMachineTests --filter AutoLandTests ;;
+  r2) ! grep -q "ContinuousClock\|Date()" Tests/CollieDaemonKitTests/StopGraceTests.swift || { echo "StopGraceTests ainda mede o relógio real (spec r2)" >&2; exit 1; }
+      t --filter StopGraceTests --filter WorkLoopTests --filter WorkLoopCommandTests ;;
+  r3) grep -q "Precisa de um repositório git" Sources/CollieApp/*.swift || { echo "falta a linha 'Precisa de um repositório git.' no app (spec r3)" >&2; exit 1; }
+      t --filter NewPaddockFormTests --filter PaddockFactoryTests --filter ContextPanelFactoryTests ;;
+  t1) grep -rq "struct PluginValidateTests" Tests || { echo "falta a suíte PluginValidateTests (PRD T1)" >&2; exit 1; }
+      test -f docs/superpowers/roadmap/2026-11-24-marketplace/collie-plugins/README.md || { echo "falta collie-plugins/README.md (PRD T1)" >&2; exit 1; }
+      t --filter PluginValidateTests --filter PluginManifestTests --filter PluginStoreTests ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

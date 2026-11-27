@@ -54,3 +54,17 @@ private func hookManifest() throws -> PluginManifest {
                             "hooks": ["edit"], "helper": "bin/vizinho", "permissions": ["project": "read"]]
     return try PluginManifest.decode(JSONSerialization.data(withJSONObject: m))
 }
+
+/// T2: a plug-in from someone else says so on its card and on the confirmation; Collie's own gets no notice.
+@Test func pluginInstallPromptNamesAThirdPartyAuthor() {
+    let item = PluginCatalogView.Item(id: "graficos", name: "Gráficos", publisher: "acme", publisherName: "Acme Ltda")
+    let plain = PluginCatalogView.Latest(version: "1.0.0", size: 1_000)
+    let p = PluginInstallPrompt(catalog: item, latest: plain, replacing: nil)
+    #expect(p.catalogLine == "Do catálogo, publicado por Acme Ltda · revisado pelo Collie")
+    #expect(p.authorNotice == "O autor é Acme Ltda, não o Collie. O Collie revisou esta versão." && p.helperLine == nil)
+    let helped = PluginCatalogView.Latest(version: "1.0.0", size: 1_000, helperTeamId: "AG8JQAH6YB")
+    #expect(PluginInstallPrompt(catalog: item, latest: helped, replacing: nil).helperLine == "Roda um programa assinado por Acme Ltda (time AG8JQAH6YB)")
+    let own = PluginCatalogView.Item(id: "vizinho", name: "Vizinho")
+    let o = PluginInstallPrompt(catalog: own, latest: helped, replacing: nil)
+    #expect(o.authorNotice == nil && o.helperLine == nil && o.catalogLine == "Do catálogo, publicado por Collie · revisado")
+}

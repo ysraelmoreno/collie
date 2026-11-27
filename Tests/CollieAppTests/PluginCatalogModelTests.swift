@@ -59,3 +59,12 @@ private func item(_ id: String, kind: PluginCatalog.Kind = .agent, latest: Strin
     let v = try dec.decode(PluginCatalogView.self, from: Data(json.utf8))
     #expect(v.state == "stale" && v.items.first?.latest?.permissionLines == [edit, read] && v.items.first?.recalled?.reason == "r")
 }
+
+/// T2: the card's author line; a third party's update without new permissions is one click, like Collie's.
+@Test func catalogCardNamesTheAuthor() {
+    #expect(PluginCatalogModel.byline(PluginCatalogView.Item(id: "v", name: "V")) == "Collie · revisado")
+    #expect(PluginCatalogModel.byline(PluginCatalogView.Item(id: "g", name: "G", publisher: "acme", publisherName: "Acme Ltda")) == "Acme Ltda · revisado pelo Collie")
+    let item = PluginCatalogView.Item(id: "g", name: "G", publisher: "acme", publisherName: "Acme Ltda", latest: .init(version: "1.1.0"),
+                                      installed: .init(version: "1.0.0"), update: true)
+    #expect(PluginCatalogModel.action(item, installed: PluginRow(id: "g", name: "G", version: "1.0.0")) == .update(needsConfirm: false))
+}

@@ -485,6 +485,11 @@ struct ContentView: View {
         .task(id: client.state == .connected) { if client.state == .connected { _ = await LanguagePreference.sync(client) } }
         .task(id: client.state == .connected) { if client.state == .connected { await usage.poll(client) } }
         .task { bundledBuild = await Task.detached { BuildID.of(URL(fileURLWithPath: Config.collied)) }.value }
+        .onChange(of: client.badges) { SparkleUpdater.shared.releaseIfIdle() }   // a held relaunch goes once nobody is working
+        .task {   // the updater (Sparkle): its relaunch waits for working agents; a local build starts nothing
+            SparkleUpdater.shared.busy = { [client] in UpdateModel.activity(terminals: client.terminals, badges: client.badges).busy }
+            SparkleUpdater.shared.start()
+        }
         .task(id: client.state == .connected) { if client.state == .connected { await dailyDigestLoop() } }
         .onChange(of: client.paddocks) { _, fs in   // the current paddock was deleted (here or by a Shepherd)
             if client.state == .connected, let c = client.currentPaddock, !fs.contains(where: { $0.id == c }) {

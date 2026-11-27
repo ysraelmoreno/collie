@@ -49,7 +49,80 @@ extension CommandRouter {
         }
         let panel = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: "device", from: caller?.id, in: ws)
         var args = r.args; args["panel"] = nil
-        return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd)
+        // d5: an agent's action goes to its paddock's flow log (the panel's when the agent is on the pasture); the user's
+        // own CLI calls are neither agent nor panel and are not recorded
+        let flow = caller.flatMap { me in flowLog(me.paddockId ?? panel.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
+        return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd, flow: flow)
+    }
+
+    /// `device.run --plan <file>` (d6): the plan file read as `--body-file` (a terminal: inside its project, regular,
+    /// one link; at most `FlowPlan.maxBytes`), checked whole, then run by `FlowRunner` through `devices.run`, so each
+    /// step obeys the same reach and lands in the flow log as the agent's own call would. `--serial` without `--panel`:
+    /// the reachable device panel showing that serial.
+    func deviceRunCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
+        let caller = try await principal(r, peer: peer)   // nil = admin
+        // d7: confirming a destructive step is the user's alone (principal: admin token, not from inside a terminal)
+        let confirmed = flag(r, "confirm-destructive")
+        if confirmed, caller != nil {
+            throw ProtocolError(code: .unauthorized, message: "--confirm-destructive is the user's: an agent's plan stops at a destructive step")
+        }
+        let data = try await ruleBodyFile(try need(r, "plan"), r, caller: caller, flag: "--plan", limit: FlowPlan.maxBytes)
+        let plan = try FlowPlan.parse(data)
+        let target: Panel
+        if let serial = str(r, "serial"), str(r, "panel") == nil {
+            let reach = caller.map { ConnectionGraph.reachablePanels(from: $0.id, in: ws) } ?? ws.panels
+            guard let p = reach.first(where: { $0.pluginId == "device" && $0.state["serial"] == .string(serial) }) else {
+                throw ProtocolError(code: .notFound, message: "No device panel showing \(serial) reachable. Open one with `panel open device`.")
+            }
+            target = p
+        } else {
+            target = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: "device", from: caller?.id, in: ws)
+        }
+        let flow = caller.flatMap { me in flowLog(me.paddockId ?? target.paddockId).map { FlowRecorder(origin: "agent:\(me.name)", log: $0) } }
+        let devices = devices, cwd = r.cwd
+        var runner = FlowRunner(confirmed: confirmed) { c, a async throws(ProtocolError) in
+            try await devices.run(c, panel: target, args: a, cwd: cwd, flow: flow)
+        }
+        runner.guarded = true   // wf1: each tap/swipe classifies what it touches, in its own read (no flag turns it off)
+        if let gone = ClientHangup.current { runner.hungUp = { gone.isSet } }   // c2: the socket's hangup, read between steps
+        return try await runner.run(plan)
+    }
+
+    /// The flow log of paddock `id` (d5); nil without one. On or off is read when writing.
+    func flowLog(_ id: UUID?) -> FlowActionLog? {
+        guard let id, let p = ws.paddocks.first(where: { $0.id == id }) else { return nil }
+        return FlowActionLog(paddock: URL(fileURLWithPath: p.path), flag: flowFlag(p.id))
+    }
+
+    /// The opt-in of paddock `id` (b2): `<daemon root>/flows/<id>/enabled`, out of the worktree an agent writes to.
+    func flowFlag(_ id: UUID) -> URL {
+        config.paths.root.appendingPathComponent("flows").appendingPathComponent(id.uuidString).appendingPathComponent("enabled")
+    }
+
+    /// `device.flow on|off|status` (d4): a terminal acts on its own paddock, the user names one with --paddock. Only the
+    /// user turns the log on (opt-in); off and status are open to the paddock's terminals.
+    func deviceFlowCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
+        let caller = try await principal(r, peer: peer)   // nil = admin
+        let action = str(r, "action") ?? "status"
+        guard ["on", "off", "status"].contains(action) else {
+            throw ProtocolError(code: .invalidArgs, message: "device flow \(action): use on, off or status")
+        }
+        let paddock: Paddock
+        if let me = caller {
+            guard action != "on" else { throw ProtocolError(code: .unauthorized, message: "only the user turns the action log on (collie device flow on --paddock <name>, outside a terminal)") }
+            guard r.args["paddock"] == nil else { throw ProtocolError(code: .unauthorized, message: "--paddock is the user's: a terminal acts on its own paddock") }
+            guard let pid = me.paddockId, let p = ws.paddocks.first(where: { $0.id == pid }) else {
+                throw ProtocolError(code: .invalidArgs, message: "the action log lives in a paddock; '\(me.name)' is on the pasture")
+            }
+            paddock = p
+        } else {
+            paddock = try findPaddock(try need(r, "paddock"))
+        }
+        let log = FlowActionLog(paddock: URL(fileURLWithPath: paddock.path), flag: flowFlag(paddock.id))
+        if action != "status" { try log.setEnabled(action == "on") }
+        guard case .object(var o) = log.status(paddock: paddock.name) else { return log.status() }
+        o["paddock"] = .string(paddock.name)
+        return .object(o)
     }
 
     /// Hands the device panels to the watchers: after a device panel opens or closes, and once at daemon start.

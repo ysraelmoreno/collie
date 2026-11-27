@@ -8,6 +8,9 @@ import CollieTheme
 
 @MainActor @Observable final class NodeModel {
     var exitCode: Int32?
+    /// Mouse over the node, or the node selected: the title bar's action icons show.
+    var hover = false
+    var selected = false
 }
 
 /// One canvas node: title bar, then the live terminal (or a "zoomed out" label), plus a resize corner.
@@ -25,7 +28,7 @@ import CollieTheme
     private var title: TitleHost<NodeTitleBar>!
     private let corner = DragHandle()
     /// Overlay on the body's bottom edge (never part of the terminal's frame: no PTY resize when it shows).
-    private let strip: NSHostingView<AccessStrip>
+    private let strip: TitleHost<AccessStrip>   // TitleHost: its buttons take clicks at any zoom
     private let leash = LeashHandle()
     /// Leash drag from this node's handle: window-space point, and whether the mouse was released.
     var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
@@ -40,7 +43,7 @@ import CollieTheme
 
     init(id: UUID, client: DaemonClient, canvas: CanvasState, node: NodeController) {
         self.id = id; self.client = client; self.canvas = canvas; self.node = node
-        strip = NSHostingView(rootView: AccessStrip(id: id, client: client))
+        strip = TitleHost(rootView: AccessStrip(id: id, client: client))
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 14
@@ -65,7 +68,11 @@ import CollieTheme
         addSubview(strip)
         strip.isHidden = true
         addSubview(corner)
-        leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
+        leash.onDrag = { [weak self] p, done in
+            guard let self else { return }
+            leashDragging = !done; updateActions()
+            onLeashDrag?(id, p, done)
+        }
         addSubview(leash)
         node.onStreamChange = { [weak self] s in self?.attach(s) }
         attach(node.stream)
@@ -87,17 +94,32 @@ import CollieTheme
         }
     }
 
-    /// Shown only with the live terminal mounted (zoom >= 0.5): a sandboxed terminal's open cards, or a Shepherd's leash request.
+    /// While the terminal has a request (access, leash, app card), at any zoom: a request is never hidden.
     private func updateStrip() {
-        let sandboxed = client.terminals.first { $0.id == id }.map { $0.sandbox != .free } ?? false
-        let show = term != nil && (sandboxed && AccessStrip.Model(cards: client.accessCards.filter { $0.terminal == id }).kind != .none
-                                   || client.leashRequests.contains { $0.from == id })
+        let show = !NodeRequest.of(id, client: client).isEmpty
         if strip.isHidden == show { strip.isHidden = !show; needsLayout = true }
     }
+
+    // MARK: hover
+
+    private var hoverArea: NSTrackingArea?
+    private var leashDragging = false
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let a = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(a); hoverArea = a
+    }
+    override func mouseEntered(with event: NSEvent) { model.hover = true; updateActions() }
+    override func mouseExited(with event: NSEvent) { model.hover = false; updateActions() }
+    /// The leash ring is an action icon too; never hidden mid-drag (it would drop the drag).
+    private func updateActions() { leash.isHidden = !(model.hover || model.selected || leashDragging) }
 
     /// Layer colors are fixed `cgColor`s: resolved here under the view's appearance, again on every theme change.
     private func applyChrome() {
         let attention = client.badges[id] == .attention, selected = canvas.selection.contains(id)
+        if model.selected != selected { model.selected = selected }
+        updateActions()
         layer?.borderWidth = selected ? 2 : attention ? 1.5 : 1
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.borderColor = (attention ? CollieColor.attention : selected ? CollieColor.accent : CollieColor.border).cgColor
@@ -544,57 +566,129 @@ struct NodeTitleBar: View {
 
     var body: some View {
         let t = client.terminals.first { $0.id == id }
-        let status = NodeStatus(badge: client.badges[id], exitCode: model.exitCode)
+        let exited = model.exitCode != nil || client.badges[id] == .stopped
+        let h = TerminalHeader.make(record: t, badge: model.exitCode != nil ? .stopped : client.badges[id],
+                                    connections: client.connections, lot: client.lot(of: id))
+        let actions = model.hover || model.selected
         HStack(spacing: 8) {
-            Circle().fill(color(status)).frame(width: 8, height: 8)
-            Text(t?.name ?? "").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
-            if t?.isShepherd == true {
-                CollieTag(tr("Pastor", "Shepherd"), tone: .accent)
-                Text(tr("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)", "shepherding \(client.connections.filter { $0.a == id || $0.b == id }.count)")).foregroundStyle(Color.collieMuted)
-            }
-            Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
-            if let m = t?.model { Text(m).foregroundStyle(Color.collieMuted).lineLimit(1).help(tr("Modelo (collie model \(t?.name ?? "") <modelo>)", "Model (collie model \(t?.name ?? "") <model>)")) }
-            if t?.sandbox == .free { CollieTag(tr("livre", "free"), tone: .danger).help(tr("Terminal livre: sem sandbox, nenhuma guia chega a ele", "Free terminal: no sandbox, no leash reaches it")) }
-            else if t != nil { AccessBadge(id: id, client: client) }
-            if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? tr("Lote \(l.name)", "Lot \(l.name)") : tr("Lote \(l.name): \(l.goal)", "Lot \(l.name): \(l.goal)")) }
-            if let t, CursorMemoryBadge.isCursor(preset: t.preset, command: t.command) { CursorMemoryTag(name: t.name, client: client) }
+            Circle().fill(color(h.state)).frame(width: 8, height: 8).accessibilityHidden(true)
+            Text(h.title).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1).help(h.help)
             if case .disconnected = client.state { Text(tr("desconectado", "disconnected")).foregroundStyle(Color.collieDanger) }
-            if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
-            if case .stopped = status { Button(tr("Reiniciar", "Restart"), action: restart).controlSize(.mini) }
+            else {
+                Text(h.state.text).foregroundStyle(color(h.state)).lineLimit(1)
+                    .help(model.exitCode.map { tr("Saiu com código \($0)", "Exited with code \($0)") } ?? "")
+            }
+            if exited, t != nil { Button(tr("Reiniciar", "Restart"), action: restart).controlSize(.mini) }
+            if let w = h.warning {   // a free terminal is a risk: always visible
+                Image(systemName: "exclamationmark.shield.fill").foregroundStyle(Color.collieDanger).help(w).accessibilityLabel(w)
+            }
             Spacer(minLength: 0)
-            FullscreenButton(action: fullscreen)
-            Menu {
-                Button(tr("Tela cheia", "Fullscreen"), action: fullscreen).keyboardShortcut(.return, modifiers: .command)
-                Divider()
-                Button(tr("Editar…", "Edit…"), action: edit)
-                Button(tr("Reiniciar", "Restart"), action: restart)
-                Button(tr("Matar", "Kill"), action: kill)
-                if t?.preset == .claude { Button(tr("Salvar na memória", "Save to memory"), action: captureMemory) }
-                Menu(tr("Lote", "Lot")) {
-                    let mine = client.lot(of: id)?.id
-                    ForEach(LotChoice.all(client.lots)) { c in
-                        Toggle(c.title, isOn: Binding(get: { c.lot?.id == mine }, set: { _ in setLot(c.lot) }))
-                    }
-                }
-                Divider()
-                Button(tr("Fechar nó…", "Close node…"), action: closeNode)
-            } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help(tr("Ações do terminal", "Terminal actions")).accessibilityLabel(tr("Ações do terminal", "Terminal actions"))
+            Group {
+                if let t, CursorMemoryBadge.isCursor(preset: t.preset, command: t.command) { CursorMemoryTag(name: t.name, client: client) }
+                FullscreenButton(action: fullscreen)
+            }
+            .opacity(actions ? 1 : 0).allowsHitTesting(actions)
+            // Invisible off hover, never removed: the keyboard (and VoiceOver) still reach it.
+            menu(t, h).opacity(actions ? 1 : 0)
         }
         .font(.collieMono(11))
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.collieSidebar)
+        .background(alignment: .bottomTrailing) {   // the access popover: the strip's ⓘ and the menu's "Acessos…" open it
+            Color.clear.frame(width: 1, height: 1)
+                .popover(isPresented: AccessPopoverState.shared.binding(id), arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
+        }
     }
 
-    private func color(_ s: NodeStatus) -> SwiftUI.Color {
+    private func menu(_ t: TerminalRecord?, _ h: TerminalHeader) -> some View {
+        Menu {
+            Section { ForEach(h.menuItems, id: \.self) { Text($0) } }
+            if let t, t.sandbox != .free {
+                if AccessCopy.showsDetectionTag(detection: client.detection, reason: client.detectionReason) {
+                    Text(AccessCopy.detection(reason: client.detectionReason).tag)
+                }
+                let cards = client.accessCards.filter { $0.terminal == id }.count
+                let grants = client.grants.filter { $0.scope == .terminal && $0.owner == id }.count
+                if cards + grants > 0 {
+                    Button(tr("Acessos (\(cards) pedidos, \(grants) liberados)…", "Access (\(cards) requests, \(grants) granted)…")) {
+                        AccessPopoverState.shared.open.insert(id)
+                    }
+                }
+            }
+            Divider()
+            Button(tr("Tela cheia", "Fullscreen"), action: fullscreen).keyboardShortcut(.return, modifiers: .command)
+            Divider()
+            Button(tr("Editar…", "Edit…"), action: edit)
+            Button(tr("Reiniciar", "Restart"), action: restart)
+            Button(tr("Matar", "Kill"), action: kill)
+            if t?.preset == .claude { Button(tr("Salvar na memória", "Save to memory"), action: captureMemory) }
+            Menu(tr("Lote", "Lot")) {
+                let mine = client.lot(of: id)?.id
+                ForEach(LotChoice.all(client.lots)) { c in
+                    Toggle(c.title, isOn: Binding(get: { c.lot?.id == mine }, set: { _ in setLot(c.lot) }))
+                }
+            }
+            Divider()
+            Button(tr("Fechar nó…", "Close node…"), action: closeNode)
+        } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help(tr("Ações do terminal", "Terminal actions")).accessibilityLabel(tr("Ações de \(h.title)", "Actions for \(h.title)"))
+    }
+
+    private func color(_ s: TerminalHeader.State) -> SwiftUI.Color {
         switch s {
-        case .idle: .collieMuted
+        case .done: .collieMuted
         case .working: .collieSecondary
-        case .attention: .collieAttention
+        case .waiting: .collieAttention
         case .stopped: .collieDanger
         }
+    }
+}
+
+/// What a terminal's title bar shows (spec lateral única, "Canvas"): a dot, the name and the state in a word. The rest
+/// (Shepherd and how many it herds, tool, model, free/sandboxed, lot) goes to ⋯ and the name's tooltip; a free terminal
+/// keeps a visible warning, as it is a risk.
+struct TerminalHeader: Equatable {
+    enum State: Equatable {
+        case working, waiting, done, stopped
+        var text: String {
+            switch self {
+            case .working: tr("trabalhando", "working")
+            case .waiting: tr("esperando você", "waiting for you")
+            case .done: tr("concluído", "done")
+            case .stopped: tr("parado", "stopped")
+            }
+        }
+    }
+    let title: String
+    let state: State
+    /// Free terminals only: the warning icon's hover text.
+    let warning: String?
+    let menuItems: [String]
+    var help: String { ([title] + menuItems).joined(separator: "\n") }
+
+    /// `badge`: `.stopped` also when the process exited; nil (never reported) is "parado".
+    static func make(record t: TerminalRecord?, badge: StatusBadge?, connections: [Connection], lot: Lot?) -> TerminalHeader {
+        let state: State = switch badge {
+        case .working: .working
+        case .attention: .waiting
+        case .idle: .done
+        case .stopped, nil: .stopped
+        }
+        var items: [String] = []
+        if let t {
+            if t.isShepherd {
+                let n = connections.filter { $0.a == t.id || $0.b == t.id }.count
+                items.append(tr("Pastor · pastoreando \(n)", "Shepherd · shepherding \(n)"))
+            }
+            items.append(tr("Ferramenta: \(t.preset.rawValue)", "Tool: \(t.preset.rawValue)"))
+            if let m = t.model { items.append(tr("Modelo: \(m)", "Model: \(m)")) }
+            items.append(t.sandbox == .free ? tr("Livre: sem sandbox", "Free: no sandbox") : tr("Com sandbox", "Sandboxed"))
+        }
+        if let lot { items.append(lot.goal.isEmpty ? tr("Lote: \(lot.name)", "Lot: \(lot.name)") : tr("Lote: \(lot.name) — \(lot.goal)", "Lot: \(lot.name) — \(lot.goal)")) }
+        let warning = t?.sandbox == .free ? tr("Terminal livre: sem sandbox, nenhuma guia chega a ele", "Free terminal: no sandbox, no leash reaches it") : nil
+        return TerminalHeader(title: t?.name ?? "", state: state, warning: warning, menuItems: items)
     }
 }
 

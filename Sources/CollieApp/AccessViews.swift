@@ -46,6 +46,14 @@ enum AccessCopy {
         defaults.set(true, forKey: notAdminToastKey)
         return notAdminToastText
     }
+    static var loopAlwaysHelp: String {
+        tr("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar em Preferências, Laços.",
+           "The next loops in this paddock start without a card; you get a notice and can stop with collie work stop. You can turn this off in Preferences, Loops.")
+    }
+    static func sessionHelp(_ app: String) -> String {
+        tr("Este comando de \(app) roda sem cartão até a sessão do terminal acabar ou o app mudar",
+           "This \(app) command runs without a card until the terminal session ends or the app changes")
+    }
     static func verb(_ op: String) -> String {
         switch op {
         case "read": tr("ler", "read")
@@ -115,39 +123,46 @@ struct DetectionNoticeHost: ViewModifier {
     }
 }
 
-struct AccessBadge: View {
-    let id: UUID
-    let client: DaemonClient
-    @State private var hover = false
+/// One request waiting on the user, shown inside the node of the terminal that asked (spec lateral única, "Canvas").
+enum NodeRequest: Equatable {
+    case leash(LeashRequest), access(SandboxDenial), app(AppCard)
+    /// Cards Collie refused on purpose: nothing to grant, one **Dispensar** for all of them.
+    case refused([SandboxDenial])
 
-    var body: some View {
-        let cards = client.accessCards.filter { $0.terminal == id }
-        let mine = client.grants.filter { $0.scope == .terminal && $0.owner == id }
-        HStack(spacing: 6) {
-            if AccessCopy.showsDetectionTag(detection: client.detection, reason: client.detectionReason) {
-                let c = AccessCopy.detection(reason: client.detectionReason)
-                CollieTag(c.tag, tone: .danger).lineLimit(1).help(c.help)
-            }
-            if !cards.isEmpty || !mine.isEmpty {
-                let open = AccessPopoverState.shared.binding(id)
-                Button { open.wrappedValue = true } label: {
-                    HStack(spacing: 3) {
-                        CollieTag(cards.isEmpty ? tr("liberados \(mine.count)", "granted \(mine.count)") : tr("acesso \(cards.count)", "access \(cards.count)"), tone: cards.isEmpty ? .secondary : .attention)
-                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.collieMuted)
-                    }
-                    .padding(.horizontal, 2).padding(.vertical, 1)
-                    .background(hover ? Color.collieText.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
-                }
-                .buttonStyle(.plain).onHover { hover = $0 }
-                .onDisappear { AccessPopoverState.shared.close(id) }
-                .help(cards.isEmpty ? tr("Caminhos liberados para este terminal", "Paths granted to this terminal") : tr("O agente tentou acessar fora do sandbox", "The agent tried to access something outside the sandbox"))
-                .popover(isPresented: open, arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
-            }
+    var at: Date {
+        switch self {
+        case .leash(let r): r.at
+        case .access(let c): c.at
+        case .app(let c): c.at
+        case .refused(let cs): cs.map(\.at).min() ?? .distantFuture
         }
+    }
+    /// A new request gets a fresh row (its busy/error state is the row's).
+    var key: String {
+        switch self {
+        case .leash(let r): "leash|\(r.id)"
+        case .access(let c): "access|\(c.cardId)"
+        case .app(let c): "app|\(c.id)"
+        case .refused: "refused"
+        }
+    }
+
+    /// Oldest first; refused cards (nothing to answer) last. Access cards only for a sandboxed terminal.
+    static func of(_ id: UUID, sandboxed: Bool, leash: [LeashRequest], cards: [SandboxDenial], apps: [AppCard]) -> [NodeRequest] {
+        let mine = sandboxed ? cards.filter { $0.terminal == id } : []
+        let open = leash.filter { $0.from == id }.map(NodeRequest.leash) + mine.filter { $0.refusal == nil }.map(NodeRequest.access)
+            + apps.filter { $0.by == id }.map(NodeRequest.app)
+        let refused = mine.filter { $0.refusal != nil }
+        return open.sorted { $0.at < $1.at } + (refused.isEmpty ? [] : [.refused(refused)])
+    }
+
+    @MainActor static func of(_ id: UUID, client: DaemonClient) -> [NodeRequest] {
+        let sandboxed = client.terminals.first { $0.id == id }.map { $0.sandbox != .free } ?? false
+        return of(id, sandboxed: sandboxed, leash: client.leashRequests, cards: client.accessCards, apps: client.appCards)
     }
 }
 
-/// The 28 pt strip over the bottom of a sandboxed node's terminal while it has open cards.
+/// The strip over the bottom of a node while its terminal has a request: the oldest one, with its answers, and "+n".
 struct AccessStrip: View {
     struct Model: Equatable {
         enum Kind: Equatable { case none, pending(Int), refusedOnly(Int) }
@@ -166,62 +181,183 @@ struct AccessStrip: View {
             }
         }
     }
-    static let height: CGFloat = 28
+    static let height: CGFloat = 58
     let id: UUID
     let client: DaemonClient
 
     var body: some View {
-        if let req = client.leashRequests.first(where: { $0.from == id }) { LeashRequestRow(req: req, client: client) } else { cardsRow }
-    }
-
-    private var cardsRow: some View {
-        let cards = client.accessCards.filter { $0.terminal == id }
-        let m = Model(cards: cards)
-        return HStack(spacing: 8) {
-            Text(m.text).font(.collieUI(12, .medium)).lineLimit(1)
-            Spacer(minLength: 0)
-            switch m.kind {
-            case .none: EmptyView()
-            case .pending: Button(tr("Ver", "View")) { AccessPopoverState.shared.open.insert(id) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small)
-            case .refusedOnly:
-                Button(tr("Dispensar", "Dismiss")) { Task { do { try await client.denyAll(cards) } catch { Log.canvas.error("dispensar: \(error)") } } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+        let all = NodeRequest.of(id, client: client)
+        if let first = all.first {
+            let more = all.count - 1
+            Group {
+                switch first {
+                case .leash(let r): LeashRequestRow(req: r, client: client, more: more)
+                case .access(let c): AccessRequestRow(card: c, client: client, more: more)
+                case .app(let c): AppRequestRow(card: c, client: client, more: more)
+                case .refused(let cs):
+                    RequestLayout(more: more, pending: false) {
+                        Text(Model(cards: cs).text)
+                            .help(tr("Pastas do próprio Collie e segredos nunca são liberadas", "Collie's own folders and secrets are never granted"))
+                    } actions: {
+                        Button(tr("Dispensar", "Dismiss")) { Task { do { try await client.denyAll(cs) } catch { Log.canvas.error("dispensar: \(error)") } } }
+                            .buttonStyle(CollieButtonStyle(.quiet))
+                    }
+                }
             }
+            .id(first.key)
         }
-        .foregroundStyle(m.kind == .none || isPending(m.kind) ? Color.collieText : Color.collieTextSecondary)
-        .padding(.leading, 10).padding(.trailing, 26)   // clear of the node's resize corner (14 pt at 4 pt from the edge)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(isPending(m.kind) ? Color.collieAttention.opacity(0.9) : Color.collieSidebar)
-        .help(isPending(m.kind) ? "" : tr("Pastas do próprio Collie e segredos nunca são liberadas", "Collie's own folders and secrets are never granted"))
     }
-    private func isPending(_ k: Model.Kind) -> Bool { if case .pending = k { true } else { false } }
 }
 
-/// A Shepherd's leash request (`collie leash request`), over its node's bottom: **Conectar** leashes, **Recusar** declines.
+/// The strip's two lines: the question over its answers, "+n" when more requests wait behind it.
+struct RequestLayout<Q: View, A: View>: View {
+    let more: Int
+    var pending = true
+    var error: String?
+    @ViewBuilder let question: () -> Q
+    @ViewBuilder let actions: () -> A
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if let error { Text(verbatim: error).lineLimit(1).help(error) } else { question().lineLimit(1) }
+                Spacer(minLength: 0)
+                if more > 0 {
+                    Text(verbatim: "+\(more)").font(.collieMono(11))
+                        .help(tr("Mais \(more) pedido(s) depois deste", "\(more) more request(s) after this one"))
+                }
+            }
+            HStack(spacing: 6) { Spacer(minLength: 0); actions() }.controlSize(.small)
+        }
+        .font(.collieUI(12, .medium))
+        .foregroundStyle(pending ? Color.collieText : Color.collieTextSecondary)
+        .padding(.leading, 10).padding(.trailing, 26).padding(.vertical, 6)   // clear of the node's resize corner
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(pending ? Color.collieAttention.opacity(0.9) : Color.collieSidebar)
+        .accessibilityElement(children: .contain).accessibilityLabel(tr("Pedido", "Request"))
+    }
+}
+
+/// "Quer ler `path`": **Liberar** / **Liberar a pasta** / **Negar**; ⓘ opens the full card (lot, folder, grants).
+struct AccessRequestRow: View {
+    let card: SandboxDenial
+    let client: DaemonClient
+    let more: Int
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        let t = client.terminals.first { $0.id == card.terminal }
+        let path = Text(verbatim: AccessCopy.shown(card.path)).font(.collieMono(11))
+        RequestLayout(more: more, error: error) {
+            HStack(spacing: 4) {
+                trTxt(Text("Quer \(Text(AccessCopy.verb(card.op)).bold()) \(path)"), Text("Wants to \(Text(AccessCopy.verb(card.op)).bold()) \(path)"))
+                    .truncationMode(.middle)
+                    .help(card.reason.map { tr("Motivo do agente: ", "Agent's reason: ") + AccessCopy.shown($0) } ?? AccessCopy.shown(card.path))
+                Button { AccessPopoverState.shared.open.insert(card.terminal) } label: { Image(systemName: "info.circle") }
+                    .buttonStyle(.plain).help(tr("Ver o cartão inteiro", "View the whole card")).accessibilityLabel(tr("Detalhes", "Details"))
+            }
+        } actions: {
+            Button(tr("Negar", "Deny")) { deny() }.buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Liberar a pasta", "Grant the folder")) { grant(folder: true) }.buttonStyle(CollieButtonStyle(.secondary))
+                .disabled(card.folderRefusal != nil).help(card.folderRefusal ?? AccessCopy.shown(card.folder))
+            Button(tr("Liberar", "Grant")) { grant(folder: false) }.buttonStyle(CollieButtonStyle(.primary)).help(AccessCopy.resumeNote(t))
+        }
+        .disabled(busy)
+    }
+
+    private func grant(folder: Bool) {
+        busy = true; error = nil
+        Task { do { try await client.grant(card, folder: folder, lot: false) } catch { self.error = "\(error)" }; busy = false }
+    }
+    private func deny() {
+        busy = true; error = nil
+        Task { do { try await client.deny(card) } catch { self.error = "\(error)" }; busy = false }
+    }
+}
+
+/// A Shepherd's leash request (`collie leash request`): **Conectar** leashes, **Recusar** declines.
 struct LeashRequestRow: View {
     let req: LeashRequest
     let client: DaemonClient
+    let more: Int
     @State private var busy = false
+    @State private var error: String?
 
     var body: some View {
         let to = client.terminals.first { $0.id == req.to }?.name ?? "?"
-        HStack(spacing: 8) {
+        RequestLayout(more: more, error: error) {
             trTxt(Text("Quer conectar a \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))"),
                   Text("Wants to connect to \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))"))
-                .font(.collieUI(12, .medium)).lineLimit(1).truncationMode(.tail)
-                .help(req.reason.map(AccessCopy.shown) ?? "")
-            Spacer(minLength: 0)
-            Button(tr("Recusar", "Decline")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-            Button(tr("Conectar", "Connect")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
+                .truncationMode(.tail).help(req.reason.map(AccessCopy.shown) ?? "")
+        } actions: {
+            Button(tr("Recusar", "Decline")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet))
+            Button(tr("Conectar", "Connect")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary))
         }
-        .foregroundStyle(Color.collieText)
-        .padding(.leading, 10).padding(.trailing, 26)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.collieAttention.opacity(0.9))
+        .disabled(busy)
     }
 
     private func answer(_ allow: Bool) {
-        busy = true
-        Task { do { try await client.answerLeash(req, allow: allow) } catch { Log.canvas.error("leash request: \(error)") }; busy = false }
+        busy = true; error = nil
+        Task {
+            do { try await client.answerLeash(req, allow: allow) } catch { self.error = "\(error)"; Log.canvas.error("leash request: \(error)") }
+            busy = false
+        }
+    }
+}
+
+/// An app card the terminal raised: a `confirm` call answers in the strip (**Permitir** / **Nesta sessão** / **Negar**);
+/// an approval shows what it would run first (**Ver e aprovar…** opens the whole card).
+struct AppRequestRow: View {
+    let card: AppCard
+    let client: DaemonClient
+    let more: Int
+    @State private var busy = false
+    @State private var error: String?
+    @State private var details = false
+
+    var body: some View {
+        RequestLayout(more: more, error: error) {
+            question.truncationMode(.middle)
+        } actions: {
+            Button(tr("Negar", "Deny")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet))
+            if card.kind == .confirm {
+                if card.app == "work-loop" {
+                    Button(tr("Sempre neste cercado", "Always in this paddock")) { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet))
+                        .help(AccessCopy.loopAlwaysHelp)
+                } else if card.app != "network" {
+                    Button(tr("Nesta sessão", "This session")) { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet))
+                        .help(AccessCopy.sessionHelp(card.name))
+                }
+                Button(tr("Permitir", "Allow")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary))
+            } else {
+                Button(tr("Ver e aprovar…", "Review and approve…")) { details = true }.buttonStyle(CollieButtonStyle(.primary))
+                    .popover(isPresented: $details, arrowEdge: .bottom) { AppCardView(card: card, client: client) }
+            }
+        }
+        .disabled(busy)
+    }
+
+    @ViewBuilder private var question: some View {
+        let call = Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(11))
+        if card.kind == .confirm, card.app == "network" {   // NetworkCommands.cardText: request \n response
+            let request = Text(verbatim: AccessCopy.shown((card.call ?? "").split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "")).font(.collieMono(11))
+            trTxt(Text("Responder no lugar do servidor? \(request)"), Text("Answer in place of the server? \(request)"))
+                .help(AccessCopy.shown(card.call ?? ""))
+        } else if card.kind == .confirm {
+            trTxt(Text("\(Text(verbatim: card.name).bold()) quer: \(call)"), Text("\(Text(verbatim: card.name).bold()) wants: \(call)"))
+                .help(AccessCopy.shown(card.call ?? ""))
+        } else {
+            trTxt(Text("Aprovar o app \(Text(verbatim: card.name).bold())?"), Text("Approve the app \(Text(verbatim: card.name).bold())?"))
+        }
+    }
+
+    private func answer(_ allow: Bool, session: Bool = false, always: Bool = false) {
+        busy = true; error = nil
+        Task {
+            do { try await client.answerApp(card, allow: allow, session: session, always: always) } catch { self.error = "\(error)"; Log.canvas.error("app card: \(error)") }
+            busy = false
+        }
     }
 }
 
@@ -355,12 +491,17 @@ extension SandboxDenial {
 
 /// Apps do cercado waiting for the user, over the canvas: an approval (**Aprovar** pins the manifest in that paddock) or
 /// one call of a `confirm` command (**Permitir** / **Negar**). Spec 2026-11-08-paddock-apps-design.md.
+/// Only the cards no node on this canvas shows: one raised by a terminal of this paddock is in that node's strip.
 struct AppCardsView: View {
     let client: DaemonClient
+    nonisolated static func floating(_ cards: [AppCard], terminals: [TerminalRecord], paddock: UUID?) -> [AppCard] {
+        cards.filter { c in !(c.by.flatMap { by in terminals.first { $0.id == by } }.map { $0.paddockId == paddock } ?? false) }
+    }
     var body: some View {
-        if !client.appCards.isEmpty {
+        let cards = Self.floating(client.appCards, terminals: client.terminals, paddock: client.currentPaddock)
+        if !cards.isEmpty {
             VStack(alignment: .trailing, spacing: 6) {
-                ForEach(client.appCards) { AppCardView(card: $0, client: client) }
+                ForEach(cards) { AppCardView(card: $0, client: client) }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, 12)
@@ -428,10 +569,10 @@ struct AppCardView: View {
                 Button(tr("Negar", "Deny")) { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                 if card.app == "work-loop" {   // a loop has no per-session permit: its lasting answer is the paddock's trust
                     Button(tr("Sempre neste cercado", "Always in this paddock")) { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                        .help(tr("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar em Preferências, Laços.", "The next loops in this paddock start without a card; you get a notice and can stop with collie work stop. You can turn this off in Preferences, Loops."))
+                        .help(AccessCopy.loopAlwaysHelp)
                 } else if card.kind == .confirm, card.app != "network" {
                     Button(tr("Permitir nesta sessão", "Allow this session")) { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                        .help(tr("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar", "This \(card.name) command runs without a card until the terminal session ends or the app changes"))
+                        .help(AccessCopy.sessionHelp(card.name))
                 }
                 Button(card.kind == .confirm ? tr("Permitir", "Allow") : tr("Aprovar", "Approve")) { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
             }

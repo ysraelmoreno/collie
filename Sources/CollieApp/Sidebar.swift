@@ -7,7 +7,7 @@ import CollieTheme
 
 /// The single sidebar (240 pt; collapsed 56 pt, ⌘\): "＋ Novo agente", the paddock list by name with its state in
 /// words, the current paddock expanded (header, ⋯ menu, agent tree with each agent's panels), and `footer` at the foot
-/// (L2 fills it). Rows come from `SidebarModel`.
+/// (`SidebarFooter` unless one is passed). Rows come from `SidebarModel`.
 struct Sidebar: View {
     let ctx: ShellContext
     @Binding var collapsed: Bool
@@ -32,7 +32,7 @@ struct Sidebar: View {
         VStack(alignment: .leading, spacing: 10) {
             toggle
             if collapsed { collapsedList(rows) } else { expanded(rows, pending: pending) }
-            if let footer { footer }
+            footer ?? AnyView(SidebarFooter(ctx: ctx, collapsed: collapsed))
         }
         .padding(collapsed ? 8 : 12)
         .padding(.top, CanvasChrome<EmptyView>.lightsInset)   // below the traffic lights (hidden title bar)
